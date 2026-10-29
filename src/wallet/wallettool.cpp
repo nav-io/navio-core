@@ -8,6 +8,7 @@
 
 #include <wallet/wallettool.h>
 
+#include <blsct/wallet/keyman.h>
 #include <common/args.h>
 #include <mnemonic/mnemonic.h>
 #include <random.h>
@@ -234,6 +235,12 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
             tfm::format(std::cerr, "Seed must be 64 (master) or 160 (view) characters long\n");
             return false;
         }
+        // Refused here rather than by SetupGeneration, which runs only once
+        // the wallet database exists.
+        if (seed.size() == 64 + 96 && !blsct::DecodeAuditKey(ParseHex(seed))) {
+            tfm::format(std::cerr, "Invalid audit key: the view key or the spend key is not a valid key\n");
+            return false;
+        }
 
         // Same rule as createwallet: no NFKD is applied, so a new wallet must
         // not be created from a non-ASCII passphrase, but a restore must still
@@ -300,16 +307,15 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         const std::shared_ptr<CWallet> wallet_instance = MakeWallet(name, path, options, ParseHex(seed), type, mnemonic_passphrase, mnemonic_birthday);
         // Cleanse seed hex now that MakeWallet has consumed it
         memory_cleanse(seed.data(), seed.size());
-        if (wallet_instance) {
-            if (!mnemonic_response.empty()) {
-                tfm::format(std::cout, "\nMnemonic: %s\n\n", mnemonic_response);
-                tfm::format(std::cout, "IMPORTANT: Write down this mnemonic phrase and store it securely.\n");
-                tfm::format(std::cout, "It is the only way to recover your wallet if you lose access.\n\n");
-                memory_cleanse(mnemonic_response.data(), mnemonic_response.size());
-            }
-            WalletShowInfo(wallet_instance.get());
-            wallet_instance->Close();
+        if (!wallet_instance) return false;
+        if (!mnemonic_response.empty()) {
+            tfm::format(std::cout, "\nMnemonic: %s\n\n", mnemonic_response);
+            tfm::format(std::cout, "IMPORTANT: Write down this mnemonic phrase and store it securely.\n");
+            tfm::format(std::cout, "It is the only way to recover your wallet if you lose access.\n\n");
+            memory_cleanse(mnemonic_response.data(), mnemonic_response.size());
         }
+        WalletShowInfo(wallet_instance.get());
+        wallet_instance->Close();
     } else if (command == "info") {
         DatabaseOptions options;
         ReadDatabaseArgs(args, options);

@@ -1575,6 +1575,39 @@ BOOST_FIXTURE_TEST_CASE(output_storage_merged_aggregate_not_conflicted, TestingS
     }
 }
 
+// Two wallet txs can carry the same output, and the output index
+// (mapOutpointHashToWalletTx) holds only the later one. Here that is a tx
+// spending our coin that the block tx does not merge (in the shape of a merge
+// that was broadcast but lost to another), recorded after our aggregate. The
+// block tx that does merge our aggregate must still confirm it, found through
+// the inputs it spends rather than through the output index, and conflict the
+// other tx.
+BOOST_FIXTURE_TEST_CASE(output_storage_merged_aggregate_shared_output_holder, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+    AddFeeOutput(r);
+    const uint256 txid{r.aggregate->GetHash()};
+
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    const CTransactionRef other{MakeMergedBlockTx(r, COIN)};
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(other, {other->vout[0]}, {}));
+    BOOST_REQUIRE(r.wallet->GetWalletTxFromOutpoint(r.change_outpoint) == r.wallet->GetWalletTx(other->GetHash()));
+
+    r.wallet->SetBirthTime(0);
+    const TestBlock block{{MakeMergedBlockTx(r, 2 * COIN)}};
+    r.wallet->blockConnected(ChainstateRole::NORMAL, block.Info());
+
+    const CWalletTx* wtx = r.wallet->GetWalletTx(txid);
+    const CWalletTx* other_wtx = r.wallet->GetWalletTx(other->GetHash());
+    BOOST_REQUIRE(wtx != nullptr);
+    BOOST_REQUIRE(other_wtx != nullptr);
+    BOOST_CHECK(wtx->isConfirmed());
+    BOOST_CHECK_EQUAL(r.wallet->GetTxDepthInMainChain(*wtx), 1);
+    BOOST_CHECK(other_wtx->isConflicted());
+}
+
 // Disconnecting the block that confirmed our aggregate merged under another
 // hash returns the aggregate to unconfirmed. The block tx is synced inactive
 // under its own hash, which never reached the aggregate, so the aggregate
@@ -1685,12 +1718,18 @@ BOOST_FIXTURE_TEST_CASE(output_storage_merged_chain_disconnected, TestingSetup)
     BOOST_REQUIRE(child_wtx != nullptr);
     BOOST_REQUIRE(wtx->isConfirmed());
     BOOST_REQUIRE(child_wtx->isConfirmed());
+    BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 98 * COIN);
 
+    // Both sends keep their inputs spent until abandoned, so the coin is not
+    // freed, and the chain's change is unconfirmed: nothing counts as trusted.
     r.wallet->blockDisconnected(block.Info());
     BOOST_CHECK(wtx->state<TxStateInactive>());
     BOOST_CHECK(child_wtx->state<TxStateInactive>());
     BOOST_CHECK(!wtx->isAbandoned());
     BOOST_CHECK(!child_wtx->isAbandoned());
+    BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
+    BOOST_CHECK(r.wallet->IsSpent(r.change_outpoint));
+    BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 0);
 }
 
 // CandidatePool::PickForAggregate leaves a picked cover candidate in the pool,

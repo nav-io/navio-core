@@ -181,6 +181,8 @@ target_json_data_sources(test_navio
   data/tx_valid.json
 )
 
+add_windows_application_manifest(test_navio)
+
 target_link_libraries(test_navio
   core_interface
   test_util

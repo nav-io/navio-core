@@ -387,13 +387,9 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         assert(consensus.hashGenesisBlock == uint256S("0x7a04d0211de9194390c69ea0ab0d67e3c18a00c5a0b4aae65a4b5cd919e5c3e6"));
         assert(genesis.hashMerkleRoot == uint256S("0x86054bea52edd87ef7366fd103a66f263557736fd006f1a1942dc50ca40c507f"));
 
+        // No known testnet seed nodes: connect with -addnode, -seednode or -connect.
         vFixedSeeds.clear();
         vSeeds.clear();
-        // nodes with support for servicebits filtering should be at the top
-        // vSeeds.emplace_back("testnet-seed.bitcoin.jonasschnelli.ch.");
-        // vSeeds.emplace_back("seed.tbtc.petertodd.net.");
-        // vSeeds.emplace_back("seed.testnet.bitcoin.sprovoost.nl.");
-        // vSeeds.emplace_back("testnet-seed.bluematt.me."); // Just a static list of stable node(s), only supports x9
 
         base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1, 111);
         base58Prefixes[BLSCT_ADDRESS] = {73, 33};
@@ -404,8 +400,6 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
 
         bech32_hrp = "tb";
         bech32_mod_hrp = "tnv";
-
-        vFixedSeeds = std::vector<uint8_t>(std::begin(chainparams_seed_test), std::end(chainparams_seed_test));
 
         fDefaultConsistencyChecks = false;
         m_is_mockable_chain = false;
