@@ -368,6 +368,7 @@ BASE_SCRIPTS = [
     'blsct_rescan_blockfilter.py',
     'blsct_getbalanceforaddress.py',
     'blsct_token.py',
+    'blsct_mint_conflict.py',
     'blsct_nft.py',
     'blsct_htlc.py',
     'blsct_watchonly_balances.py',

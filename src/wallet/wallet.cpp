@@ -10,6 +10,7 @@
 #endif
 #include <addresstype.h>
 #include <blockfilter.h>
+#include <blsct/tokens/predicate_exec.h>
 #include <chain.h>
 #include <coins.h>
 #include <common/args.h>
@@ -78,6 +79,7 @@
 #include <thread>
 #include <tuple>
 #include <unordered_set>
+#include <utility>
 #include <variant>
 
 struct KeyOriginInfo;
@@ -2072,6 +2074,18 @@ void CWallet::transactionRemovedFromMempool(const CTransactionRef& tx, MemPoolRe
         // imperfect, and could be improved in general, see
         // https://github.com/bitcoin-core/bitcoin-devwiki/wiki/Wallet-Transaction-Conflict-Tracking
         SyncTransaction(tx, TxStateInactive{});
+
+        // A tx evicted because one of its token predicates no longer holds at
+        // the tip (see RemoveTokenPredicateConflicts in validation.cpp) has
+        // no input spent by the block, so the conflict detection above never
+        // fires and its inputs would stay spent until abandoned. Mark it
+        // conflicted with the block that caused the eviction instead.
+        const bool has_token_predicate = std::any_of(tx->vout.begin(), tx->vout.end(), [](const CTxOut& out) {
+            return blsct::IsTokenStatePredicate(out.predicate);
+        });
+        if (has_token_predicate && mapWallet.contains(tx->GetHash())) {
+            m_pending_predicate_conflicts.push_back(tx->GetHash());
+        }
     }
 }
 
@@ -2094,6 +2108,19 @@ void CWallet::blockConnected(ChainstateRole role, const interfaces::BlockInfo& b
     for (size_t index = 0; index < block.data->vtx.size(); index++) {
         SyncTransaction(block.data->vtx[index], TxStateConfirmed{block.hash, block.height, static_cast<int>(index)});
         transactionRemovedFromMempool(block.data->vtx[index], MemPoolRemovalReason::BLOCK);
+    }
+
+    // The mempool evicts predicate conflicts while connecting the block, so
+    // their removal notifications arrive before this one. When several
+    // blocks connect in one step, all their removals precede the first
+    // BlockConnected, and the tx is marked conflicted with an earlier block
+    // than the one that caused it: it then only returns to inactive once
+    // that earlier block is disconnected.
+    for (const uint256& txid : std::exchange(m_pending_predicate_conflicts, {})) {
+        auto it = mapWallet.find(txid);
+        // Skip a tx that confirmed after all, e.g. if a reorg mined it.
+        if (it == mapWallet.end() || !it->second.isInactive()) continue;
+        MarkConflicted(block.hash, block.height, txid);
     }
 }
 
@@ -2157,6 +2184,26 @@ void CWallet::blockDisconnected(const interfaces::BlockInfo& block)
                 RecursiveUpdateTxState(wtx.tx->GetHash(), try_updating_state);
             }
         }
+    }
+
+    // Txs conflicted with this block without spending its inputs (marked from
+    // m_pending_predicate_conflicts in blockConnected) are not reached by the
+    // loop above. Once the block is gone nothing conflicts them any more.
+    std::vector<uint256> unconflicted;
+    for (const auto& [txid, wtx] : mapWallet) {
+        if (const auto* conflicted = wtx.state<TxStateConflicted>(); conflicted && conflicted->conflicting_block_hash == block.hash) {
+            unconflicted.push_back(txid);
+        }
+    }
+    for (const uint256& txid : unconflicted) {
+        RecursiveUpdateTxState(txid, [&](CWalletTx& tx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet) {
+            if (!tx.isConflicted()) return TxUpdate::UNCHANGED;
+            if (tx.state<TxStateConflicted>()->conflicting_block_height >= disconnect_height) {
+                tx.m_state = TxStateInactive{};
+                return TxUpdate::CHANGED;
+            }
+            return TxUpdate::UNCHANGED;
+        });
     }
 }
 
