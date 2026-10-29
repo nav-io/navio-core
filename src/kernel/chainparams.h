@@ -16,24 +16,12 @@
 
 #include <cstdint>
 #include <iterator>
-#include <map>
 #include <memory>
 #include <optional>
 #include <string>
 #include <unordered_map>
 #include <utility>
 #include <vector>
-
-typedef std::map<int, uint256> MapCheckpoints;
-
-struct CCheckpointData {
-    MapCheckpoints mapCheckpoints;
-
-    int GetHeight() const {
-        if (mapCheckpoints.empty()) return 0;
-        return mapCheckpoints.rbegin()->first /* height */;
-    }
-};
 
 struct AssumeutxoHash : public BaseHash<uint256> {
     explicit AssumeutxoHash(const uint256& hash) : BaseHash(hash) {}
@@ -119,7 +107,6 @@ public:
     const std::string& Bech32HRP() const { return bech32_hrp; }
     const std::string& Bech32ModHRP() const { return bech32_mod_hrp; }
     const std::vector<uint8_t>& FixedSeeds() const { return vFixedSeeds; }
-    const CCheckpointData& Checkpoints() const { return checkpointData; }
 
     std::optional<AssumeutxoData> AssumeutxoForHeight(int height) const
     {
@@ -194,7 +181,6 @@ protected:
     std::vector<uint8_t> vFixedSeeds;
     bool fDefaultConsistencyChecks;
     bool m_is_mockable_chain;
-    CCheckpointData checkpointData;
     std::vector<AssumeutxoData> m_assumeutxo_data;
     ChainTxData chainTxData;
 };

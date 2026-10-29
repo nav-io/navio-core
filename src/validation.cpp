@@ -2314,21 +2314,9 @@ public:
 
 static unsigned int GetBlockScriptFlags(const CBlockIndex& block_index, const ChainstateManager& chainman)
 {
-    const Consensus::Params& consensusparams = chainman.GetConsensus();
-
-    // BIP16 didn't become active until Apr 1 2012 (on mainnet, and
-    // retroactively applied to testnet)
-    // However, only one historical block violated the P2SH rules (on both
-    // mainnet and testnet).
-    // Similarly, only one historical block violated the TAPROOT rules on
-    // mainnet.
-    // For simplicity, always leave P2SH+WITNESS+TAPROOT on except for the two
-    // violating blocks.
+    // P2SH, WITNESS and TAPROOT are always on; unlike Bitcoin Core, no navio
+    // chain has historical blocks exempted from them.
     uint32_t flags{SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_TAPROOT};
-    const auto it{consensusparams.script_flag_exceptions.find(*Assert(block_index.phashBlock))};
-    if (it != consensusparams.script_flag_exceptions.end()) {
-        flags = it->second;
-    }
 
     // Enforce the DERSIG (BIP66) rule
     if (DeploymentActiveAt(block_index, chainman, Consensus::DEPLOYMENT_DERSIG)) {
@@ -4691,23 +4679,11 @@ static bool ContextualCheckBlockHeader(const CBlockHeader& block, BlockValidatio
     if (consensusParams.fBLSCT && consensusParams.nLastPOWHeight < nHeight && !block.IsProofOfStake())
         return state.Invalid(BlockValidationResult::BLOCK_INVALID_HEADER, "bad-consensus-algo", "late proof of work");
 
-    // Check against checkpoints
-    if (chainman.m_options.checkpoints_enabled) {
-        // Don't accept any forks from the main chain prior to last checkpoint.
-        // GetLastCheckpoint finds the last checkpoint in MapCheckpoints that's in our
-        // BlockIndex().
-        const CBlockIndex* pcheckpoint = blockman.GetLastCheckpoint(chainman.GetParams().Checkpoints());
-        if (pcheckpoint && nHeight < pcheckpoint->nHeight) {
-            LogPrintf("ERROR: %s: forked chain older than last checkpoint (height %d)\n", __func__, nHeight);
-            return state.Invalid(BlockValidationResult::BLOCK_CHECKPOINT, "bad-fork-prior-to-checkpoint");
-        }
-    }
-
     // Hard finality checkpoints (PoPS long-range-attack defence).
     // Reject any candidate whose block at a listed height has a different
-    // hash than the agreed, release-baked value. Evaluated regardless of
-    // m_options.checkpoints_enabled so an operator cannot opt out of
-    // anti-long-range protection at node startup.
+    // hash than the agreed, release-baked value. No startup option turns
+    // this off, so an operator cannot opt out of anti-long-range
+    // protection.
     {
         const auto& finality = consensusParams.finalityCheckpoints;
         auto it = finality.find(nHeight);

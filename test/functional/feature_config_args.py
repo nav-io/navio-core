@@ -376,6 +376,13 @@ class ConfArgsTest(BitcoinTestFramework):
             self.nodes[0].assert_start_raises_init_error(expected_msg=f'Error: acceptstalefeeestimates is not supported on {chain} chain.')
         util.write_config(conf_file, n=0, chain="regtest")  # Reset to regtest
 
+    def test_checkpoints_removed(self):
+        self.log.info("Test -checkpoints is still accepted but warns that it has no effect")
+        warning = "Warning: Option '-checkpoints' is set but checkpoints were removed. This option has no effect."
+        with self.nodes[0].assert_debug_log(expected_msgs=[warning]):
+            self.start_node(0, extra_args=['-checkpoints=0'])
+        self.stop_node(0, expected_stderr=warning)
+
     def run_test(self):
         self.test_log_buffer()
         self.test_args_log()
@@ -389,6 +396,7 @@ class ConfArgsTest(BitcoinTestFramework):
         self.test_ignored_conf()
         self.test_ignored_default_conf()
         self.test_acceptstalefeeestimates_arg_support()
+        self.test_checkpoints_removed()
 
         # Remove the -datadir argument so it doesn't override the config file
         self.nodes[0].args = [arg for arg in self.nodes[0].args if not arg.startswith("-datadir")]

@@ -26,8 +26,6 @@ util::Result<void> ApplyArgsManOptions(const ArgsManager& args, ChainstateManage
 {
     if (auto value{args.GetBoolArg("-checkblockindex")}) opts.check_block_index = *value;
 
-    if (auto value{args.GetBoolArg("-checkpoints")}) opts.checkpoints_enabled = *value;
-
     if (auto value{args.GetBoolArg("-dandelion")}) opts.dandelion_enabled = *value;
 
     if (auto value{args.GetArg("-minimumchainwork")}) {

@@ -149,7 +149,6 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         // (CSV) and BIP141/143/147 (segwit) are all active from genesis on
         // this network; there is no legacy chain history that predates them.
         consensus.BIP34Height = 1;
-        consensus.BIP34Hash = uint256{};
         consensus.BIP65Height = 1;
         consensus.BIP66Height = 1;
         consensus.CSVHeight = 1;
@@ -291,11 +290,6 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         fDefaultConsistencyChecks = false;
         m_is_mockable_chain = false;
 
-        checkpointData = {
-            {
-
-            }};
-
         m_assumeutxo_data = {
             // TODO to be specified in a future patch.
         };
@@ -325,7 +319,6 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         // (CSV) and BIP141/143/147 (segwit) are all active from genesis on
         // this network; there is no legacy chain history that predates them.
         consensus.BIP34Height = 1;
-        consensus.BIP34Hash = uint256{};
         consensus.BIP65Height = 1;
         consensus.BIP66Height = 1;
         consensus.CSVHeight = 1;
@@ -410,8 +403,6 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         fDefaultConsistencyChecks = false;
         m_is_mockable_chain = false;
 
-        checkpointData = {};
-
         m_assumeutxo_data = {};
 
         chainTxData = ChainTxData{
@@ -480,7 +471,6 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             m_chain_type = ChainType::SIGNET;
             consensus.signet_blocks = true;
             consensus.signet_challenge.assign(bin.begin(), bin.end());            consensus.BIP34Height = 1;
-            consensus.BIP34Hash = uint256{};
             consensus.BIP65Height = 1;
             consensus.BIP66Height = 1;
             consensus.CSVHeight = 1;
@@ -563,7 +553,6 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             m_chain_type = ChainType::REGTEST;
             consensus.signet_blocks = false;
             consensus.signet_challenge.clear();            consensus.BIP34Height = 1; // Always active unless overridden
-            consensus.BIP34Hash = uint256();
             consensus.BIP65Height = 1;  // Always active unless overridden
             consensus.BIP66Height = 1;  // Always active unless overridden
             consensus.CSVHeight = 1;    // Always active unless overridden
@@ -653,12 +642,6 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             fDefaultConsistencyChecks = true;
             m_is_mockable_chain = true;
 
-            checkpointData = {
-                {
-                    {0, uint256S("0f9188f13cb7b2c71f2a335e3a4fc328bf5beb436012afca590b1a11466e2206")},
-                }
-            };
-
             m_assumeutxo_data = {
                 {// For use by test/validation_tests.cpp and test/validation_chainstatemanager_tests.cpp
                  // NOTE: hash_serialized needs to be updated after changing ComputeUTXOStats to process
@@ -707,7 +690,6 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             m_chain_type = ChainType::BLSCTREGTEST;
             consensus.signet_blocks = false;
             consensus.signet_challenge.clear();            consensus.BIP34Height = 1; // Always active unless overridden
-            consensus.BIP34Hash = uint256();
             consensus.BIP65Height = 1;  // Always active unless overridden
             consensus.BIP66Height = 1;  // Always active unless overridden
             consensus.CSVHeight = 1;    // Always active unless overridden
@@ -798,11 +780,6 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
 
             fDefaultConsistencyChecks = true;
             m_is_mockable_chain = true;
-
-            checkpointData = {
-                {
-                    {0, consensus.hashGenesisBlock},
-                }};
 
             chainTxData = ChainTxData{
                 0,
