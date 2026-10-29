@@ -928,18 +928,30 @@ static void WriteDelegationStats()
     file << root.write(2) << "\n";
     file.close();
     std::error_code ec;
-    for (int attempt = 0; attempt < STATS_RENAME_ATTEMPTS; ++attempt) {
-        if (attempt > 0) UninterruptibleSleep(STATS_RENAME_RETRY_WAIT);
-        fs::rename(tmp, target, ec);
-        if (ec != std::errc::permission_denied && ec != std::errc::device_or_resource_busy) break;
+    // The stream state is sticky, so this catches a failed write as well as
+    // a failed close(), which flushes the rest: a short write (a full disk)
+    // renamed into place would replace the last complete stats.
+    if (file.fail()) {
+        LogPrintf("%s: Could not write %s\n", __func__, fs::PathToString(tmp));
+    } else {
+        int attempts{0};
+        while (attempts < STATS_RENAME_ATTEMPTS) {
+            if (attempts > 0) UninterruptibleSleep(STATS_RENAME_RETRY_WAIT);
+            ++attempts;
+            fs::rename(tmp, target, ec);
+            if (ec != std::errc::permission_denied && ec != std::errc::device_or_resource_busy) break;
+            // MSVC also reports a directory in the way as permission denied,
+            // which no amount of waiting clears.
+            std::error_code dir_ec;
+            if (fs::is_directory(target, dir_ec)) break;
+        }
+        if (!ec) return;
+        LogPrintf("%s: Could not rename %s into place: %s (attempts: %d)\n", __func__, fs::PathToString(tmp), ec.message(), attempts);
     }
-    if (ec) {
-        LogPrintf("%s: Could not rename %s into place: %s\n", __func__, fs::PathToString(tmp), ec.message());
-        // Don't leave the unused copy next to -statsfile; the next write
-        // creates it afresh.
-        fs::remove(tmp, ec);
-        if (ec) LogPrintf("%s: Could not remove %s: %s\n", __func__, fs::PathToString(tmp), ec.message());
-    }
+    // Don't leave the unused copy next to -statsfile; the next write
+    // creates it afresh.
+    fs::remove(tmp, ec);
+    if (ec) LogPrintf("%s: Could not remove %s: %s\n", __func__, fs::PathToString(tmp), ec.message());
 }
 
 //! Wallet endpoint to route RPCs through: none in delegated mode, where no
