@@ -285,6 +285,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
         wallet/wallettool.cpp
       )
       add_windows_resources(navio-wallet bitcoin-wallet-res.rc)
+      add_windows_application_manifest(navio-wallet)
       target_link_libraries(navio-wallet
         PRIVATE
           core_interface
@@ -470,6 +471,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       init/naviod.cpp
     )
     add_windows_resources(naviod naviod-res.rc)
+    add_windows_application_manifest(naviod)
     target_link_libraries(naviod
       core_interface
       navio_node
@@ -492,6 +494,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
   if(BUILD_CLI)
     add_executable(navio-cli bitcoin-cli.cpp)
     add_windows_resources(navio-cli bitcoin-cli-res.rc)
+    add_windows_application_manifest(navio-cli)
     target_link_libraries(navio-cli
       core_interface
       navio_cli
@@ -507,6 +510,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
   if(BUILD_STAKER)
     add_executable(navio-staker navio-staker.cpp)
     add_windows_resources(navio-staker navio-staker-res.rc)
+    add_windows_application_manifest(navio-staker)
     target_link_libraries(navio-staker
       core_interface
       navio_cli
@@ -524,6 +528,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
   # navio-p2pmsg (p2p-messaging operator daemon; RPC client like navio-staker)
   if(BUILD_STAKER)
     add_executable(navio-p2pmsg navio-p2pmsg.cpp)
+    add_windows_application_manifest(navio-p2pmsg)
     target_link_libraries(navio-p2pmsg
       core_interface
       navio_cli
@@ -538,6 +543,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
   if(BUILD_TX)
     add_executable(navio-tx bitcoin-tx.cpp)
     add_windows_resources(navio-tx bitcoin-tx-res.rc)
+    add_windows_application_manifest(navio-tx)
     target_link_libraries(navio-tx
       core_interface
       navio_common
@@ -552,6 +558,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
   if(BUILD_UTIL)
     add_executable(navio-util bitcoin-util.cpp)
     add_windows_resources(navio-util bitcoin-util-res.rc)
+    add_windows_application_manifest(navio-util)
     target_link_libraries(navio-util
       core_interface
       navio_common
@@ -568,6 +575,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       add_executable(navio-chainstate
         bitcoin-chainstate.cpp
       )
+      add_windows_application_manifest(navio-chainstate)
       target_link_libraries(navio-chainstate
         PRIVATE
           core_interface
