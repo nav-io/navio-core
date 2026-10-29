@@ -3809,11 +3809,21 @@ std::shared_ptr<CWallet> CWallet::Create(WalletContext& context, const std::stri
         error = strprintf(_("Error loading %s: Private keys can only be disabled during creation"), walletFile);
         return nullptr;
     } else if (walletInstance->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
+        bool have_private_keys{false};
         for (auto spk_man : walletInstance->GetActiveScriptPubKeyMans()) {
             if (spk_man->HavePrivateKeys()) {
-                warnings.push_back(strprintf(_("Warning: Private keys detected in wallet {%s} with disabled private keys"), walletFile));
+                have_private_keys = true;
                 break;
             }
+        }
+        // BLSCT keys live outside the active script pubkey managers. The HD
+        // seed is what derives the spend key; an audit-key wallet holds only
+        // the view key and has no seed.
+        if (const auto* blsct_km = walletInstance->GetBLSCTKeyMan(); blsct_km && blsct_km->IsHDEnabled()) {
+            have_private_keys = true;
+        }
+        if (have_private_keys) {
+            warnings.push_back(strprintf(_("Warning: Private keys detected in wallet {%s} with disabled private keys"), walletFile));
         }
     }
 
