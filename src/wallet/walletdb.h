@@ -275,9 +275,7 @@ public:
     bool WriteWatchOnly(const CScript& script, const CKeyMetadata& keymeta);
     bool EraseWatchOnly(const CScript& script);
     bool WriteBLSCTWatchOnly(const CScript& script, const CKeyMetadata& keymeta);
-    bool EraseBLSCTWatchOnly(const CScript& script);
     bool WriteBLSCTWatchOnlyNonce(const CScript& script, const blsct::PublicKey& nonce);
-    bool EraseBLSCTWatchOnlyNonce(const CScript& script);
     bool WriteBLSCTBlindingGeneration(const uint256& anchor, uint32_t generation);
 
     //! The blinding scalar of a BLSCT output this wallet created, keyed by
@@ -328,8 +326,6 @@ public:
     //! birthday suffix). Only written when the birthday is truly known.
     bool WriteBLSCTBirthday(int64_t birthday);
     bool WriteCryptedBLSCTMnemonicEntropy(const std::vector<unsigned char>& crypted_entropy);
-    //! Erase the BIP-39 mnemonic entropy from the wallet database.
-    bool EraseBLSCTMnemonicEntropy();
 
     //! Delete records of the given types
     bool EraseRecords(const std::unordered_set<std::string>& types);
