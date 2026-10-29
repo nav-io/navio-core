@@ -3075,6 +3075,9 @@ RPCHelpMan consolidate()
                                 candidates.clear();
                                 continue;
                             }
+                            // The aggregate is out, so report its id even if
+                            // recording it below throws.
+                            txids.push_back(agg_tx->GetHash().GetHex());
                             // Record the combined tx as this wallet's own now,
                             // as the send path does: otherwise the next call
                             // can run before the mempool sync callback marks
@@ -3087,7 +3090,6 @@ RPCHelpMan consolidate()
                                 // would lose the id of a tx already out.
                                 LogPrintf("consolidate: aggregate %s broadcast but not fully recorded by the wallet\n", agg_tx->GetHash().ToString());
                             }
-                            txids.push_back(agg_tx->GetHash().GetHex());
                         } else {
                             wallet::mapValue_t map_value;
                             pwallet->CommitTransaction(own, std::move(map_value), /*orderForm=*/{});
