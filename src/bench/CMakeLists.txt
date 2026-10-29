@@ -72,6 +72,8 @@ add_executable(bench_navio
   xor.cpp
 )
 
+add_windows_application_manifest(bench_navio)
+
 target_link_libraries(bench_navio
   core_interface
   test_util

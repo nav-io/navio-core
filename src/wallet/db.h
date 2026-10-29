@@ -20,8 +20,6 @@ class ArgsManager;
 struct bilingual_str;
 
 namespace wallet {
-void SplitWalletPath(const fs::path& wallet_path, fs::path& env_directory, std::string& database_filename);
-
 class DatabaseCursor
 {
 public:
@@ -131,13 +129,6 @@ public:
     /** Open the database if it is not already opened. */
     virtual void Open() = 0;
 
-    //! Counts the number of active database users to be sure that the database is not closed while someone is using it
-    std::atomic<int> m_refcount{0};
-    /** Indicate the a new database user has began using the database. Increments m_refcount */
-    virtual void AddRef() = 0;
-    /** Indicate that database user has stopped using the database and that it could be flushed or closed. Decrement m_refcount */
-    virtual void RemoveRef() = 0;
-
     /** Rewrite the entire database on disk, with the exception of key pszSkip if non-zero
      */
     virtual bool Rewrite(const char* pszSkip=nullptr) = 0;
@@ -153,13 +144,8 @@ public:
      *  Also close the environment if no other databases are open in it.
      */
     virtual void Close() = 0;
-    /* flush the wallet passively (TRY_LOCK)
-       ideal to be called periodically */
-    virtual bool PeriodicFlush() = 0;
 
     virtual void IncrementUpdateCounter() = 0;
-
-    virtual void ReloadDbEnv() = 0;
 
     /** Return path to main database file for logs and error messages. */
     virtual std::string Filename() = 0;
@@ -170,9 +156,6 @@ public:
     virtual std::string Format() = 0;
 
     std::atomic<unsigned int> nUpdateCounter;
-    unsigned int nLastSeen{0};
-    unsigned int nLastFlushed{0};
-    int64_t nLastWalletUpdate{0};
 
     /** Make a DatabaseBatch connected to this database */
     virtual std::unique_ptr<DatabaseBatch> MakeBatch(bool flush_on_close = true) = 0;
@@ -192,8 +175,6 @@ struct DatabaseOptions {
     // Specialized options. Not every option is supported by every backend.
     bool verify = true;             //!< Check data integrity on load.
     bool use_unsafe_sync = false;   //!< Disable file sync for faster performance.
-    bool use_shared_memory = false; //!< Let other processes access the database.
-    int64_t max_log_mb = 100;       //!< Max log size to allow before consolidating.
 };
 
 enum class DatabaseStatus {

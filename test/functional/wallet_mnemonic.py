@@ -162,6 +162,10 @@ class WalletMnemonicTest(BitcoinTestFramework):
         # exists to have an older seed imported later
         assert "mnemonic" not in result_blank
         assert_equal(node.get_wallet_rpc("test_blank").getwalletinfo().get("birthtime", 0), 0)
+        # with no keys there is no audit key to dump: a wallet error, not
+        # the keyman's internal exception
+        assert_raises_rpc_error(-37, "Wallet has no BLSCT audit key (blank wallet); use setblsctseed to initialize",
+                                node.get_wallet_rpc("test_blank").getblsctauditkey)
 
         self.log.info("Test BLSCT wallet with private keys disabled holds no seed")
         result_nopriv = node.createwallet(wallet_name="test_nopriv", blsct=True, disable_private_keys=True)
@@ -173,6 +177,7 @@ class WalletMnemonicTest(BitcoinTestFramework):
         assert_raises_rpc_error(-37, no_seed_msg, w_nopriv.getblsctseed)
         assert_raises_rpc_error(-4, no_seed_msg, w_nopriv.dumpmnemonic)
         assert_raises_rpc_error(-4, "This wallet has no available keys", w_nopriv.getnewaddress)
+        assert_raises_rpc_error(-37, "Wallet has no BLSCT audit key (private keys are disabled)", w_nopriv.getblsctauditkey)
         node.unloadwallet("test_nopriv")
         node.loadwallet("test_nopriv")
         w_nopriv = node.get_wallet_rpc("test_nopriv")
@@ -194,12 +199,38 @@ class WalletMnemonicTest(BitcoinTestFramework):
         for name in ("test_nopriv_seed", "test_nopriv_mnemonic", "test_nopriv_passphrase"):
             assert_raises_rpc_error(-18, "Path does not exist", node.loadwallet, name)
 
+        self.log.info("Test createwallet refuses a seed, mnemonic or mnemonic passphrase for a blank wallet")
+        blank_msg = "Cannot combine 'blank' with 'seed', 'mnemonic' or 'mnemonic_passphrase'"
+        blank_keys = {
+            "test_blank_seed": {"seed": "00" * 32},
+            "test_blank_mnemonic": {"mnemonic": "abandon " * 23 + "art"},
+            "test_blank_passphrase": {"mnemonic_passphrase": "extra"},
+        }
+        for name, keys in blank_keys.items():
+            assert_raises_rpc_error(-8, blank_msg, node.createwallet, wallet_name=name, blsct=True, blank=True, **keys)
+            assert_raises_rpc_error(-18, "Path does not exist", node.loadwallet, name)
+
         self.log.info("Test an audit key with private keys disabled explicitly creates a watch-only wallet")
         audit_key = node.get_wallet_rpc("test_blsct").getblsctauditkey()
         node.createwallet(wallet_name="test_nopriv_audit", blsct=True, disable_private_keys=True, seed=audit_key)
         w_audit = node.get_wallet_rpc("test_nopriv_audit")
         assert_equal(w_audit.getwalletinfo()["private_keys_enabled"], False)
         assert_equal(w_audit.getblsctauditkey(), audit_key)
+
+        self.log.info("Test an audit key whose view or spend key is invalid is refused")
+        bad_audit_keys = {
+            # spend key not a G1 point
+            "test_bad_audit_spend": audit_key[:64] + "ff" * 48,
+            # view key not below the group order
+            "test_bad_audit_view_range": "ff" * 32 + audit_key[64:],
+            # view key zero
+            "test_bad_audit_view_zero": "00" * 32 + audit_key[64:],
+        }
+        for name, bad_key in bad_audit_keys.items():
+            assert_raises_rpc_error(-8, "Invalid audit key",
+                                    node.createwallet, wallet_name=name, blsct=True, seed=bad_key)
+            # the refusal must come before the wallet database is written
+            assert_raises_rpc_error(-18, "Path does not exist", node.loadwallet, name)
 
         self.log.info("Test encrypted wallet: dumpmnemonic works after encryption")
         node.createwallet(wallet_name="test_encrypted", blsct=True, passphrase="testpass")
@@ -334,6 +365,14 @@ class WalletMnemonicTest(BitcoinTestFramework):
             # Loading a seedless BLSCT wallet used to abort the node, so the
             # tool must not leave one behind.
             assert_raises_rpc_error(-18, "Path does not exist", node.loadwallet, bad_name)
+
+        self.log.info("Test CLI tool: navio-wallet create with an invalid audit key errors and leaves no wallet")
+        for name, bad_key in bad_audit_keys.items():
+            cli_name = "cli_" + name
+            rc_ba, stdout_ba, stderr_ba = self.navio_wallet_create(cli_name, seed=bad_key)
+            assert_equal(rc_ba, 1)
+            assert "Invalid audit key" in stderr_ba
+            assert_raises_rpc_error(-18, "Path does not exist", node.loadwallet, cli_name)
 
         self.log.info("Test CLI tool: navio-wallet create with -mnemonic but without -blsct errors")
         # BLSCT is the tool's default wallet type, so -descriptors must be passed

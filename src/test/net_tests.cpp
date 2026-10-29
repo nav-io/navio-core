@@ -20,6 +20,7 @@
 #include <test/util/setup_common.h>
 #include <test/util/validation.h>
 #include <timedata.h>
+#include <util/chaintype.h>
 #include <util/strencodings.h>
 #include <util/string.h>
 #include <validation.h>
@@ -598,6 +599,30 @@ BOOST_AUTO_TEST_CASE(cnetaddr_unserialize_v2)
     s >> ser_params(addr);
     BOOST_CHECK(!addr.IsValid());
     BOOST_REQUIRE(s.empty());
+}
+
+BOOST_AUTO_TEST_CASE(fixed_seeds_use_default_port)
+{
+    // A fixed seed on another port is a node of some other network (the
+    // testnet list used to be Bitcoin's testnet3 nodes), so dialing it can
+    // never find a peer.
+    for (const auto chain : {ChainType::MAIN, ChainType::TESTNET, ChainType::SIGNET, ChainType::REGTEST, ChainType::BLSCTREGTEST}) {
+        const auto params{CreateChainParams(ArgsManager{}, chain)};
+        // Decode the same way ConvertSeeds() in net.cpp does.
+        DataStream underlying_stream{params->FixedSeeds()};
+        ParamsStream s{CAddress::V2_NETWORK, underlying_stream};
+        size_t num_seeds{0};
+        while (!s.eof()) {
+            CService endpoint;
+            s >> endpoint;
+            ++num_seeds;
+            BOOST_CHECK_MESSAGE(endpoint.GetPort() == params->GetDefaultPort(),
+                                ChainTypeToString(chain) << " fixed seed " << endpoint.ToStringAddrPort()
+                                                         << " is not on default port " << params->GetDefaultPort());
+        }
+        // Mainnet ships at least one seed, so the decode loop above has run.
+        if (chain == ChainType::MAIN) BOOST_CHECK(num_seeds > 0);
+    }
 }
 
 // prior to PR #14728, this test triggers an undefined behavior

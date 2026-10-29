@@ -247,8 +247,8 @@ liststakedcommitments()
         RPCResult{
             RPCResult::Type::ARR, "", "", {
                                               {RPCResult::Type::OBJ, "", "", {
-                                                                                 {RPCResult::Type::STR_HEX, "tx_hash", "The transaction hash where the commitment was locked"},
-                                                                                 {RPCResult::Type::NUM, "nout", "The transaction output index where the commitment was locked"},
+                                                                                 {RPCResult::Type::STR_HEX, "tx_hash", "The output hash of the commitment, not the hash of the transaction that locked it: use gettxfromoutputhash to find that transaction"},
+                                                                                 {RPCResult::Type::NUM, "nout", "The index of the commitment in the transaction that locked it; 0 on an output-storage wallet, which keeps outputs without their transaction"},
                                                                                  {RPCResult::Type::STR_HEX, "commitment", "The staked commitment"},
                                                                                  {RPCResult::Type::STR, "amount", "The commitment amount"},
                                                                                  {RPCResult::Type::STR_HEX, "value", "The commitment amount in hex"},
