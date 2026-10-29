@@ -141,12 +141,6 @@ public:
         return !m_mnemonic_entropy.empty();
     }
 
-    bool HasCryptedMnemonicEntropy() const
-    {
-        LOCK(cs_KeyStore);
-        return !m_crypted_mnemonic_entropy.empty();
-    }
-
     SecureBytes GetMnemonicEntropy() const
     {
         LOCK(cs_KeyStore);
