@@ -34,6 +34,20 @@ const int64_t STAKING_ACCOUNT = -2;
 
 using SecureBytes = std::vector<unsigned char, secure_allocator<unsigned char>>;
 
+//! An audit key as getblsctauditkey prints it: the private view key followed
+//! by the public spend key.
+struct AuditKey {
+    BlstScalar view;
+    BlstG1Point spend;
+};
+
+//! Decodes an audit key, or returns nullopt when it is not one: wrong length,
+//! a view key that is zero or not below the group order (SetVch would
+//! silently reduce it to a different key), or a spend key that is not a G1
+//! subgroup point or is the identity. Wallet creation checks this before the
+//! database exists, so a bad key leaves no wallet behind.
+std::optional<AuditKey> DecodeAuditKey(const std::vector<unsigned char>& audit_key);
+
 class Manager
 {
 protected:

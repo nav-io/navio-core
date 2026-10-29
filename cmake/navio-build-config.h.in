@@ -35,9 +35,6 @@
 /* Define to 1 to enable wallet functions. */
 #cmakedefine ENABLE_WALLET 1
 
-/* Define to 1 if SQLite support is enabled (used when wallet is enabled). */
-#cmakedefine USE_SQLITE 1
-
 /* Define to 1 to enable ZMQ notifications. */
 #cmakedefine01 ENABLE_ZMQ
 

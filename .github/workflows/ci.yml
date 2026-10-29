@@ -336,7 +336,8 @@ jobs:
             -DVCPKG_TARGET_TRIPLET=x64-windows-static ^
             -DVCPKG_MANIFEST_DIR=%VCPKG_MANIFEST_DIR% ^
             -DBUILD_TESTS=ON ^
-            -DBUILD_BENCH=ON
+            -DBUILD_BENCH=ON ^
+            -DBUILD_FUZZ_BINARY=ON
 
       - name: Build
         shell: cmd

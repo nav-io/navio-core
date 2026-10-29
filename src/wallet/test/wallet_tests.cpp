@@ -4,6 +4,7 @@
 
 #include <wallet/wallet.h>
 
+#include <algorithm>
 #include <future>
 #include <memory>
 #include <cstdint>
@@ -1070,6 +1071,58 @@ BOOST_FIXTURE_TEST_CASE(FailedCreateWalletReleasesDatabase, TestingSetup)
         RemoveWallet(context, loaded, /*load_on_start=*/std::nullopt);
         TestUnloadWallet(std::move(loaded));
     }
+}
+
+// A BLSCT wallet with private keys disabled must hold no HD seed. If one got
+// in anyway, loading it warns as it does for a script pubkey manager holding
+// private keys. An audit-key wallet, which holds only the view key, does not.
+BOOST_FIXTURE_TEST_CASE(LoadWatchOnlyBlsctWalletWarnsOnSeed, TestingSetup)
+{
+    m_args.ForceSetArg("-unsafesqlitesync", "1");
+    WalletContext context;
+    context.args = &m_args;
+    context.chain = m_node.chain.get();
+
+    const auto warns_on_load = [&](const std::string& name, const std::vector<unsigned char>& seed, blsct::SeedType type) {
+        bilingual_str error;
+        std::vector<bilingual_str> warnings;
+        DatabaseStatus status;
+        {
+            // Chainless, as in LoadSeedlessBlsctWalletFails, so the wallet is
+            // released at scope exit. CreateWallet would refuse the seed for a
+            // wallet with private keys disabled; the keyman itself does not.
+            WalletContext create_context;
+            create_context.args = &m_args;
+            DatabaseOptions options;
+            options.require_create = true;
+            options.require_format = DatabaseFormat::SQLITE;
+            options.create_flags = WALLET_FLAG_BLSCT | WALLET_FLAG_DISABLE_PRIVATE_KEYS;
+            auto database = MakeWalletDatabase(name, options, status, error);
+            BOOST_REQUIRE(database);
+            auto created = CWallet::Create(create_context, name, std::move(database), options.create_flags, error, warnings);
+            BOOST_REQUIRE(created);
+            LOCK(created->cs_wallet);
+            BOOST_REQUIRE(created->GetOrCreateBLSCTKeyMan()->SetupGeneration(seed, type));
+        }
+
+        DatabaseOptions options;
+        options.require_existing = true;
+        warnings.clear();
+        auto loaded = LoadWallet(context, name, /*load_on_start=*/std::nullopt, options, status, error, warnings);
+        BOOST_REQUIRE_MESSAGE(loaded, error.original);
+        RemoveWallet(context, loaded, /*load_on_start=*/std::nullopt);
+        TestUnloadWallet(std::move(loaded));
+        return std::any_of(warnings.begin(), warnings.end(), [](const bilingual_str& w) {
+            return w.original.find("Private keys detected") != std::string::npos;
+        });
+    };
+
+    BOOST_CHECK(warns_on_load("watch_only_with_seed", std::vector<unsigned char>(32, 1), blsct::IMPORT_MASTER_KEY));
+
+    std::vector<unsigned char> audit_key(32, 1);
+    const auto spend{BlstG1Point::Rand().GetVch()};
+    audit_key.insert(audit_key.end(), spend.begin(), spend.end());
+    BOOST_CHECK(!warns_on_load("watch_only_audit_key", audit_key, blsct::IMPORT_VIEW_KEY));
 }
 
 BOOST_FIXTURE_TEST_CASE(ZapSelectTx, TestChain100Setup)

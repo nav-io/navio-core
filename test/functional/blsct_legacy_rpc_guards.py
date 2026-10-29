@@ -266,6 +266,9 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
             -1,
         )
         assert_equal(node.getblockcount(), height + 1)
+        # maxtries is read as uint64_t, so a budget above INT_MAX is accepted.
+        self.generatetoblsctaddress(node, 1, wallet.getnewaddress(label="", address_type="blsct"), 2**31)
+        assert_equal(node.getblockcount(), height + 2)
 
         assert_raises_rpc_error(
             -1,

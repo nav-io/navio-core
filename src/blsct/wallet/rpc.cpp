@@ -1159,6 +1159,12 @@ static RPCHelpMan replyquote()
     };
 }
 
+//! The sending, minting and staking RPCs return an output hash, not a txid:
+//! gettransaction would treat it as a txid and, on an output-storage wallet,
+//! answer with an entry synthesised around the output instead of the
+//! transaction.
+static const std::string OUTPUT_HASH_NOT_TXID{"This is not a transaction id: use gettxfromoutputhash to find the transaction."};
+
 UniValue CreateTokenOrNft(const RPCHelpMan& self, const JSONRPCRequest& request, const blsct::TokenType& type)
 {
     std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
@@ -1232,7 +1238,7 @@ RPCHelpMan createnft()
          {"max_supply", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The NFT max supply."}},
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
-                                              {RPCResult::Type::STR_HEX, "outputHash", "The output hash of the broadcasted transaction"},
+                                              {RPCResult::Type::STR_HEX, "outputHash", "The output hash of the output creating the NFT collection. " + OUTPUT_HASH_NOT_TXID},
                                               {RPCResult::Type::STR_HEX, "tokenId", "The token id"},
                                           }},
         RPCExamples{HelpExampleRpc("createnft", "{'name':'My NFT Collection'} 1000")},
@@ -1259,7 +1265,7 @@ RPCHelpMan createtoken()
          {"max_supply", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The token max supply."}},
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
-                                              {RPCResult::Type::STR_HEX, "outputHash", "The output hash of the broadcasted transaction"},
+                                              {RPCResult::Type::STR_HEX, "outputHash", "The output hash of the output creating the token. " + OUTPUT_HASH_NOT_TXID},
                                               {RPCResult::Type::STR_HEX, "tokenId", "The token id"},
                                           }},
         RPCExamples{HelpExampleRpc("createtoken", "{\"name\":\"Token\"} 1000")},
@@ -1410,7 +1416,7 @@ RPCHelpMan minttoken()
          },
          {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The token amount to be minted."}},
         RPCResult{
-            RPCResult::Type::STR_HEX, "outputHash", "The output hash of the broadcasted transaction"},
+            RPCResult::Type::STR_HEX, "outputHash", "The output hash of the output carrying the minted tokens. " + OUTPUT_HASH_NOT_TXID},
         RPCExamples{HelpExampleRpc("minttoken", "d46a375d31843d6a303dc7a8c0e0cccaa2d89f442052226fd5337b4d77afcc80 " + BLSCT_EXAMPLE_ADDRESS[0] + " 1000")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
@@ -1490,7 +1496,7 @@ static RPCHelpMan mintnft()
              },
          }},
         RPCResult{
-            RPCResult::Type::STR_HEX, "outputHash", "The output hash of the broadcasted transaction"},
+            RPCResult::Type::STR_HEX, "outputHash", "The output hash of the output carrying the minted NFT. " + OUTPUT_HASH_NOT_TXID},
         RPCExamples{HelpExampleRpc("mintnft", "d46a375d31843d6a303dc7a8c0e0cccaa2d89f442052226fd5337b4d77afcc80 1 " + BLSCT_EXAMPLE_ADDRESS[0] + " {\"desc\":\"Your first NFT\"}")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
             std::shared_ptr<wallet::CWallet> const pwallet = wallet::GetWalletForJSONRPCRequest(request);
@@ -2030,13 +2036,13 @@ RPCHelpMan sendtoblsctaddress()
         },
         {
             RPCResult{"if verbose is not set or set to false",
-                      RPCResult::Type::STR_HEX, "outputHash", "The output hash."},
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash of the output paying the address. " + OUTPUT_HASH_NOT_TXID},
             RPCResult{
                 "if verbose is set to true",
                 RPCResult::Type::OBJ,
                 "",
                 "",
-                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash."}},
+                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash of the output paying the address. " + OUTPUT_HASH_NOT_TXID}},
             },
         },
         RPCExamples{
@@ -2099,13 +2105,13 @@ RPCHelpMan sendtokentoblsctaddress()
         },
         {
             RPCResult{"if verbose is not set or set to false",
-                      RPCResult::Type::STR_HEX, "outputHash", "The output hash."},
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash of the output paying the tokens to the address. " + OUTPUT_HASH_NOT_TXID},
             RPCResult{
                 "if verbose is set to true",
                 RPCResult::Type::OBJ,
                 "",
                 "",
-                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash."}},
+                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash of the output paying the tokens to the address. " + OUTPUT_HASH_NOT_TXID}},
             },
         },
         RPCExamples{
@@ -2171,13 +2177,13 @@ RPCHelpMan sendnfttoblsctaddress()
         },
         {
             RPCResult{"if verbose is not set or set to false",
-                      RPCResult::Type::STR_HEX, "outputHash", "The output hash."},
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash of the output paying the NFT to the address. " + OUTPUT_HASH_NOT_TXID},
             RPCResult{
                 "if verbose is set to true",
                 RPCResult::Type::OBJ,
                 "",
                 "",
-                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash."}},
+                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash of the output paying the NFT to the address. " + OUTPUT_HASH_NOT_TXID}},
             },
         },
         RPCExamples{
@@ -2240,13 +2246,13 @@ RPCHelpMan stakelock()
         },
         {
             RPCResult{"if verbose is not set or set to false",
-                      RPCResult::Type::STR_HEX, "outputHash", "The output hash."},
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash of the new staked commitment (the tx_hash liststakedcommitments reports). " + OUTPUT_HASH_NOT_TXID},
             RPCResult{
                 "if verbose is set to true",
                 RPCResult::Type::OBJ,
                 "",
                 "",
-                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash."}},
+                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash of the new staked commitment (the tx_hash liststakedcommitments reports). " + OUTPUT_HASH_NOT_TXID}},
             },
         },
         RPCExamples{
@@ -2305,13 +2311,13 @@ RPCHelpMan delegatestake()
         },
         {
             RPCResult{"if verbose is not set or set to false",
-                      RPCResult::Type::STR_HEX, "outputHash", "The output hash."},
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash of the new delegated staked commitment. " + OUTPUT_HASH_NOT_TXID},
             RPCResult{
                 "if verbose is set to true",
                 RPCResult::Type::OBJ,
                 "",
                 "",
-                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash."}},
+                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash of the new delegated staked commitment. " + OUTPUT_HASH_NOT_TXID}},
             },
         },
         RPCExamples{
@@ -2379,13 +2385,13 @@ RPCHelpMan stakeunlock()
         },
         {
             RPCResult{"if verbose is not set or set to false",
-                      RPCResult::Type::STR_HEX, "outputHash", "The output hash."},
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash of the remaining staked commitment on a partial unlock, or of the output returning the unlocked funds on a full one. " + OUTPUT_HASH_NOT_TXID},
             RPCResult{
                 "if verbose is set to true",
                 RPCResult::Type::OBJ,
                 "",
                 "",
-                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash."}},
+                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash of the remaining staked commitment on a partial unlock, or of the output returning the unlocked funds on a full one. " + OUTPUT_HASH_NOT_TXID}},
             },
         },
         RPCExamples{
@@ -2730,13 +2736,13 @@ RPCHelpMan redelegatestake()
         },
         {
             RPCResult{"if verbose is not set or set to false",
-                      RPCResult::Type::STR_HEX, "outputHash", "The output hash."},
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash of the new delegated staked commitment. " + OUTPUT_HASH_NOT_TXID},
             RPCResult{
                 "if verbose is set to true",
                 RPCResult::Type::OBJ,
                 "",
                 "",
-                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash."}},
+                {{RPCResult::Type::STR_HEX, "outputHash", "The output hash of the new delegated staked commitment. " + OUTPUT_HASH_NOT_TXID}},
             },
         },
         RPCExamples{
@@ -2836,7 +2842,7 @@ RPCHelpMan compounddelegations()
         },
         {
             RPCResult{"if there was something to compound",
-                      RPCResult::Type::STR_HEX, "outputHash", "The output hash of the compounding transaction."},
+                      RPCResult::Type::STR_HEX, "outputHash", "The output hash of the new delegated staked commitment, which folds in the commitments it consolidates and the compounded balance. " + OUTPUT_HASH_NOT_TXID},
             RPCResult{"if the spendable balance is below min_amount",
                       RPCResult::Type::NONE, "", ""},
         },
@@ -3069,6 +3075,9 @@ RPCHelpMan consolidate()
                                 candidates.clear();
                                 continue;
                             }
+                            // The aggregate is out, so report its id even if
+                            // recording it below throws.
+                            txids.push_back(agg_tx->GetHash().GetHex());
                             // Record the combined tx as this wallet's own now,
                             // as the send path does: otherwise the next call
                             // can run before the mempool sync callback marks
@@ -3081,7 +3090,6 @@ RPCHelpMan consolidate()
                                 // would lose the id of a tx already out.
                                 LogPrintf("consolidate: aggregate %s broadcast but not fully recorded by the wallet\n", agg_tx->GetHash().ToString());
                             }
-                            txids.push_back(agg_tx->GetHash().GetHex());
                         } else {
                             wallet::mapValue_t map_value;
                             pwallet->CommitTransaction(own, std::move(map_value), /*orderForm=*/{});
@@ -3469,7 +3477,7 @@ RPCHelpMan createblsctrawtransaction()
                             {"amount", RPCArg::Type::NUM, RPCArg::Optional::NO, "The amount in navoshis"},
                             {"memo", RPCArg::Type::STR, RPCArg::Default{""}, "A memo used to store in the transaction.\n"
                                                                              "The recipient will see its value."},
-                            {"token_id", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "The token id for token transactions"},
+                            {"token_id", RPCArg::Type::STR, RPCArg::Default{""}, "The token to send: the 64-hex token id, followed by \"#<subid>\" for an NFT; empty for NAV"},
                             {"script", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The script in hex format to use for this output"},
                             {"nonce", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The nonce for this output (hex string)"},
                             {"hash", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "32-byte hash (hex) for atomic_swap outputs"},
@@ -3709,7 +3717,7 @@ RPCHelpMan createblsctrawtransaction()
                 std::string memo = o.exists("memo") ? o["memo"].get_str() : "";
                 TokenId token_id;
                 if (o.exists("token_id") && !o["token_id"].get_str().empty()) {
-                    token_id = TokenId(ParseHashV(o["token_id"], "token_id"));
+                    token_id = ParseTokenIdV(o["token_id"], "token_id");
                 }
 
                 blsct::UnsignedOutput unsigned_output;
