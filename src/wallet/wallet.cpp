@@ -989,7 +989,6 @@ bool CWallet::EncryptWallet(const SecureString& strWalletPassphrase)
         // Completely rewrite the wallet file to avoid leaving bits of the
         // unencrypted private key in slack space in the database file.
         GetDatabase().Rewrite();
-        GetDatabase().ReloadDbEnv();
     }
     NotifyStatusChanged(this);
 

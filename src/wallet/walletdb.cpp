@@ -16,12 +16,9 @@
 #include <util/fs.h>
 #include <util/time.h>
 #include <util/translation.h>
-#ifdef USE_SQLITE
 #include <wallet/sqlite.h>
-#endif
 #include <wallet/wallet.h>
 
-#include <atomic>
 #include <optional>
 #include <string>
 
@@ -1934,33 +1931,6 @@ DBErrors WalletBatch::ZapSelectTx(std::vector<uint256>& vTxHashIn, std::vector<u
     return DBErrors::LOAD_OK;
 }
 
-void MaybeCompactWalletDB(WalletContext& context)
-{
-    static std::atomic<bool> fOneThread(false);
-    if (fOneThread.exchange(true)) {
-        return;
-    }
-
-    for (const std::shared_ptr<CWallet>& pwallet : GetWallets(context)) {
-        WalletDatabase& dbh = pwallet->GetDatabase();
-
-        unsigned int nUpdateCounter = dbh.nUpdateCounter;
-
-        if (dbh.nLastSeen != nUpdateCounter) {
-            dbh.nLastSeen = nUpdateCounter;
-            dbh.nLastWalletUpdate = GetTime();
-        }
-
-        if (dbh.nLastFlushed != nUpdateCounter && GetTime() - dbh.nLastWalletUpdate >= 2) {
-            if (dbh.PeriodicFlush()) {
-                dbh.nLastFlushed = nUpdateCounter;
-            }
-        }
-    }
-
-    fOneThread = false;
-}
-
 bool WalletBatch::WriteAddressPreviouslySpent(const CTxDestination& dest, bool previously_spent)
 {
     auto key{std::make_pair(DBKeys::DESTDATA, std::make_pair(EncodeDestination(dest), std::string("used")))};
@@ -2097,11 +2067,9 @@ std::unique_ptr<WalletDatabase> MakeDatabase(const fs::path& path, const Databas
 
     std::optional<DatabaseFormat> format;
     if (exists) {
-#ifdef USE_SQLITE
         if (IsSQLiteFile(SQLiteDataFile(path))) {
             format = DatabaseFormat::SQLITE;
         }
-#endif
     } else if (options.require_existing) {
         error = Untranslated(strprintf("Failed to load database path '%s'. Path does not exist.", fs::PathToString(path)));
         status = DatabaseStatus::FAILED_NOT_FOUND;
@@ -2132,12 +2100,6 @@ std::unique_ptr<WalletDatabase> MakeDatabase(const fs::path& path, const Databas
 
     if (!format) format = DatabaseFormat::SQLITE;
 
-#ifdef USE_SQLITE
     return MakeSQLiteDatabase(path, options, status, error);
-#else
-    error = Untranslated(strprintf("Failed to open database path '%s'. Build does not support SQLite database format.", fs::PathToString(path)));
-    status = DatabaseStatus::FAILED_BAD_FORMAT;
-    return nullptr;
-#endif
 }
 } // namespace wallet

@@ -104,16 +104,12 @@ public:
     ~MockableDatabase() = default;
 
     void Open() override {}
-    void AddRef() override {}
-    void RemoveRef() override {}
 
     bool Rewrite(const char* pszSkip=nullptr) override { return m_pass; }
     bool Backup(const std::string& strDest) const override { return m_pass; }
     void Flush() override {}
     void Close() override {}
-    bool PeriodicFlush() override { return m_pass; }
     void IncrementUpdateCounter() override {}
-    void ReloadDbEnv() override {}
 
     std::string Filename() override { return "mockable"; }
     std::vector<fs::path> Files() override { return {}; }
