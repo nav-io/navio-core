@@ -13,7 +13,7 @@ Group B: Custom script outputs (spendingKey set, dual authentication)
 import hashlib
 
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_greater_than, assert_raises_rpc_error
+from test_framework.util import assert_equal, assert_greater_than, assert_raises_rpc_error
 from test_framework.messages import COIN
 
 
@@ -67,6 +67,9 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
         # Group C: malformed hex rejection
         self.test_malformed_hex_rejected()
 
+        # Group D: policy bound on script-supplied BLS verification pairs
+        self.test_too_many_bls_pairs()
+
     # ------------------------------------------------------------------
     # Helpers
     # ------------------------------------------------------------------
@@ -113,6 +116,61 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
         self.nodes[0].sendrawtransaction(signed)
         self.generatetoblsctaddress(self.nodes[0], 1, self.addr1)
         return signed
+
+    def _spend_bls_check_script(self, n_checks, bk):
+        """Lock a coin to `n_checks` x `PUSH48(G1) OP_BLSCHECKSIG`, then OP_TRUE,
+        and return a 1-input wallet-signed spend of it.
+
+        Each OP_BLSCHECKSIG decodes the key, queues a (key, input hash) pair
+        for the aggregate signature check and pushes true, so the script itself
+        succeeds. The wallet signs only with the coin's spending key, never with
+        the script's key, so a spend that reaches the aggregate check fails it
+        with failed-signature-check.
+        """
+        g1 = "97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb"
+        script_hex = ("30" + g1 + "b3") * n_checks + "51"
+
+        signed_tx = self._create_custom_script_output(script_hex, bk)
+        oh, amt, gamma = self._recover_output(self.w1, signed_tx, COIN)
+        sk = self.w1.deriveblsctspendingkey(bk, self.addr1)
+
+        inputs = [{"outid": oh, "value": amt, "gamma": gamma,
+                   "spending_key": sk}]
+        outputs = [{"address": self.addr1, "amount": 99000000}]
+        raw = self.w1.createblsctrawtransaction(inputs, outputs)
+        funded = self.w1.fundblsctrawtransaction(raw)
+        signed = self.w1.signblsctrawtransaction(funded)
+        # The budget is per input, so pin the input count it is computed from.
+        assert_equal(len(self.nodes[0].decoderawtransaction(signed)["vin"]), 1)
+        return signed
+
+    def test_too_many_bls_pairs(self):
+        """Mempool bound on OP_BLSCHECKSIG calls made by input scripts.
+
+        For one input the budget is MAX_SCRIPT_BLS_CHECKS_BASE (16) +
+        MAX_SCRIPT_BLS_CHECKS_PER_INPUT (2) * 1 = 18. A spend at the budget
+        gets past the bound and fails only on the aggregate signature; one
+        call over it, and a 100-call script, are rejected by the bound before
+        any pairing is done.
+        """
+        self.log.info("=== D1: OP_BLSCHECKSIG budget ===")
+        budget = 16 + 2 * 1
+
+        at_budget = self._spend_bls_check_script(budget, "d1" * 32)
+        assert_raises_rpc_error(-26, "failed-signature-check",
+                                self.nodes[0].sendrawtransaction, at_budget)
+        self.log.info("  %d calls: past the bound, fails only on the signature", budget)
+
+        over_budget = self._spend_bls_check_script(budget + 1, "d2" * 32)
+        assert_raises_rpc_error(-26, "too-many-bls-signature-pairs",
+                                self.nodes[0].sendrawtransaction, over_budget)
+        self.log.info("  %d calls: rejected by the bound", budget + 1)
+
+        heavy = self._spend_bls_check_script(100, "d3" * 32)
+        assert_raises_rpc_error(-26, "too-many-bls-signature-pairs",
+                                self.nodes[0].sendrawtransaction, heavy)
+        self.log.info("  100 calls: rejected by the bound")
+        self.log.info("=== D1 PASSED ===")
 
     # ------------------------------------------------------------------
     # Group A: HTLC / atomic_swap (spendingKey nullified)

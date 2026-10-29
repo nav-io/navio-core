@@ -1216,7 +1216,7 @@ bool MemPoolAccept::ConsensusScriptChecks(const ATMPArgs& args, Workspace& ws)
         const int nSpendHeight = m_active_chainstate.m_chain.Tip()->nHeight + 1;
         const int64_t nMTP = m_active_chainstate.m_chain.Tip()->GetMedianTimePast();
 
-        if (!blsct::VerifyTx(tx, verify_view, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP, args.m_chainparams.GetConsensus().nBLSCTDefaultFee, args.m_chainparams.GetConsensus().nBLSCTProofV2Height, m_active_chainstate.m_chainman.ParThreads())) {
+        if (!blsct::VerifyTx(tx, verify_view, state, 0, args.m_chainparams.GetConsensus().nPePoSMinStakeAmount, nSpendHeight, nMTP, args.m_chainparams.GetConsensus().nBLSCTDefaultFee, args.m_chainparams.GetConsensus().nBLSCTProofV2Height, m_active_chainstate.m_chainman.ParThreads(), blsct::VerifyTxOptions{.enforce_script_pair_limit = true})) {
             return error("MemPoolAccept::ConsensusScriptChecks(): VerifyTx on transaction %s failed with %s",
                          tx.GetHash().ToString(), state.ToString());
         }

@@ -38,11 +38,32 @@ static constexpr uint32_t BLSCT_SEQUENCE_RELATIVE_FLAG = (1U << 31); // 0x800000
 class BLSCTSignatureChecker : public TransactionSignatureChecker
 {
     uint32_t m_input_locktime;
+    // OP_BLSCHECKSIG calls this input's script may still make (mempool
+    // policy, see MaxScriptBlsChecks); SIZE_MAX means no bound. Every call
+    // is counted, including one whose key fails to decode, so the per-input
+    // count and the per-tx running total in VerifyTxCoreImpl agree.
+    size_t m_max_bls_checks;
+    mutable size_t m_bls_checks{0};
+    mutable bool m_exceeded{false};
 
 public:
-    BLSCTSignatureChecker(const CTransaction* tx, unsigned int nIn)
+    BLSCTSignatureChecker(const CTransaction* tx, unsigned int nIn,
+                          size_t max_bls_checks = std::numeric_limits<size_t>::max())
         : TransactionSignatureChecker(tx, nIn, 0, MissingDataBehavior::FAIL),
-          m_input_locktime(tx->vin[nIn].nSequence) {}
+          m_input_locktime(tx->vin[nIn].nSequence), m_max_bls_checks(max_bls_checks) {}
+
+    bool CheckBlsSignature(Span<const unsigned char> pubkey) const override
+    {
+        if (m_bls_checks >= m_max_bls_checks) {
+            m_exceeded = true;
+            return false;
+        }
+        ++m_bls_checks;
+        return TransactionSignatureChecker::CheckBlsSignature(pubkey);
+    }
+
+    size_t BlsChecks() const { return m_bls_checks; }
+    bool ExceededBlsCheckLimit() const { return m_exceeded; }
 
     bool CheckLockTime(const CScriptNum& nLockTime) const override
     {
@@ -97,7 +118,8 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
                   const CAmount& nBLSCTDefaultFee,
                   int nBLSCTProofV2Height,
                   PreparedTxSignatureCheck* out_sig_check,
-                  size_t threads)
+                  size_t threads,
+                  const VerifyTxOptions& options)
 {
     using Clock = std::chrono::steady_clock;
 
@@ -180,6 +202,13 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
                      std::chrono::duration<double, std::milli>(now - t_init).count());
         }
 
+        // Mempool policy: bound the OP_BLSCHECKSIG calls the input scripts
+        // may make across the whole tx (see MaxScriptBlsChecks). SIZE_MAX
+        // means no bound (block validation).
+        constexpr size_t NO_LIMIT{std::numeric_limits<size_t>::max()};
+        const size_t bls_check_budget = options.enforce_script_pair_limit ? MaxScriptBlsChecks(n_in) : NO_LIMIT;
+        size_t bls_checks_used = 0;
+
         // Per-input prep runs serially: the aggregate-verify path below
         // (blsAggregateVerifyNoCheck via PublicKeys::VerifyBatch) already
         // parallelises miller-loop / hash-to-G2 across `threads` workers
@@ -188,13 +217,19 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
         // own N workers — observed regression: 0.53 ms/txin → 2.46 ms/txin
         // on a 752-input block (8-core host, 64 contending threads).
         for (size_t i = 0; i < n_in; ++i) {
-            BLSCTSignatureChecker checker(&tx, i);
+            const size_t bls_checks_left = bls_check_budget == NO_LIMIT ? NO_LIMIT : bls_check_budget - bls_checks_used;
+            BLSCTSignatureChecker checker(&tx, i, bls_checks_left);
             ScriptError serror;
             uint32_t flags = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_STRICTENC | SCRIPT_VERIFY_CHECKLOCKTIMEVERIFY;
 
-            if (!VerifyScript(tx.vin[i].scriptSig, coins[i].out.scriptPubKey, nullptr, flags, checker, &serror)) {
+            const bool script_ok = VerifyScript(tx.vin[i].scriptSig, coins[i].out.scriptPubKey, nullptr, flags, checker, &serror);
+            if (checker.ExceededBlsCheckLimit()) {
+                return state.Invalid(TxValidationResult::TX_MEMPOOL_POLICY, "too-many-bls-signature-pairs");
+            }
+            if (!script_ok) {
                 return state.Invalid(TxValidationResult::TX_CONSENSUS, "failed-script-check");
             }
+            bls_checks_used += checker.BlsChecks();
 
             for (const auto& pair : checker.GetKeyMessagePairs()) {
                 vPubKeys.emplace_back(pair.first);
@@ -432,12 +467,14 @@ bool VerifyTxCore(const CTransaction& tx,
                   const CAmount& nBLSCTDefaultFee,
                   int nBLSCTProofV2Height = std::numeric_limits<int>::max(),
                   PreparedTxSignatureCheck* out_sig_check = nullptr,
-                  size_t threads = 0)
+                  size_t threads = 0,
+                  const VerifyTxOptions& options = {.enforce_script_pair_limit = false})
 {
     try {
         return VerifyTxCoreImpl(tx, view, state, out_proofs, blockReward, minStake,
                                 nSpendHeight, nMedianTimePast, verify_rp_inline,
-                                nBLSCTDefaultFee, nBLSCTProofV2Height, out_sig_check, threads);
+                                nBLSCTDefaultFee, nBLSCTProofV2Height, out_sig_check, threads,
+                                options);
     } catch (const std::exception& e) {
         LogPrint(BCLog::VALIDATION, "BLSCT tx verify threw for %s: %s\n",
                  tx.GetHash().ToString(), e.what());
@@ -446,10 +483,10 @@ bool VerifyTxCore(const CTransaction& tx,
 }
 } // namespace
 
-bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast, const CAmount& nBLSCTDefaultFee, int nBLSCTProofV2Height, size_t threads)
+bool VerifyTx(const CTransaction& tx, CCoinsViewCache& view, TxValidationState& state, const CAmount& blockReward, const CAmount& minStake, int nSpendHeight, int64_t nMedianTimePast, const CAmount& nBLSCTDefaultFee, int nBLSCTProofV2Height, size_t threads, const VerifyTxOptions& options)
 {
     std::vector<bulletproofs_plus::RangeProofWithSeed<Blst>> proofs;
-    return VerifyTxCore(tx, view, state, proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/true, nBLSCTDefaultFee, nBLSCTProofV2Height, /*out_sig_check=*/nullptr, threads);
+    return VerifyTxCore(tx, view, state, proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/true, nBLSCTDefaultFee, nBLSCTProofV2Height, /*out_sig_check=*/nullptr, threads, options);
 }
 
 bool PrepareTxForDeferredVerification(const CTransaction& tx,
