@@ -21,7 +21,6 @@
 #include <pow.h>
 #include <primitives/block.h>
 #include <primitives/transaction.h>
-#include <reverse_iterator.h>
 #include <serialize.h>
 #include <signet.h>
 #include <span.h>
@@ -598,20 +597,6 @@ void BlockManager::ScanAndUnlinkAlreadyPrunedFiles()
     }
 
     UnlinkPrunedFiles(block_files_to_prune);
-}
-
-const CBlockIndex* BlockManager::GetLastCheckpoint(const CCheckpointData& data)
-{
-    const MapCheckpoints& checkpoints = data.mapCheckpoints;
-
-    for (const MapCheckpoints::value_type& i : reverse_iterate(checkpoints)) {
-        const uint256& hash = i.second;
-        const CBlockIndex* pindex = LookupBlockIndex(hash);
-        if (pindex) {
-            return pindex;
-        }
-    }
-    return nullptr;
 }
 
 bool BlockManager::IsBlockPruned(const CBlockIndex& block)

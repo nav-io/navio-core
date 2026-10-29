@@ -77,16 +77,8 @@ struct Params {
     uint256 hashGenesisBlock;
     CAmount nBLSCTBlockReward;
     CAmount nBLSCTFirstBlockReward;
-    /**
-     * Hashes of blocks that
-     * - are known to be consensus valid, and
-     * - buried in the chain, and
-     * - fail if the default script verify flags are applied.
-     */
-    std::map<uint256, uint32_t> script_flag_exceptions;
-    /** Block height and hash at which BIP34 becomes active */
+    /** Block height at which BIP34 becomes active */
     int BIP34Height;
-    uint256 BIP34Hash;
     /** Block height at which BIP65 becomes active */
     int BIP65Height;
     /** Block height at which BIP66 becomes active */

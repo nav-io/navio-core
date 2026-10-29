@@ -687,7 +687,8 @@ void SetupServerArgs(ArgsManager& argsman)
     argsman.AddArg("-blsctfixedbaseprefix=<n>", strprintf("Number of Gi/Hi generators to precompute when -blsctfixedbase is on (default: %u)", bulletproofs_plus::FixedBaseCache::DEFAULT_PREFIX), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-blsctfixedbasewin=<n>", strprintf("Window width (%u..%u) for the fixed-base tables (default: %u)", FixedBaseWindow::MIN_WIN_SIZE, FixedBaseWindow::MAX_WIN_SIZE, bulletproofs_plus::FixedBaseCache::DEFAULT_WIN_SIZE), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-checkmempool=<n>", strprintf("Run mempool consistency checks every <n> transactions. Use 0 to disable. (default: %u, regtest: %u, blsctregtest: %u)", defaultChainParams->DefaultConsistencyChecks(), regtestChainParams->DefaultConsistencyChecks(), blsctRegtestChainParams->DefaultConsistencyChecks()), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
-    argsman.AddArg("-checkpoints", strprintf("Enable rejection of any forks from the known historical chain until block %s (default: %u)", defaultChainParams->Checkpoints().GetHeight(), DEFAULT_CHECKPOINTS_ENABLED), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
+    // Checkpoints were removed. We keep `-checkpoints` as a hidden arg to display a more user friendly warning when set.
+    argsman.AddArg("-checkpoints", "", ArgsManager::ALLOW_ANY, OptionsCategory::HIDDEN);
     argsman.AddArg("-deprecatedrpc=<method>", "Allows deprecated RPC method(s) to be used", ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-stopafterblockimport", strprintf("Stop running after importing blocks from disk (default: %u)", DEFAULT_STOPAFTERBLOCKIMPORT), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
     argsman.AddArg("-stopatheight", strprintf("Stop running after reaching the given height in the main chain (default: %u)", DEFAULT_STOPATHEIGHT), ArgsManager::ALLOW_ANY | ArgsManager::DEBUG_ONLY, OptionsCategory::DEBUG_TEST);
@@ -972,6 +973,11 @@ bool AppInitParameterInteraction(const ArgsManager& args)
     // ********************************************************* Step 2: parameter interactions
 
     // also see: InitParameterInteraction()
+
+    // We removed checkpoints but keep the option to warn users who still have it in their config.
+    if (args.IsArgSet("-checkpoints")) {
+        InitWarning(_("Option '-checkpoints' is set but checkpoints were removed. This option has no effect."));
+    }
 
     // Error if network-specific options (-addnode, -connect, etc) are
     // specified in default section of config file, but not overridden
