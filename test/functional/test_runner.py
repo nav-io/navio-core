@@ -382,6 +382,7 @@ BASE_SCRIPTS = [
     'blsct_output_storage.py',
     'blsct_output_storage_expired_send.py',
     'blsct_output_storage_block_conflict.py',
+    'blsct_output_storage_removeprunedfunds.py',
     'blsct_token_output_storage.py',
     'blsct_token_verifychain.py',
     'blsct_token_replay.py',
