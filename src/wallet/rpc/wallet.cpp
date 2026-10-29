@@ -3,6 +3,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/wallet/keyman.h>
 #include <core_io.h>
 #include <key_io.h>
 #include <rpc/server.h>
@@ -416,9 +417,6 @@ static RPCHelpMan createwallet()
             }
 
             if (descriptors && !blsct) {
-#ifndef USE_SQLITE
-                throw JSONRPCError(RPC_WALLET_ERROR, "Compiled without sqlite support (required for descriptor wallets)");
-#endif
                 flags |= WALLET_FLAG_DESCRIPTORS;
             }
             if (!request.params[7].isNull() && request.params[7].get_bool()) {
@@ -456,6 +454,11 @@ static RPCHelpMan createwallet()
                 seed = ParseHex(request.params[10].get_str());
 
                 if (seed.size() == 80) {
+                    // Refused here rather than by SetupGeneration, which runs
+                    // only once the wallet database exists.
+                    if (!blsct::DecodeAuditKey(seed)) {
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "Invalid audit key: the view key or the spend key is not a valid key");
+                    }
                     type = blsct::IMPORT_VIEW_KEY;
                     flags |= WALLET_FLAG_DISABLE_PRIVATE_KEYS;
                 } else if (seed.size() != 32) {
@@ -510,6 +513,11 @@ static RPCHelpMan createwallet()
             // Such a wallet derives no keys, so a passphrase would be dropped.
             if ((flags & WALLET_FLAG_DISABLE_PRIVATE_KEYS) && !mnemonic_passphrase.empty()) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot combine 'disable_private_keys' with 'mnemonic_passphrase'");
+            }
+            // CreateWallet sets up no keys for a blank wallet, so these would
+            // be dropped without a word.
+            if ((flags & WALLET_FLAG_BLANK_WALLET) && (has_seed_param || has_mnemonic_param || !mnemonic_passphrase.empty())) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot combine 'blank' with 'seed', 'mnemonic' or 'mnemonic_passphrase'. A blank wallet is created without keys.");
             }
 
             // If mnemonic provided, convert to entropy. Accepts plain

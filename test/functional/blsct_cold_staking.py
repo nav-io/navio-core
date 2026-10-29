@@ -389,6 +389,19 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         assert_equal(len(stats["delegations"]), 1)
         assert_equal(stats["delegations"][0]["blocks_accepted"], 0)
 
+        # A rename that keeps failing (here the target is a directory) does
+        # not leave the new copy behind as a .tmp file.
+        stats_dir = os.path.join(self.options.tmpdir, "stats-dir")
+        os.mkdir(stats_dir)
+        staker = self.spawn_staker([f"-delegationkeyfile={keyfile}", f"-statsfile={stats_dir}"])
+        try:
+            found = self.wait_for_staker_line(staker, ["Could not rename"])
+            assert found, "staker did not report the failed stats file rename"
+            self.wait_until(lambda: not os.path.exists(stats_dir + ".tmp"))
+        finally:
+            staker.kill()
+            staker.wait()
+
         # Both key sources must not be combined.
         proc = subprocess.run([self.staker_path(), f"-datadir={self.nodes[0].datadir_path}",
                                "-delegated", "-delegationkey=00", f"-delegationkeyfile={keyfile}"],

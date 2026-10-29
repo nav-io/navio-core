@@ -1718,12 +1718,18 @@ BOOST_FIXTURE_TEST_CASE(output_storage_merged_chain_disconnected, TestingSetup)
     BOOST_REQUIRE(child_wtx != nullptr);
     BOOST_REQUIRE(wtx->isConfirmed());
     BOOST_REQUIRE(child_wtx->isConfirmed());
+    BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 98 * COIN);
 
+    // Both sends keep their inputs spent until abandoned, so the coin is not
+    // freed, and the chain's change is unconfirmed: nothing counts as trusted.
     r.wallet->blockDisconnected(block.Info());
     BOOST_CHECK(wtx->state<TxStateInactive>());
     BOOST_CHECK(child_wtx->state<TxStateInactive>());
     BOOST_CHECK(!wtx->isAbandoned());
     BOOST_CHECK(!child_wtx->isAbandoned());
+    BOOST_CHECK(r.wallet->IsSpent(r.coin_outpoint));
+    BOOST_CHECK(r.wallet->IsSpent(r.change_outpoint));
+    BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, 0);
 }
 
 // Disconnecting the block that confirmed our aggregate merged under another

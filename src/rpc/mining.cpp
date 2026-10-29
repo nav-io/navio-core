@@ -174,6 +174,11 @@ static bool getScriptFromDescriptor(const std::string& descriptor, CScript& scri
     }
 }
 
+//! maxtries is one budget for the whole call, not per block, and running out
+//! of it ends the call early with what was mined so far rather than an error.
+static const std::string GENERATE_MAXTRIES_HELP{"How many nonces to try in total, across all the blocks requested."};
+static const std::string GENERATE_RESULT_HELP{"hashes of blocks generated: fewer than requested if maxtries ran out or the node is shutting down"};
+
 static RPCHelpMan generatetodescriptor()
 {
     return RPCHelpMan{
@@ -183,10 +188,10 @@ static RPCHelpMan generatetodescriptor()
         {
             {"num_blocks", RPCArg::Type::NUM, RPCArg::Optional::NO, "How many blocks are generated."},
             {"descriptor", RPCArg::Type::STR, RPCArg::Optional::NO, "The descriptor to send the newly generated NAV to."},
-            {"maxtries", RPCArg::Type::NUM, RPCArg::Default{DEFAULT_MAX_TRIES}, "How many iterations to try."},
+            {"maxtries", RPCArg::Type::NUM, RPCArg::Default{DEFAULT_MAX_TRIES}, GENERATE_MAXTRIES_HELP},
         },
         RPCResult{
-            RPCResult::Type::ARR, "", "hashes of blocks generated",
+            RPCResult::Type::ARR, "", GENERATE_RESULT_HELP,
             {
                 {RPCResult::Type::STR_HEX, "", "blockhash"},
             }
@@ -230,10 +235,10 @@ static RPCHelpMan generatetoblsctaddress()
         {
             {"nblocks", RPCArg::Type::NUM, RPCArg::Optional::NO, "How many blocks are generated."},
             {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The address to send the newly generated nav to."},
-            {"maxtries", RPCArg::Type::NUM, RPCArg::Default{DEFAULT_MAX_TRIES}, "How many iterations to try."},
+            {"maxtries", RPCArg::Type::NUM, RPCArg::Default{DEFAULT_MAX_TRIES}, GENERATE_MAXTRIES_HELP},
         },
         RPCResult{
-            RPCResult::Type::ARR, "", "hashes of blocks generated", {
+            RPCResult::Type::ARR, "", GENERATE_RESULT_HELP, {
                                                                         {RPCResult::Type::STR_HEX, "", "blockhash"},
                                                                     }},
         RPCExamples{"\nGenerate 11 blocks to myaddress\n" + HelpExampleCli("generatetoaddress", "11 \"myaddress\"") + "If you are using the " PACKAGE_NAME " wallet, you can get a new address to send the newly generated nav to with:\n" + HelpExampleCli("getnewaddress", "")},
@@ -263,10 +268,10 @@ static RPCHelpMan generatetoaddress()
         {
             {"nblocks", RPCArg::Type::NUM, RPCArg::Optional::NO, "How many blocks are generated."},
             {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The address to send the newly generated nav to."},
-            {"maxtries", RPCArg::Type::NUM, RPCArg::Default{DEFAULT_MAX_TRIES}, "How many iterations to try."},
+            {"maxtries", RPCArg::Type::NUM, RPCArg::Default{DEFAULT_MAX_TRIES}, GENERATE_MAXTRIES_HELP},
         },
         RPCResult{
-            RPCResult::Type::ARR, "", "hashes of blocks generated", {
+            RPCResult::Type::ARR, "", GENERATE_RESULT_HELP, {
                                                                         {RPCResult::Type::STR_HEX, "", "blockhash"},
                                                                     }},
         RPCExamples{"\nGenerate 11 blocks to myaddress\n" + HelpExampleCli("generatetoaddress", "11 \"myaddress\"") + "If you are using the " PACKAGE_NAME " wallet, you can get a new address to send the newly generated NAV to with:\n" + HelpExampleCli("getnewaddress", "")},

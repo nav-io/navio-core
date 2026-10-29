@@ -1016,7 +1016,6 @@ bool CWallet::EncryptWallet(const SecureString& strWalletPassphrase)
         // Completely rewrite the wallet file to avoid leaving bits of the
         // unencrypted private key in slack space in the database file.
         GetDatabase().Rewrite();
-        GetDatabase().ReloadDbEnv();
     }
     NotifyStatusChanged(this);
 
@@ -3006,7 +3005,15 @@ void CWallet::CommitTransaction(CTransactionRef tx, mapValue_t mapValue, std::ve
         // TODO: if we expect the failure to be long term or permanent, instead delete wtx from the wallet and return failure.
     }
 
-    if (tx->IsBLSCT()) MirrorBlsctBroadcast(*tx);
+    if (!tx->IsBLSCT()) return;
+    // The tx is broadcast by now, so the commit succeeded; throwing would
+    // fail the caller and invite a resend of a tx already out. The sync
+    // callbacks record the same spends and outputs once the tx reaches them.
+    try {
+        MirrorBlsctBroadcast(*tx);
+    } catch (const std::runtime_error& e) {
+        WalletLogPrintf("%s: %s was broadcast, but recording its spends failed: %s\n", __func__, tx->GetHash().ToString(), e.what());
+    }
 }
 
 bool CWallet::RecordBroadcastTransaction(CTransactionRef tx, const std::vector<CTxOut>& own_half_outputs, mapValue_t mapValue)
@@ -3835,11 +3842,21 @@ std::shared_ptr<CWallet> CWallet::Create(WalletContext& context, const std::stri
         error = strprintf(_("Error loading %s: Private keys can only be disabled during creation"), walletFile);
         return nullptr;
     } else if (walletInstance->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
+        bool have_private_keys{false};
         for (auto spk_man : walletInstance->GetActiveScriptPubKeyMans()) {
             if (spk_man->HavePrivateKeys()) {
-                warnings.push_back(strprintf(_("Warning: Private keys detected in wallet {%s} with disabled private keys"), walletFile));
+                have_private_keys = true;
                 break;
             }
+        }
+        // BLSCT keys live outside the active script pubkey managers. The HD
+        // seed is what derives the spend key; an audit-key wallet holds only
+        // the view key and has no seed.
+        if (const auto* blsct_km = walletInstance->GetBLSCTKeyMan(); blsct_km && blsct_km->IsHDEnabled()) {
+            have_private_keys = true;
+        }
+        if (have_private_keys) {
+            warnings.push_back(strprintf(_("Warning: Private keys detected in wallet {%s} with disabled private keys"), walletFile));
         }
     }
 
