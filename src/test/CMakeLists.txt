@@ -98,6 +98,9 @@ add_executable(test_navio
   fs_tests.cpp
   getarg_tests.cpp
   hash_tests.cpp
+  headers_sync_chainwork_tests.cpp
+  httpserver_tests.cpp
+  i2p_tests.cpp
   interfaces_tests.cpp
   key_io_tests.cpp
   key_tests.cpp
@@ -106,19 +109,28 @@ add_executable(test_navio
   merkle_tests.cpp
   merkleblock_tests.cpp
   miner_tests.cpp
+  miniminer_tests.cpp
   miniscript_tests.cpp
   minisketch_tests.cpp
   mnemonic_tests.cpp
   multisig_tests.cpp
+  net_peer_connection_tests.cpp
+  net_peer_eviction_tests.cpp
   net_tests.cpp
   netbase_tests.cpp
+  orphanage_tests.cpp
   outindex_tests.cpp
   p2pmsg_archive_tests.cpp
   p2pmsg_fmd_tests.cpp
   p2pmsg_tests.cpp
   pmt_tests.cpp
+  policy_fee_tests.cpp
   policyestimator_tests.cpp
+  pool_tests.cpp
+  pow_tests.cpp
+  prevector_tests.cpp
   rfq_tests.cpp
+  raii_event_tests.cpp
   random_tests.cpp
   rbf_tests.cpp
   rest_tests.cpp
