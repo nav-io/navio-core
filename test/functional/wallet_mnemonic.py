@@ -206,6 +206,21 @@ class WalletMnemonicTest(BitcoinTestFramework):
         assert_equal(w_audit.getwalletinfo()["private_keys_enabled"], False)
         assert_equal(w_audit.getblsctauditkey(), audit_key)
 
+        self.log.info("Test an audit key whose view or spend key is invalid is refused")
+        bad_audit_keys = {
+            # spend key not a G1 point
+            "test_bad_audit_spend": audit_key[:64] + "ff" * 48,
+            # view key not below the group order
+            "test_bad_audit_view_range": "ff" * 32 + audit_key[64:],
+            # view key zero
+            "test_bad_audit_view_zero": "00" * 32 + audit_key[64:],
+        }
+        for name, bad_key in bad_audit_keys.items():
+            assert_raises_rpc_error(-8, "Invalid audit key",
+                                    node.createwallet, wallet_name=name, blsct=True, seed=bad_key)
+            # the refusal must come before the wallet database is written
+            assert_raises_rpc_error(-18, "Path does not exist", node.loadwallet, name)
+
         self.log.info("Test encrypted wallet: dumpmnemonic works after encryption")
         node.createwallet(wallet_name="test_encrypted", blsct=True, passphrase="testpass")
         w_enc = node.get_wallet_rpc("test_encrypted")
@@ -339,6 +354,14 @@ class WalletMnemonicTest(BitcoinTestFramework):
             # Loading a seedless BLSCT wallet used to abort the node, so the
             # tool must not leave one behind.
             assert_raises_rpc_error(-18, "Path does not exist", node.loadwallet, bad_name)
+
+        self.log.info("Test CLI tool: navio-wallet create with an invalid audit key errors and leaves no wallet")
+        for name, bad_key in bad_audit_keys.items():
+            cli_name = "cli_" + name
+            rc_ba, stdout_ba, stderr_ba = self.navio_wallet_create(cli_name, seed=bad_key)
+            assert_equal(rc_ba, 1)
+            assert "Invalid audit key" in stderr_ba
+            assert_raises_rpc_error(-18, "Path does not exist", node.loadwallet, cli_name)
 
         self.log.info("Test CLI tool: navio-wallet create with -mnemonic but without -blsct errors")
         # BLSCT is the tool's default wallet type, so -descriptors must be passed
