@@ -319,6 +319,23 @@ bool KeyMan::SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy,
     return true;
 }
 
+std::optional<AuditKey> DecodeAuditKey(const std::vector<unsigned char>& audit_key)
+{
+    if (audit_key.size() != BlstScalar::SERIALIZATION_SIZE + BlstG1Point::SERIALIZATION_SIZE) return std::nullopt;
+    const std::vector<unsigned char> viewVch(audit_key.begin(), audit_key.begin() + BlstScalar::SERIALIZATION_SIZE);
+    const std::vector<unsigned char> spendingVch(audit_key.begin() + BlstScalar::SERIALIZATION_SIZE, audit_key.end());
+
+    AuditKey ret;
+    ret.view.SetVch(viewVch);
+    if (ret.view.GetVch() != viewVch || ret.view.IsZero()) return std::nullopt;
+
+    // SetVch leaves the identity behind on failure, and a spend key carrying
+    // it would import "successfully" into a wallet watching sub-addresses
+    // that are not the audited wallet's.
+    if (!ret.spend.SetVch(spendingVch) || ret.spend.IsZero()) return std::nullopt;
+    return ret;
+}
+
 bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force, const std::string& mnemonic_passphrase, const std::optional<int64_t>& creation_time)
 {
     if ((CanGenerateKeys() && !force) || m_storage.IsLocked()) {
@@ -332,19 +349,14 @@ bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedT
         scalarSeed.SetVch(seed);
         SetHDSeed(scalarSeed, creation_time);
     } else if (seed.size() == 80 && type == IMPORT_VIEW_KEY) {
-        std::vector<unsigned char> viewVch(seed.begin(), seed.begin() + 32);
-        std::vector<unsigned char> spendingVch(seed.begin() + 32, seed.end());
+        // Checked before anything is stored.
+        const auto audit_key{DecodeAuditKey(seed)};
+        if (!audit_key) return false;
 
-        BlstScalar scalarView;
-        scalarView.SetVch(viewVch);
-
-        BlstG1Point pointSpending;
-        pointSpending.SetVch(spendingVch);
-
-        if (!AddViewKey(scalarView, PrivateKey(scalarView).GetPublicKey()))
+        if (!AddViewKey(audit_key->view, PrivateKey(audit_key->view).GetPublicKey()))
             throw std::runtime_error(std::string(__func__) + ": AddViewKey failed");
 
-        if (!AddSpendKey(pointSpending))
+        if (!AddSpendKey(audit_key->spend))
             throw std::runtime_error(std::string(__func__) + ": AddSpendKey failed");
     } else if (seed.empty()) {
         std::vector<unsigned char> entropy(32);

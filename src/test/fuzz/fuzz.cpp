@@ -25,9 +25,13 @@
 #include <memory>
 #include <string>
 #include <tuple>
-#include <unistd.h>
 #include <utility>
 #include <vector>
+
+#ifdef WIN32
+#include <fcntl.h>
+#include <io.h>
+#endif
 
 #if defined(PROVIDE_FUZZ_MAIN_FUNCTION) && defined(__AFL_FUZZ_INIT)
 __AFL_FUZZ_INIT();
@@ -136,12 +140,17 @@ void initialize()
 #if defined(PROVIDE_FUZZ_MAIN_FUNCTION)
 static bool read_stdin(std::vector<uint8_t>& data)
 {
+#ifdef WIN32
+    // In the default text mode, stdin would rewrite CRLF and end the input at
+    // the first 0x1A byte.
+    if (_setmode(_fileno(stdin), _O_BINARY) == -1) return false;
+#endif
     uint8_t buffer[1024];
-    ssize_t length = 0;
-    while ((length = read(STDIN_FILENO, buffer, 1024)) > 0) {
+    size_t length;
+    while ((length = std::fread(buffer, sizeof(uint8_t), sizeof(buffer), stdin)) > 0) {
         data.insert(data.end(), buffer, buffer + length);
     }
-    return length == 0;
+    return !std::ferror(stdin);
 }
 #endif
 
