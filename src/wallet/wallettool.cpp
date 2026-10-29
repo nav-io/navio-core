@@ -300,7 +300,11 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         const std::shared_ptr<CWallet> wallet_instance = MakeWallet(name, path, options, ParseHex(seed), type, mnemonic_passphrase, mnemonic_birthday);
         // Cleanse seed hex now that MakeWallet has consumed it
         memory_cleanse(seed.data(), seed.size());
-        if (!wallet_instance) return false;
+        if (!wallet_instance) {
+            // The success path cleanses the generated phrase after printing it
+            memory_cleanse(mnemonic_response.data(), mnemonic_response.size());
+            return false;
+        }
         if (!mnemonic_response.empty()) {
             tfm::format(std::cout, "\nMnemonic: %s\n\n", mnemonic_response);
             tfm::format(std::cout, "IMPORTANT: Write down this mnemonic phrase and store it securely.\n");
