@@ -8,6 +8,7 @@
 
 #include <wallet/wallettool.h>
 
+#include <blsct/wallet/keyman.h>
 #include <common/args.h>
 #include <mnemonic/mnemonic.h>
 #include <random.h>
@@ -232,6 +233,12 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         // BLSCT wallet with no seed, or with a random one never shown.
         if (!seed.empty() && !(IsHex(seed) && (seed.size() == 64 || seed.size() == 64 + 96))) {
             tfm::format(std::cerr, "Seed must be 64 (master) or 160 (view) characters long\n");
+            return false;
+        }
+        // Refused here rather than by SetupGeneration, which runs only once
+        // the wallet database exists.
+        if (seed.size() == 64 + 96 && !blsct::DecodeAuditKey(ParseHex(seed))) {
+            tfm::format(std::cerr, "Invalid audit key: the view key or the spend key is not a valid key\n");
             return false;
         }
 

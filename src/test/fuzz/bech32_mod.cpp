@@ -25,10 +25,11 @@ FUZZ_TARGET(bech32_mod)
     } else if (buf.size() < 154) {
         std::random_device rd;
         std::mt19937 gen(rd());
-        std::uniform_int_distribution<uint8_t> dist(0, 255);
+        // uniform_int_distribution is not defined for 8-bit types.
+        std::uniform_int_distribution<int> dist(0, 255);
 
         while (buf.size() < 154) {
-            buf.push_back(dist(gen));
+            buf.push_back(static_cast<uint8_t>(dist(gen)));
         }
     }
 

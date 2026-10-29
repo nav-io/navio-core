@@ -33,7 +33,6 @@
 #include <optional>
 #include <stdexcept>
 #include <cstdint>
-#include <unistd.h>
 
 using node::SnapshotMetadata;
 
