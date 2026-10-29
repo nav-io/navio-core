@@ -6,6 +6,8 @@
 #include <blsct/wallet/txfactory_global.h>
 #include <util/strencodings.h>
 
+#include <stdexcept>
+
 using T = Blst;
 using Point = T::Point;
 using Points = Elements<Point>;
@@ -224,6 +226,14 @@ UnsignedOutput CreateOutput(const std::pair<blsct::DoublePublicKey, CScript>& de
     return ret;
 }
 
+bool HasNonNativeFeeOutput(const CTransaction& tx)
+{
+    for (const auto& out : tx.vout) {
+        if (out.nValue != 0 && out.IsFee() && !out.tokenId.IsNull()) return true;
+    }
+    return false;
+}
+
 CTransactionRef AggregateTransactions(const std::vector<CTransactionRef>& txs)
 {
     auto ret = CMutableTransaction();
@@ -232,6 +242,13 @@ CTransactionRef AggregateTransactions(const std::vector<CTransactionRef>& txs)
     std::vector<blsct::PublicKey> feePublicKeys;
 
     for (auto& tx : txs) {
+        // The merged fee output below is native. Folding a fee paid in another
+        // token into it would leave the aggregate's balance off by
+        // nValue * (G_token - G_native) and make the whole block invalid, so
+        // refuse instead of building a broken aggregate.
+        if (HasNonNativeFeeOutput(*tx)) {
+            throw std::invalid_argument("AggregateTransactions: fee output not in the native token");
+        }
         vSigs.push_back(tx->txSig);
         for (auto& in : tx->vin) {
             ret.vin.push_back(in);
