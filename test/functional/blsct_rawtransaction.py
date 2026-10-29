@@ -87,6 +87,7 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         self.test_deriveblsctnonce(wallet1, wallet2, address1, address2)
         self.test_getblsctrecoverydatawithnonce(wallet1, wallet2, address1, address2)
         self.test_integration_workflow(wallet1, wallet2, address1, address2)
+        self.test_nft_output(wallet1, wallet2, address1, address2)
 
     def _find_output_by_message(self, recovery_data, message):
         for output in recovery_data["outputs"]:
@@ -515,6 +516,35 @@ class BLSCTRawTransactionTest(BitcoinTestFramework):
         assert_greater_than(balance2, initial_balance2)
 
         self.log.info("Complete BLSCT raw transaction workflow test passed")
+
+    def test_nft_output(self, wallet1, wallet2, address1, address2):
+        """An output's token_id names an NFT as "<collection>#<id>"."""
+        self.log.info("Testing a raw transaction sending an NFT")
+
+        collection = wallet1.createnft({"name": "Raw"}, 10)["tokenId"]
+        self.generatetoblsctaddress(self.nodes[0], 1, address1)
+        nft_outid = wallet1.mintnft(collection, 7, address1, {"id": "seven"})
+        self.generatetoblsctaddress(self.nodes[0], 1, address1)
+        nft = [{"index": "7", "metadata": [{"key": "id", "value": "seven"}]}]
+        assert_equal(wallet1.getnftbalance(collection), nft)
+
+        outputs = [{"address": address2, "amount": 1, "token_id": f"{collection}#7"}]
+        assert_raises_rpc_error(-8, "token_id must be a 64-hex token id, followed by #<subid> for an NFT",
+                                wallet1.createblsctrawtransaction, [], [{**outputs[0], "token_id": f"{collection}#07"}])
+
+        # The NFT input is named by the outid mintnft returned; funding adds
+        # the NAV that pays the fee. An NFT output carries its value in the
+        # clear with no range proof, so there is no recovered amount or gamma
+        # for the wallet to fill in: pass them.
+        nft_input = {"outid": nft_outid, "value": 1, "gamma": "00" * 32}
+        raw_tx = wallet1.createblsctrawtransaction([nft_input], outputs)
+        signed_tx = wallet1.signblsctrawtransaction(wallet1.fundblsctrawtransaction(raw_tx))
+        self.nodes[0].sendrawtransaction(signed_tx)
+        self.generatetoblsctaddress(self.nodes[0], 1, address1)
+        self.sync_all()
+
+        assert_equal(wallet2.getnftbalance(collection), nft)
+        assert_equal(wallet1.getnftbalance(collection), [])
 
 
 if __name__ == '__main__':

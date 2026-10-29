@@ -3475,7 +3475,7 @@ RPCHelpMan createblsctrawtransaction()
                             {"amount", RPCArg::Type::NUM, RPCArg::Optional::NO, "The amount in navoshis"},
                             {"memo", RPCArg::Type::STR, RPCArg::Default{""}, "A memo used to store in the transaction.\n"
                                                                              "The recipient will see its value."},
-                            {"token_id", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "The token id for token transactions"},
+                            {"token_id", RPCArg::Type::STR, RPCArg::Default{""}, "The token to send: the 64-hex token id, followed by \"#<subid>\" for an NFT; empty for NAV"},
                             {"script", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The script in hex format to use for this output"},
                             {"nonce", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "The nonce for this output (hex string)"},
                             {"hash", RPCArg::Type::STR_HEX, RPCArg::Optional::OMITTED, "32-byte hash (hex) for atomic_swap outputs"},
@@ -3715,7 +3715,7 @@ RPCHelpMan createblsctrawtransaction()
                 std::string memo = o.exists("memo") ? o["memo"].get_str() : "";
                 TokenId token_id;
                 if (o.exists("token_id") && !o["token_id"].get_str().empty()) {
-                    token_id = TokenId(ParseHashV(o["token_id"], "token_id"));
+                    token_id = ParseTokenIdV(o["token_id"], "token_id");
                 }
 
                 blsct::UnsignedOutput unsigned_output;
