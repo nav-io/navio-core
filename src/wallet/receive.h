@@ -47,6 +47,15 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
                         std::list<COutputEntry>& listSent,
                         CAmount& nFee, const isminefilter& filter,
                         bool include_change, const TokenId& token_id = TokenId());
+/**
+ * Whether the fee CachedTxGetAmounts() reports for the BLSCT tx `wtx` may
+ * include fees other wallets paid: the tx spends inputs that are not ours,
+ * and the wallet neither built it nor knows its own share of the fee
+ * (CWalletTx::m_own_fee). Such a tx is a block tx a staker merged several
+ * senders' transactions into, or an aggregate with other wallets' halves,
+ * learned by syncing or rescanning. Its single fee output cannot be split.
+ */
+bool TxFeeMayIncludeOtherSenders(const CWallet& wallet, const CWalletTx& wtx) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 bool CachedTxIsFromMe(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter);
 bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx, std::set<uint256>& trusted_parents) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx);

@@ -448,14 +448,31 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
         // "send -fee / fee" entries. Emit no send entry and no fee: the tx's
         // net effect on this wallet is zero (any genuine payment to us in the
         // same aggregate is already in listReceived).
+        //
+        // A block tx that replaced sends of ours merged into it pays the fees
+        // of every sender it merged; only the part we paid is ours.
         if (nDebit != nChange) {
-            const CAmount blsct_fee = wtx.tx->GetBLSCTFee();
+            const CAmount blsct_fee = wtx.m_own_fee.value_or(wtx.tx->GetBLSCTFee());
             const CAmount sent_to_others = nDebit - nChange - blsct_fee;
             nFee = blsct_fee;
             COutputEntry output = {CNoDestination(), sent_to_others, -1, {}};
             listSent.push_back(output);
         }
     }
+}
+
+bool TxFeeMayIncludeOtherSenders(const CWallet& wallet, const CWalletTx& wtx)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    // An aggregate this wallet built (m_own_half_outputs) spends other
+    // wallets' inputs too, but their cover halves pay no fee.
+    if (!wtx.tx->IsBLSCT() || wtx.m_own_fee || !wtx.m_own_half_outputs.empty()) return false;
+    return std::any_of(wtx.tx->vin.begin(), wtx.tx->vin.end(), [&](const CTxIn& txin) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet) {
+        if (InputIsMine(wallet, txin) != ISMINE_NO) return false;
+        // An output-storage wallet may hold the spent output without its tx.
+        const CWalletOutput* wout = wallet.GetWalletOutput(txin.prevout);
+        return !wout || wallet.IsMine(*wout->out) == ISMINE_NO;
+    });
 }
 
 bool CachedTxIsFromMe(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter)
