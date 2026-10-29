@@ -517,6 +517,11 @@ static RPCHelpMan createwallet()
             if ((flags & WALLET_FLAG_DISABLE_PRIVATE_KEYS) && !mnemonic_passphrase.empty()) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot combine 'disable_private_keys' with 'mnemonic_passphrase'");
             }
+            // CreateWallet sets up no keys for a blank wallet, so these would
+            // be dropped without a word.
+            if ((flags & WALLET_FLAG_BLANK_WALLET) && (has_seed_param || has_mnemonic_param || !mnemonic_passphrase.empty())) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot combine 'blank' with 'seed', 'mnemonic' or 'mnemonic_passphrase'. A blank wallet is created without keys.");
+            }
 
             // If mnemonic provided, convert to entropy. Accepts plain
             // 24-word BIP-39 or the 26-word Navio birthday variant, whose
