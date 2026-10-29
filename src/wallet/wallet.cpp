@@ -2072,6 +2072,98 @@ void CWallet::transactionRemovedFromMempool(const CTransactionRef& tx, MemPoolRe
         // imperfect, and could be improved in general, see
         // https://github.com/bitcoin-core/bitcoin-devwiki/wiki/Wallet-Transaction-Conflict-Tracking
         SyncTransaction(tx, TxStateInactive{});
+
+        // An output-storage wallet keeps a received tx only as its outputs,
+        // not its inputs, so the block conflict detection of
+        // AddToWalletIfInvolvingMe (through mapTxSpends) never reaches it:
+        // the outputs would stay unconfirmed forever and keep showing as a
+        // pending receive. This removal is the one notice the wallet gets.
+        // A tx in mapWallet is one of our sends: if it spends an input of the
+        // block, that detection covers it, and if it spends the output of a
+        // conflicted receive, MarkPendingOutputConflicts() does.
+        //
+        // Evictions come in one batch per connect step, followed by the
+        // blocks of that step. An entry still pending when the next batch
+        // starts was linked by inputs to none of its step's blocks (say a
+        // staked commitment conflict, removeStakedCommitmentConflicts), and
+        // no later block can conflict it, so it is dropped: its outputs stay
+        // unconfirmed, as they are now.
+        if (m_pending_output_conflicts_stale) {
+            m_pending_output_conflicts.clear();
+            m_pending_output_conflicts_stale = false;
+        }
+        if (IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE) && tx->IsBLSCT() && !mapWallet.contains(tx->GetHash())) {
+            for (const Outid& out_id : tx->GetOutputIds()) {
+                if (mapOutputs.contains(COutPoint(out_id))) {
+                    m_pending_output_conflicts.push_back(tx);
+                    break;
+                }
+            }
+        }
+    }
+}
+
+void CWallet::MarkPendingOutputConflicts(const interfaces::BlockInfo& block)
+{
+    AssertLockHeld(cs_wallet);
+    if (m_pending_output_conflicts.empty()) return;
+
+    // The block conflicts a pending tx that spends one of its inputs, and
+    // every pending tx descending from one it conflicts (the mempool evicts
+    // descendants as conflicts too).
+    std::set<COutPoint> conflicted_spends;
+    for (const CTransactionRef& block_tx : block.data->vtx) {
+        for (const CTxIn& txin : block_tx->vin) {
+            conflicted_spends.insert(txin.prevout);
+        }
+    }
+    std::vector<CTransactionRef> conflicted;
+    std::vector<CTransactionRef> pending{std::move(m_pending_output_conflicts)};
+    m_pending_output_conflicts.clear();
+    for (bool found = true; found;) {
+        found = false;
+        for (auto it = pending.begin(); it != pending.end();) {
+            const bool spends_conflicted = std::any_of((*it)->vin.begin(), (*it)->vin.end(),
+                                                       [&](const CTxIn& txin) { return conflicted_spends.contains(txin.prevout); });
+            if (!spends_conflicted) {
+                ++it;
+                continue;
+            }
+            for (const Outid& out_id : (*it)->GetOutputIds()) {
+                conflicted_spends.insert(COutPoint(out_id));
+            }
+            conflicted.push_back(std::move(*it));
+            it = pending.erase(it);
+            found = true;
+        }
+    }
+
+    // The rest wait for a later block of the same connect step.
+    m_pending_output_conflicts = std::move(pending);
+
+    std::optional<WalletBatch> batch;
+    for (const CTransactionRef& tx : conflicted) {
+        for (const Outid& out_id : tx->GetOutputIds()) {
+            const COutPoint outpoint(out_id);
+            const auto it = mapOutputs.find(outpoint);
+            // Only an output left unconfirmed by the removal is conflicted.
+            if (it == mapOutputs.end() || !it->second.state<TxStateInactive>()) continue;
+            it->second.m_state = TxStateConflicted{block.hash, block.height};
+            if (!batch) batch.emplace(GetDatabase(), /*_fFlushOnClose=*/false);
+            if (!batch->WriteOutput(outpoint, it->second)) {
+                throw std::runtime_error(std::string(__func__) + ": Wallet db error, failed to write conflicted BLSCT output state");
+            }
+            // Our own sends spending the output were evicted with it, but
+            // they spend no input of the block, so nothing else marks them.
+            std::vector<uint256> spenders;
+            const auto range = mapTxSpends.equal_range(outpoint);
+            for (auto it_spend = range.first; it_spend != range.second; ++it_spend) {
+                spenders.push_back(it_spend->second);
+            }
+            for (const uint256& spender : spenders) {
+                MarkConflicted(block.hash, block.height, spender);
+            }
+        }
     }
 }
 
@@ -2085,6 +2177,13 @@ void CWallet::blockConnected(ChainstateRole role, const interfaces::BlockInfo& b
 
     m_last_block_processed_height = block.height;
     m_last_block_processed = block.hash;
+
+    // The mempool evicts a block's conflicts before the block is reported
+    // connected, but when several blocks connect in one step, the evictions
+    // of all of them come before the first block is reported. Each block
+    // therefore takes only the pending conflicts it causes.
+    MarkPendingOutputConflicts(block);
+    m_pending_output_conflicts_stale = true;
 
     // No need to scan block if it was created before the wallet birthday.
     // Uses chain max time and twice the grace period to adjust time for block time variability.
@@ -2110,6 +2209,41 @@ void CWallet::blockDisconnected(const interfaces::BlockInfo& block)
     m_last_block_processed = *Assert(block.prev_hash);
 
     int disconnect_height = block.height;
+
+    // Received outputs conflicted by this block (or a later one) become
+    // unconfirmed again, with our sends spending them, as the CWalletTx
+    // conflicts below do.
+    if (IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
+        // A conflict still pending may be one of this block's, which is going
+        // away: drop them all rather than pin one to a block that does not
+        // conflict it. Their outputs stay unconfirmed, as they are now.
+        m_pending_output_conflicts.clear();
+
+        const auto unconflict = [&](CWalletTx& tx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet) {
+            const auto* conflicted = tx.state<TxStateConflicted>();
+            if (!conflicted || conflicted->conflicting_block_height < disconnect_height) return TxUpdate::UNCHANGED;
+            tx.m_state = TxStateInactive{};
+            return TxUpdate::CHANGED;
+        };
+        std::vector<uint256> spenders;
+        std::optional<WalletBatch> batch;
+        for (auto& [outpoint, wout] : mapOutputs) {
+            const auto* conflicted = wout.state<TxStateConflicted>();
+            if (!conflicted || conflicted->conflicting_block_height < disconnect_height) continue;
+            wout.m_state = TxStateInactive{};
+            if (!batch) batch.emplace(GetDatabase(), /*_fFlushOnClose=*/false);
+            if (!batch->WriteOutput(outpoint, wout)) {
+                throw std::runtime_error(std::string(__func__) + ": Wallet db error, failed to write unconflicted BLSCT output state");
+            }
+            const auto range = mapTxSpends.equal_range(outpoint);
+            for (auto it_spend = range.first; it_spend != range.second; ++it_spend) {
+                spenders.push_back(it_spend->second);
+            }
+        }
+        for (const uint256& spender : spenders) {
+            RecursiveUpdateTxState(spender, unconflict);
+        }
+    }
 
     for (size_t index = 0; index < block.data->vtx.size(); index++) {
         const CTransactionRef& ptx = Assert(block.data)->vtx[index];

@@ -362,6 +362,18 @@ private:
     /** Mark a transaction (and its in-wallet descendants) as conflicting with a particular block. */
     void MarkConflicted(const uint256& hashBlock, int conflicting_height, const uint256& hashTx);
 
+    /** Output-storage receives the mempool evicted as CONFLICT, waiting for
+     * blockConnected() to name the block that conflicted them (the removal
+     * notification does not carry it). */
+    std::vector<CTransactionRef> m_pending_output_conflicts GUARDED_BY(cs_wallet);
+    //! Whether a block was reported connected since the last of those evictions.
+    bool m_pending_output_conflicts_stale GUARDED_BY(cs_wallet){false};
+
+    /** Mark the received outputs of each m_pending_output_conflicts entry the
+     * block conflicts, and our sends spending them, conflicted with the block,
+     * and take the entry off the list. */
+    void MarkPendingOutputConflicts(const interfaces::BlockInfo& block) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+
     enum class TxUpdate { UNCHANGED, CHANGED, NOTIFY_CHANGED };
 
     using TryUpdatingStateFn = std::function<TxUpdate(CWalletTx& wtx)>;
