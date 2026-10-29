@@ -23,6 +23,7 @@
 #include <common/args.h>
 #include <common/system.h>
 #include <consensus/amount.h>
+#include <consensus/validation.h>
 #include <deploymentstatus.h>
 #include <hash.h>
 #include <httprpc.h>
@@ -2236,34 +2237,61 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
             // subtract the cover halves back out of a later aggregate
             // (defeating the decoys entirely).
             ChainstateManager* cover_chainman = node.chainman.get();
+            const CTxMemPool* cover_mempool = node.mempool.get();
             node.p2pmsg_transport->RegisterHandler(
                 p2pmsg::PayloadKind::CANDIDATE_TX, p2pmsg::RECIPIENTS_CANDIDATE_TX,
-                [pool, cover_chainman](const p2pmsg::InboundMessage& m) {
+                [pool, cover_chainman, cover_mempool](const p2pmsg::InboundMessage& m) {
                     try {
                         DataStream ss{MakeByteSpan(m.body)};
                         ParamsStream ps{TX_WITH_WITNESS, ss};
                         CTransactionRef tx;
                         ps >> tx;
-                        // Admit first, classify after: the chainstate lookup
-                        // takes cs_main on a p2pmsg worker thread (of which
-                        // there are only one or two), and the reply key that
-                        // reaches this handler is publicly broadcast, so any
-                        // bus observer can drive it. Classifying only pooled
-                        // candidates means a message rejected by the
-                        // structural checks or the caps costs no coin lookup,
-                        // no tip-cache growth, and no cs_main wait.
-                        const bool added = pool->AddCandidate(tx);
+                        // The reply key is published on the public broadcast
+                        // channel, so any bus observer can inject a
+                        // candidate. Cheap checks first, without cs_main:
+                        // anything the pool would refuse anyway (bad shape,
+                        // input already pooled, pool full) or whose input a
+                        // mempool tx already spends costs no lock and no
+                        // verification.
+                        if (!tx || !pool->WouldAccept(*tx)) {
+                            LogPrint(BCLog::NET, "p2pmsg: dropping CANDIDATE_TX (bad shape, duplicate input or pool full, peer=%d)\n", m.from_peer);
+                            return;
+                        }
+                        const COutPoint& prevout = tx->vin[0].prevout;
+                        if (cover_mempool && cover_mempool->isSpent(prevout)) {
+                            LogPrint(BCLog::NET, "p2pmsg: dropping CANDIDATE_TX %s: txn-mempool-conflict\n", tx->GetHash().ToString());
+                            return;
+                        }
                         bool reward_input{false};
-                        if (added && !tx->vin.empty()) {
+                        bool added{false};
+                        {
+                            LOCK(cs_main);
+                            Chainstate& chainstate = cover_chainman->ActiveChainstate();
+                            const CBlockIndex* tip = chainstate.m_chain.Tip();
+                            if (!tip) return;
+                            // Check against the confirmed UTXO set, with the
+                            // mempool consulted only for conflicts: a
+                            // candidate spending an unconfirmed output is
+                            // dropped. Candidates are fee-0, so only the
+                            // minimum-fee rule is skipped.
+                            CCoinsViewCache view(&chainstate.CoinsTip());
+                            TxValidationState st;
+                            if (!aggregation::CheckCandidate(*tx, view, cover_mempool, tip->nHeight + 1,
+                                                             tip->GetMedianTimePast(), Params().GetConsensus(), st)) {
+                                LogPrint(BCLog::NET, "p2pmsg: dropping CANDIDATE_TX %s: %s\n",
+                                         tx->GetHash().ToString(), st.GetRejectReason());
+                                return;
+                            }
                             // Reward-ness of the prev-out is public chain
                             // data the initiator matches against its own
-                            // input types (see PickForAggregate). An unknown
-                            // coin (unconfirmed or spent) stays classified
-                            // as transfer.
-                            LOCK(cs_main);
-                            const Coin& coin = cover_chainman->ActiveChainstate().CoinsTip().AccessCoin(tx->vin[0].prevout);
-                            reward_input = !coin.IsSpent() && coin.IsCoinBase();
-                            if (reward_input) pool->MarkRewardInput(tx->vin[0].prevout);
+                            // input types (see PickForAggregate).
+                            reward_input = view.AccessCoin(prevout).IsCoinBase();
+                            // Insert while still holding cs_main: no block
+                            // can connect and no tx can enter the mempool
+                            // between the check and the insert, so the
+                            // eviction hooks of any later spend of the input
+                            // find the candidate.
+                            added = pool->AddCandidate(tx, reward_input);
                         }
                         LogPrint(BCLog::NET, "p2pmsg: CANDIDATE_TX %s %s (peer=%d reward_input=%d)\n",
                                  tx->GetHash().ToString(), added ? "pooled" : "rejected (duplicate input or cap)", m.from_peer, reward_input);

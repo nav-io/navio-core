@@ -728,6 +728,7 @@ static RPCHelpMan replycandidate()
         RPCResult{RPCResult::Type::OBJ, "", "", {
             {RPCResult::Type::STR_HEX, "candidate_txid", "The candidate half-transaction id"},
             {RPCResult::Type::ARR, "inputs", "Output hashes spent by the candidate", {{RPCResult::Type::STR_HEX, "", "outpoint hash"}}},
+            {RPCResult::Type::STR_HEX, "hex", "The serialized candidate half-transaction that was sent"},
         }},
         RPCExamples{HelpExampleCli("replycandidate", "\"<replypubkeyhex>\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
@@ -752,6 +753,7 @@ static RPCHelpMan replycandidate()
             UniValue ins(UniValue::VARR);
             for (const CTxIn& in : (*cand)->vin) ins.push_back(in.prevout.hash.GetHex());
             o.pushKV("inputs", ins);
+            o.pushKV("hex", EncodeHexTx(**cand));
             return o;
         },
     };
