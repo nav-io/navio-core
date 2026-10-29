@@ -1421,6 +1421,36 @@ BOOST_AUTO_TEST_CASE(envelope_v2_bounds_the_flag_size)
     BOOST_CHECK(h.t->OnWire(1, false, SerEnv(oversized)) == Transport::WireResult::RejectInvalid);
 }
 
+BOOST_AUTO_TEST_CASE(envelope_rejects_oversized_declared_lengths_before_allocating)
+{
+    // A 4 KiB p2pmsg body must not be able to claim a multi-megabyte flag or
+    // ciphertext and make the parser allocate it before the short read fails.
+    // Both length prefixes are bounded at parse time.
+    LoopbackTransport h(/*bits=*/4);
+    h.t->now_override = 1000;
+    auto env = StampedEnvelope(h.t->InboxPubKey(), PayloadKind::PING, {1}, /*bits=*/4, /*now=*/1000);
+
+    const auto has_limit_reason = [](const std::ios_base::failure& e) {
+        return std::string(e.what()).find("limit exceeded") != std::string::npos;
+    };
+
+    {
+        DataStream ss;
+        ss << env.kind << env.pow;
+        WriteCompactSize(ss, 5'000'000);
+        Envelope parsed;
+        BOOST_CHECK_EXCEPTION(ss >> parsed, std::ios_base::failure, has_limit_reason);
+    }
+
+    {
+        DataStream ss;
+        ss << env.enc.eph;
+        WriteCompactSize(ss, 5'000'000);
+        EciesPacket parsed;
+        BOOST_CHECK_EXCEPTION(ss >> parsed, std::ios_base::failure, has_limit_reason);
+    }
+}
+
 BOOST_AUTO_TEST_CASE(envelope_v2_replay_key_ignores_the_flag)
 {
     // Same ciphertext, different flag = still a replay, and dropped.
