@@ -846,6 +846,16 @@ RPCHelpMan getblsctauditkey()
             const CWallet& wallet = *pwallet;
             const blsct::KeyMan& blsct_km = EnsureConstBlsctKeyMan(wallet);
 
+            // A blank or keyless wallet has neither half of the audit key;
+            // without this check GetPrivateViewKey's internal exception
+            // reaches the caller as a bare RPC_MISC_ERROR.
+            if (!blsct_km.fViewKeyDefined || !blsct_km.fSpendKeyDefined) {
+                if (wallet.IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
+                    throw JSONRPCError(RPC_WALLET_BLANK, "Wallet has no BLSCT audit key (private keys are disabled)");
+                }
+                throw JSONRPCError(RPC_WALLET_BLANK, "Wallet has no BLSCT audit key (blank wallet); use setblsctseed to initialize");
+            }
+
             auto strViewKey = blsct_km.GetPrivateViewKey().GetScalar().GetString();
             auto strSpendingKey = HexStr(blsct_km.GetPublicSpendingKey().GetVch());
 

@@ -935,6 +935,10 @@ static void WriteDelegationStats()
     }
     if (ec) {
         LogPrintf("%s: Could not rename %s into place: %s\n", __func__, fs::PathToString(tmp), ec.message());
+        // Don't leave the unused copy next to -statsfile; the next write
+        // creates it afresh.
+        fs::remove(tmp, ec);
+        if (ec) LogPrintf("%s: Could not remove %s: %s\n", __func__, fs::PathToString(tmp), ec.message());
     }
 }
 

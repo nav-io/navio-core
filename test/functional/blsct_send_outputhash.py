@@ -111,7 +111,20 @@ class BlsctSendOutputHashTest(BitcoinTestFramework):
         self.generate_blsct_blocks(self.nodes[0], self.miner_addr, 1)
         self.sync_all()
 
-        assert_equal(len(self.nodes[0].gettxfromoutputhash(output_hash)["txid"]), 64)
+        # The handle is an outid, not a txid. Handed to gettransaction on this
+        # output-storage wallet it does not fail: it matches the stored output
+        # and comes back as an entry synthesised from that output alone,
+        # which is why the help points at gettxfromoutputhash instead.
+        assert_equal(sender.gettransaction(output_hash)["output_storage"], True)
+
+        # gettxfromoutputhash names the on-chain transaction carrying the
+        # output. The stake is the only transaction in its block, so the miner
+        # did not merge it with others and that is the very transaction the
+        # wallet broadcast and holds a full record of.
+        txid = self.nodes[0].gettxfromoutputhash(output_hash)["txid"]
+        stake_tx = sender.gettransaction(txid)
+        assert_equal(stake_tx["txid"], txid)
+        assert "output_storage" not in stake_tx
 
         # liststakedcommitments reports each commitment by its output hash
         # (the `tx_hash` field is the output id BLSCT outpoints are keyed on).

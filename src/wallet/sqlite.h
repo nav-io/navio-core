@@ -111,10 +111,6 @@ public:
     /** Close the database */
     void Close() override;
 
-    /* These functions are unused */
-    void AddRef() override { assert(false); }
-    void RemoveRef() override { assert(false); }
-
     /** Rewrite the entire database on disk */
     bool Rewrite(const char* skip = nullptr) override;
 
@@ -126,13 +122,9 @@ public:
      *
      * SQLite always flushes everything to the database file after each transaction
      * (each Read/Write/Erase that we do is its own transaction unless we called
-     * TxnBegin) so there is no need to have Flush or Periodic Flush.
-     *
-     * There is no DB env to reload, so ReloadDbEnv has nothing to do
+     * TxnBegin) so there is no need to have Flush.
      */
     void Flush() override {}
-    bool PeriodicFlush() override { return false; }
-    void ReloadDbEnv() override {}
 
     void IncrementUpdateCounter() override { ++nUpdateCounter; }
 

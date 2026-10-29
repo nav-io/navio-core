@@ -136,6 +136,33 @@ static void RefreshMempoolStatus(CWalletTx& tx, interfaces::Chain& chain)
     }
 }
 
+/**
+ * Whether `tx` was merged into `block_tx` by aggregation
+ * (blsct::AggregateTransactions): `block_tx` spends every input of `tx` and
+ * creates every one of its non-fee outputs. Fee outputs are skipped because
+ * aggregation folds them into a single new fee output. Sharing some outputs is
+ * not enough: two senders can pick the same cover candidate, so another
+ * sender's aggregate mined with it shares the candidate's output with ours
+ * while our own half never lands. A tx with no non-fee output is never merged;
+ * its inputs alone do not identify it. This is the rule CTxMemPool applies to
+ * remove merged txs for a block (IsContainedIn() in txmempool.cpp).
+ */
+static bool IsMergedInto(const CTransaction& tx, const CTransaction& block_tx)
+{
+    for (const CTxIn& txin : tx.vin) {
+        const auto spent = [&](const CTxIn& block_in) { return block_in.prevout.hash == txin.prevout.hash; };
+        if (std::none_of(block_tx.vin.begin(), block_tx.vin.end(), spent)) return false;
+    }
+    const auto& block_created = block_tx.GetOutputIds();
+    bool has_output{false};
+    for (size_t i = 0; i < tx.vout.size(); ++i) {
+        if (tx.vout[i].IsFee()) continue;
+        if (std::find(block_created.begin(), block_created.end(), tx.GetOutputId(i)) == block_created.end()) return false;
+        has_output = true;
+    }
+    return has_output;
+}
+
 bool AddWallet(WalletContext& context, const std::shared_ptr<CWallet>& wallet)
 {
     LOCK(context.wallets_mutex);
@@ -989,7 +1016,6 @@ bool CWallet::EncryptWallet(const SecureString& strWalletPassphrase)
         // Completely rewrite the wallet file to avoid leaving bits of the
         // unencrypted private key in slack space in the database file.
         GetDatabase().Rewrite();
-        GetDatabase().ReloadDbEnv();
     }
     NotifyStatusChanged(this);
 
@@ -1577,87 +1603,43 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
             // into a single block tx whose hash differs from any of ours.
             // The originating CWalletTx records would otherwise stay stuck
             // in TxStateInMempool / TxStateInactive forever (its hash is not
-            // on chain). Reconcile them: a wallet tx sharing an output with
-            // the incoming block tx that was merged into it (see
-            // merged_into_block) is, for accounting purposes, confirmed here.
+            // on chain). Reconcile them: a wallet tx merged into the incoming
+            // block tx (see IsMergedInto) is, for accounting purposes,
+            // confirmed here.
             if (const auto* conf = std::get_if<TxStateConfirmed>(&tx_state)) {
-                // Whether wtx was merged into this block tx by aggregation
-                // (blsct::AggregateTransactions): the block tx spends every
-                // input of wtx and creates every one of its non-fee outputs.
-                // Fee outputs are skipped because aggregation folds them into
-                // a single new fee output. Sharing some outputs is not enough:
-                // two senders can pick the same cover candidate, so another
-                // sender's aggregate mined with it shares the candidate's
-                // output with ours while our own half never lands. A tx with
-                // no non-fee output is never merged; its inputs alone do not
-                // identify it. This is the rule CTxMemPool applies to remove
-                // merged txs for a block (IsContainedIn() in txmempool.cpp).
-                std::set<uint256> block_spent;
-                for (const CTxIn& txin : tx.vin) {
-                    block_spent.insert(txin.prevout.hash);
-                }
-                std::set<uint256> block_created;
-                for (const Outid& out_id : tx.GetOutputIds()) {
-                    block_created.insert(out_id.ToUint256());
-                }
-                const auto merged_into_block = [&](const CWalletTx& wtx) {
-                    for (const CTxIn& txin : wtx.tx->vin) {
-                        if (!block_spent.contains(txin.prevout.hash)) return false;
-                    }
-                    bool has_output{false};
-                    for (size_t i = 0; i < wtx.tx->vout.size(); ++i) {
-                        if (wtx.tx->vout[i].IsFee()) continue;
-                        if (!block_created.contains(wtx.tx->GetOutputId(i).ToUint256())) return false;
-                        has_output = true;
-                    }
-                    return has_output;
-                };
-
-                std::set<uint256> matched_wtx;
-                for (const Outid& out_id : tx.GetOutputIds()) {
-                    auto it_idx = mapOutpointHashToWalletTx.find(out_id.ToUint256());
-                    if (it_idx == mapOutpointHashToWalletTx.end()) continue;
-                    const CWalletTx* src = it_idx->second;
-                    if (src->GetHash() == tx.GetHash()) continue; // direct match handled above
-                    if (src->isConfirmed()) continue;
-                    if (!merged_into_block(*src)) continue;
-                    matched_wtx.insert(src->GetHash());
-                }
-                if (!matched_wtx.empty()) {
-                    WalletBatch batch(GetDatabase(), /*_fFlushOnClose=*/false);
-                    for (const auto& h : matched_wtx) {
-                        auto wit = mapWallet.find(h);
-                        if (wit == mapWallet.end()) continue;
-                        wit->second.m_state = tx_state;
-                        wit->second.MarkDirty();
-                        batch.WriteTx(wit->second);
-                    }
-                }
-
+                // Every wallet tx merged into this block tx spends its inputs,
+                // so the spenders of those inputs are the candidates. Finding
+                // them through the outputs instead (mapOutpointHashToWalletTx)
+                // reached only one of several wallet txs sharing an output.
+                //
                 // Any other wallet tx spending an input of this block tx is
                 // conflicted by it, together with its descendants, so its
                 // inputs stop counting as spent (see IsSpent()). This mirrors
                 // the MarkConflicted() call of the non-BLSCT path below, which
                 // this branch returns before.
-                //
-                // A wallet tx merged into this block tx is excluded: it is one
-                // of our sends the staker aggregated, spending the same inputs
-                // under another hash, so it is confirmed, not conflicted. It
-                // is checked for every spender rather than taken from
-                // matched_wtx, which finds a wallet tx through
-                // mapOutpointHashToWalletTx and so only one of several sharing
-                // an output.
+                std::set<uint256> merged;
                 std::set<uint256> conflicted;
                 for (const CTxIn& txin : tx.vin) {
                     const auto range = mapTxSpends.equal_range(txin.prevout);
                     for (auto it_spend = range.first; it_spend != range.second; ++it_spend) {
                         const uint256& spender = it_spend->second;
-                        if (spender == tx.GetHash()) continue;
+                        if (spender == tx.GetHash()) continue; // direct match handled above
                         const auto wit = mapWallet.find(spender);
-                        if (wit == mapWallet.end() || merged_into_block(wit->second)) continue;
-                        if (conflicted.insert(spender).second) {
+                        if (wit == mapWallet.end()) continue;
+                        if (IsMergedInto(*wit->second.tx, tx)) {
+                            if (!wit->second.isConfirmed()) merged.insert(spender);
+                        } else if (conflicted.insert(spender).second) {
                             WalletLogPrintf("Transaction %s (in block %s) conflicts with wallet transaction %s (both spend %s)\n", tx.GetHash().ToString(), conf->confirmed_block_hash.ToString(), spender.ToString(), txin.prevout.hash.ToString());
                         }
+                    }
+                }
+                if (!merged.empty()) {
+                    WalletBatch batch(GetDatabase(), /*_fFlushOnClose=*/false);
+                    for (const uint256& h : merged) {
+                        CWalletTx& wtx = mapWallet.at(h);
+                        wtx.m_state = tx_state;
+                        wtx.MarkDirty();
+                        batch.WriteTx(wtx);
                     }
                 }
                 for (const uint256& spender : conflicted) {
@@ -2980,7 +2962,15 @@ void CWallet::CommitTransaction(CTransactionRef tx, mapValue_t mapValue, std::ve
         // TODO: if we expect the failure to be long term or permanent, instead delete wtx from the wallet and return failure.
     }
 
-    if (tx->IsBLSCT()) MirrorBlsctBroadcast(*tx);
+    if (!tx->IsBLSCT()) return;
+    // The tx is broadcast by now, so the commit succeeded; throwing would
+    // fail the caller and invite a resend of a tx already out. The sync
+    // callbacks record the same spends and outputs once the tx reaches them.
+    try {
+        MirrorBlsctBroadcast(*tx);
+    } catch (const std::runtime_error& e) {
+        WalletLogPrintf("%s: %s was broadcast, but recording its spends failed: %s\n", __func__, tx->GetHash().ToString(), e.what());
+    }
 }
 
 bool CWallet::RecordBroadcastTransaction(CTransactionRef tx, const std::vector<CTxOut>& own_half_outputs, mapValue_t mapValue)
@@ -3809,11 +3799,21 @@ std::shared_ptr<CWallet> CWallet::Create(WalletContext& context, const std::stri
         error = strprintf(_("Error loading %s: Private keys can only be disabled during creation"), walletFile);
         return nullptr;
     } else if (walletInstance->IsWalletFlagSet(WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
+        bool have_private_keys{false};
         for (auto spk_man : walletInstance->GetActiveScriptPubKeyMans()) {
             if (spk_man->HavePrivateKeys()) {
-                warnings.push_back(strprintf(_("Warning: Private keys detected in wallet {%s} with disabled private keys"), walletFile));
+                have_private_keys = true;
                 break;
             }
+        }
+        // BLSCT keys live outside the active script pubkey managers. The HD
+        // seed is what derives the spend key; an audit-key wallet holds only
+        // the view key and has no seed.
+        if (const auto* blsct_km = walletInstance->GetBLSCTKeyMan(); blsct_km && blsct_km->IsHDEnabled()) {
+            have_private_keys = true;
+        }
+        if (have_private_keys) {
+            warnings.push_back(strprintf(_("Warning: Private keys detected in wallet {%s} with disabled private keys"), walletFile));
         }
     }
 
