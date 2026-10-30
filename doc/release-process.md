@@ -1,6 +1,13 @@
 Release Process
 ====================
 
+Navio Core releases are built by the guix workflow when a `v*` tag is pushed,
+and signed and published by navio-signer. The Linux tarballs and `SHA256SUMS`
+are signed with the Nav.io Releases key in
+[`contrib/release-keys`](/contrib/release-keys). If that key is rotated or its
+expiry extended, update `contrib/release-keys/releases.asc`, its README, the
+fingerprint in the top-level README and https://nav.io/releases.asc together.
+
 ## Branch updates
 
 ### Before every release candidate
