@@ -6,10 +6,12 @@
 #include <wallet/walletdb.h>
 
 #include <common/system.h>
+#include <hash.h>
 #include <key_io.h>
 #include <protocol.h>
 #include <script/script.h>
 #include <serialize.h>
+#include <support/cleanse.h>
 #include <sync.h>
 #include <util/bip32.h>
 #include <util/check.h>
@@ -146,22 +148,26 @@ bool WalletBatch::WriteKey(const CPubKey& vchPubKey, const CPrivKey& vchPrivKey,
     return WriteIC(std::make_pair(DBKeys::KEY, vchPubKey), std::make_pair(vchPrivKey, keypair_hash), false);
 }
 
+//! Checksum stored next to a plain BLSCT key pair to accelerate wallet load.
+//! Hash(a, b) hashes the concatenation, so this matches records written by
+//! the old copy-into-one-vector form, without leaving that copy of the secret
+//! in unlocked memory. The scalar's serialization is still a plain vector, so
+//! it is cleansed here.
+static uint256 BLSCTKeyPairHash(const std::vector<unsigned char>& vchPubKey, const blsct::PrivateKey& privKey)
+{
+    auto vchPrivKey = privKey.GetScalar().GetVch();
+    const uint256 hash = Hash(vchPubKey, vchPrivKey);
+    memory_cleanse(vchPrivKey.data(), vchPrivKey.size());
+    return hash;
+}
+
 bool WalletBatch::WriteKey(const blsct::PublicKey& pubKey, const blsct::PrivateKey& privKey, const CKeyMetadata& keyMeta)
 {
     if (!WriteKeyMetadata(keyMeta, pubKey, false)) {
         return false;
     }
 
-    auto vchPubKey = pubKey.GetVch();
-    auto vchPrivKey = privKey.GetScalar().GetVch();
-
-    // hash pubkey/privkey to accelerate wallet load
-    std::vector<unsigned char> vchKey;
-    vchKey.reserve(vchPubKey.size() + vchPrivKey.size());
-    vchKey.insert(vchKey.end(), vchPubKey.begin(), vchPubKey.end());
-    vchKey.insert(vchKey.end(), vchPrivKey.begin(), vchPrivKey.end());
-
-    return WriteIC(std::make_pair(DBKeys::BLSCTKEY, pubKey), std::make_pair(privKey, Hash(vchKey)), false);
+    return WriteIC(std::make_pair(DBKeys::BLSCTKEY, pubKey), std::make_pair(privKey, BLSCTKeyPairHash(pubKey.GetVch(), privKey)), false);
 }
 
 bool WalletBatch::WriteViewKey(const blsct::PublicKey& pubKey, const blsct::PrivateKey& privKey, const CKeyMetadata& keyMeta)
@@ -175,16 +181,7 @@ bool WalletBatch::WriteViewKey(const blsct::PublicKey& pubKey, const blsct::Priv
 
     BlstG1Point pointPubKey = pubKey.GetG1Point();
 
-    auto vchPubKey = pointPubKey.GetVch();
-    auto vchPrivKey = privKey.GetScalar().GetVch();
-
-    // hash pubkey/privkey to accelerate wallet load
-    std::vector<unsigned char> vchKey;
-    vchKey.reserve(vchPubKey.size() + vchPrivKey.size());
-    vchKey.insert(vchKey.end(), vchPubKey.begin(), vchPubKey.end());
-    vchKey.insert(vchKey.end(), vchPrivKey.begin(), vchPrivKey.end());
-
-    auto ret = WriteIC(std::make_pair(DBKeys::VIEWKEY, pubKey), std::make_pair(privKey, Hash(vchKey)), true);
+    auto ret = WriteIC(std::make_pair(DBKeys::VIEWKEY, pubKey), std::make_pair(privKey, BLSCTKeyPairHash(pointPubKey.GetVch(), privKey)), true);
     return ret;
 }
 
@@ -547,16 +544,8 @@ bool LoadBLSCTKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std:
         ssValue >> key;
         ssValue >> hash;
 
-        auto vchPrivateKey = key.GetScalar().GetVch();
-
         if (!hash.IsNull()) {
-            // hash pubkey/privkey to accelerate wallet load
-            std::vector<unsigned char> vchKey;
-            vchKey.reserve(vchPubKey.size() + vchPrivateKey.size());
-            vchKey.insert(vchKey.end(), vchPubKey.begin(), vchPubKey.end());
-            vchKey.insert(vchKey.end(), vchPrivateKey.begin(), vchPrivateKey.end());
-
-            if (Hash(vchKey) != hash) {
+            if (BLSCTKeyPairHash(vchPubKey, key) != hash) {
                 strErr = "Error reading wallet database: PublicKey/PrivateKey corrupt";
                 return false;
             }
@@ -629,16 +618,8 @@ bool LoadViewKey(CWallet* pwallet, DataStream& ssKey, DataStream& ssValue, std::
         ssValue >> privKey;
         ssValue >> hash;
 
-        auto vchPrivKey = privKey.GetScalar().GetVch();
-
         if (!hash.IsNull()) {
-            // hash pubkey/privkey to accelerate wallet load
-            std::vector<unsigned char> vchKey;
-            vchKey.reserve(vchPubKey.size() + vchPrivKey.size());
-            vchKey.insert(vchKey.end(), vchPubKey.begin(), vchPubKey.end());
-            vchKey.insert(vchKey.end(), vchPrivKey.begin(), vchPrivKey.end());
-
-            if (Hash(vchKey) != hash) {
+            if (BLSCTKeyPairHash(vchPubKey, privKey) != hash) {
                 strErr = "Error reading wallet database: PublicKey/PrivateKey corrupt";
                 return false;
             }
