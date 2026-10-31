@@ -18,7 +18,8 @@ using Scalars = Elements<Scalar>;
 namespace blsct {
 
 namespace {
-// Backstop for the fee fixpoint in BuildTx(). The loop terminates on its own:
+// Backstop for the fee fixpoints in BuildTx() and BuildUnbalancedHalf(). Each
+// loop terminates on its own:
 // the assumed fee never decreases and every non-accepting pass raises it
 // strictly (see the comment at the acceptance test), so it cannot cycle. This
 // cap only ensures that a future change breaking that argument fails loudly
@@ -28,8 +29,18 @@ namespace {
 // Sized off the input cap rather than picked round: a raised fee only forces
 // another pass by pulling in more inputs, of which there can be at most
 // MAX_TX_INPUT_COUNT, the change output can appear or disappear once at each
-// input count, and one further pass accepts.
+// input count, and one further pass accepts. A half's input set is fixed, so
+// it needs far fewer passes and the same cap holds for it.
 constexpr size_t MAX_FEE_FIXPOINT_PASSES = 2 * MAX_TX_INPUT_COUNT + 2;
+
+std::runtime_error FeeDidNotSettleError()
+{
+    return std::runtime_error(strprintf(
+        "The transaction fee did not settle after %u passes. This is a bug in the "
+        "wallet's fee calculation; please report it along with the amount sent and "
+        "the number of inputs the wallet holds.",
+        MAX_FEE_FIXPOINT_PASSES));
+}
 
 std::runtime_error TooManyInputsError()
 {
@@ -605,11 +616,7 @@ TxFactoryBase::BuildTx(const blsct::DoublePublicKey& changeDestination, const CA
         nAmounts[TokenId()].nFromFee = required_fee;
     }
 
-    throw std::runtime_error(strprintf(
-        "The transaction fee did not settle after %u passes. This is a bug in the "
-        "wallet's fee calculation; please report it along with the amount sent and "
-        "the number of inputs the wallet holds.",
-        MAX_FEE_FIXPOINT_PASSES));
+    throw FeeDidNotSettleError();
 }
 
 bool TxFactoryBase::AddInput(const CAmount& amount, const BlstScalar& gamma, const PrivateKey& spendingKey, const TokenId& token_id, const COutPoint& outpoint, const bool& stakedCommitment, const bool& rbf)
@@ -701,7 +708,7 @@ TxFactoryBase::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestinati
     }
 
     nAmounts[TokenId()].nFromFee = 0;
-    while (true) {
+    for (size_t pass = 0; pass < MAX_FEE_FIXPOINT_PASSES; ++pass) {
         CMutableTransaction tx;
         tx.nVersion |= CTransaction::BLSCT_MARKER;
         // Stamp the proof-v2 marker when the outputs are built under the v2
@@ -762,13 +769,18 @@ TxFactoryBase::BuildUnbalancedHalf(const blsct::DoublePublicKey& changeDestinati
         txSigs.push_back(PrivateKey(feeKey).SignFee());
         tx.txSig = Signature::Aggregate(txSigs);
 
+        // Accept any fee that covers the requirement, as BuildTx does, so the
+        // fee only ever rises. Exact equality cycled when the NAV change lands
+        // on zero at the with-change fee: the dropped change output lowers the
+        // requirement, which brings the change back, and so on forever. In
+        // that corner the half overpays by one change output's weight.
         const CAmount required_fee = GetTransactionWeight(CTransaction(tx)) * nBLSCTDefaultFee + additionalFee;
-        if (nAmounts[TokenId()].nFromFee == required_fee) {
+        if (nAmounts[TokenId()].nFromFee >= required_fee) {
             return tx;
         }
         nAmounts[TokenId()].nFromFee = required_fee;
     }
-    return std::nullopt;
+    throw FeeDidNotSettleError();
 }
 
 std::optional<BuiltTransaction> TxFactoryBase::CreateTransaction(const std::vector<InputCandidates>& inputCandidates, const CreateTransactionData& transactionData, const std::optional<std::vector<unsigned char>>& blindingSeed, BlindingGenerationFn generationFn)
