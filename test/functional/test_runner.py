@@ -146,7 +146,7 @@ BASE_SCRIPTS = [
     'rpc_createmultisig.py',
     'p2p_timeouts.py',
     'p2p_timeouts.py --v2transport',
-    'mempool_limit.py', # TODO: Investigate how we can fix this test at a later date
+    'mempool_limit.py',
     'rpc_txoutproof.py',
     'wallet_listreceivedby.py',
     'wallet_abandonconflict.py',
