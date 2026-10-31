@@ -141,8 +141,6 @@ jobs:
             # that does not build on its own reaches green here. ccache lives
             # outside build/, so unchanged sources are still served from it.
             rm -rf build
-            # mempool_limit excluded because eviction timing fails under 2x
-            # parallelism here, same reason Win64 native excludes it.
             cmake -B build -G Ninja \
               -DCMAKE_BUILD_TYPE=Release \
               -DWITH_ZMQ=ON \
@@ -152,8 +150,7 @@ jobs:
             ctest --test-dir build -j"$(nproc)" --output-on-failure --stop-on-failure
             build/test/functional/test_runner.py -j "$(( $(nproc) * 2 ))" \
               --ci --quiet --tmpdirprefix="${RUNNER_TEMP}" \
-              --combinedlogslen=99999999 \
-              --exclude mempool_limit
+              --combinedlogslen=99999999
             echo "::endgroup::"
           done < "${COMMITS_FILE}"
 
