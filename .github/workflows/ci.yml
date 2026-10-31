@@ -392,7 +392,7 @@ jobs:
           --ci --quiet --tmpdirprefix=$env:RUNNER_TEMP
           --combinedlogslen=99999999
           --timeout-factor=$env:TEST_RUNNER_TIMEOUT_FACTOR
-          $env:TEST_RUNNER_EXTRA --exclude mempool_limit
+          $env:TEST_RUNNER_EXTRA
   # Autotools `linux:` matrix job removed: with arm/tsan/msan/i686-centos
   # all migrated to CMake (#250, #251, #252, #253), no autotools matrix
   # entries remain. The `previous-releases` stub was commented out and
@@ -1112,8 +1112,7 @@ jobs:
             build/test/functional/test_runner.py -j"$(nproc)" \
             --ci --quiet --tmpdirprefix="${TMPDIRPREFIX}" \
             --combinedlogslen=99999999 \
-            --timeout-factor=40 \
-            --exclude mempool_limit
+            --timeout-factor=40
 
       - name: Install
         if: ${{ matrix.smoke_test }}
@@ -1400,7 +1399,7 @@ jobs:
               --ci --quiet --tmpdirprefix=/tmp/navio_test_runner \
               --combinedlogslen=99999999 \
               --timeout-factor=80 \
-              --exclude mempool_limit,p2pmsg_aggregate_count_boundary,blsct_aggregated_unconfirmed_chain
+              --exclude p2pmsg_aggregate_count_boundary,blsct_aggregated_unconfirmed_chain
           '
 
       - name: Stop container
