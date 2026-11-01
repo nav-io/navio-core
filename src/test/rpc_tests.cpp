@@ -108,6 +108,13 @@ BOOST_AUTO_TEST_CASE(rpc_namedparams)
     BOOST_CHECK_EXCEPTION(TransformParams(JSON(R"({"arg2": 2, "arg2": 4})"), arg_names), UniValue,
                           HasJSON(R"({"code":-8,"message":"Parameter arg2 specified multiple times"})"));
 
+    // Make sure an alias can be used in place of the name, but not alongside it
+    const std::vector<std::pair<std::string, bool>> alias_names{{"arg1", false}, {"new|old", false}};
+    BOOST_CHECK_EQUAL(TransformParams(JSON(R"({"new": 2})"), alias_names).write(), "[null,2]");
+    BOOST_CHECK_EQUAL(TransformParams(JSON(R"({"old": 2})"), alias_names).write(), "[null,2]");
+    BOOST_CHECK_EXCEPTION(TransformParams(JSON(R"({"new": 2, "old": 3})"), alias_names), UniValue,
+                          HasJSON(R"json({"code":-8,"message":"Parameter new specified multiple times (also as its alias old)"})json"));
+
     // Make sure named and positional arguments can be combined.
     BOOST_CHECK_EQUAL(TransformParams(JSON(R"({"arg5": 5, "args": [1, 2], "arg4": 4})"), arg_names).write(), "[1,2,null,4,5]");
 

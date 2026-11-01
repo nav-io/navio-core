@@ -425,10 +425,14 @@ static inline JSONRPCRequest transformNamedArguments(const JSONRPCRequest& in, c
         std::vector<std::string> vargNames = SplitString(argNamePattern, '|');
         auto fr = argsIn.end();
         for (const std::string & argName : vargNames) {
-            fr = argsIn.find(argName);
+            auto it = argsIn.find(argName);
+            if (it == argsIn.end()) continue;
             if (fr != argsIn.end()) {
-                break;
+                // Aliases name the same parameter, so passing two of them is
+                // as ambiguous as passing one name twice.
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Parameter " + fr->first + " specified multiple times (also as its alias " + it->first + ")");
             }
+            fr = it;
         }
 
         // Handle named-only parameters by pushing them into a temporary options
