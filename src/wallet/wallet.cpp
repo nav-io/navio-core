@@ -453,6 +453,15 @@ std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string&
         return nullptr;
     }
 
+    // CWallet::Create registered the wallet for chain notifications, and that
+    // registration holds a reference to the wallet. Unless it is dropped, a
+    // wallet that fails the setup below is never released and keeps its
+    // database locked, so drop it on every failure, returned or thrown.
+    bool setup_done{false};
+    const auto release_on_failure{interfaces::MakeCleanupHandler([&] {
+        if (!setup_done) wallet->m_chain_notifications_handler.reset();
+    })};
+
     // Encrypt the wallet
     if (!passphrase.empty() && !(wallet_creation_flags & WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
         if (!wallet->EncryptWallet(passphrase)) {
@@ -524,7 +533,7 @@ std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string&
             }
         }
     }
-
+    setup_done = true;
 
     NotifyWalletLoaded(context, wallet);
     AddWallet(context, wallet);
