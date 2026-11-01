@@ -233,31 +233,31 @@ BOOST_FIXTURE_TEST_CASE(wallet_load_ckey, TestingSetup)
     }
 }
 
-BOOST_FIXTURE_TEST_CASE(wallet_blsct_mnemonic_passphrase, TestingSetup)
+BOOST_FIXTURE_TEST_CASE(wallet_blsct_seedphrase_extension, TestingSetup)
 {
     const std::vector<unsigned char> entropy = ParseHex("68a79eaca2324873eacc50cb9c6eca8cc68ea5d936f98787c60c7ebc74e6ce7c");
 
-    auto seed_id_for = [&](const std::string& mnemonic_passphrase) {
+    auto seed_id_for = [&](const std::string& seedphrase_extension) {
         std::shared_ptr<CWallet> wallet(new CWallet(m_node.chain.get(), "", CreateMockableWalletDatabase()));
         wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
         LOCK(wallet->cs_wallet);
         auto blsct_km = wallet->GetOrCreateBLSCTKeyMan();
-        BOOST_REQUIRE(blsct_km->SetupGeneration(entropy, blsct::IMPORT_MNEMONIC, true, mnemonic_passphrase));
+        BOOST_REQUIRE(blsct_km->SetupGeneration(entropy, blsct::IMPORT_MNEMONIC, true, seedphrase_extension));
         return blsct_km->GetHDChain().seed_id;
     };
 
     auto id_plain = seed_id_for("");
     auto id_pass = seed_id_for("passphrase");
 
-    // Derivation is deterministic for a given mnemonic + passphrase
+    // Derivation is deterministic for a given mnemonic + extension
     BOOST_CHECK(id_plain == seed_id_for(""));
     BOOST_CHECK(id_pass == seed_id_for("passphrase"));
 
-    // The passphrase changes the derived keys
+    // The extension changes the derived keys
     BOOST_CHECK(id_plain != id_pass);
     BOOST_CHECK(id_pass != seed_id_for("other"));
 
-    // Empty passphrase keeps the legacy direct-from-entropy derivation
+    // An empty extension keeps the legacy direct-from-entropy derivation
     auto legacy = blsct::PrivateKey(BLS12_381_KeyGen::derive_master_SK(entropy));
     BOOST_CHECK(id_plain == legacy.GetPublicKey().GetID());
 }

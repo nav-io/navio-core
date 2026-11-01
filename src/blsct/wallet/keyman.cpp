@@ -281,16 +281,17 @@ void KeyMan::SetHDSeed(const PrivateKey& key, const std::optional<int64_t>& crea
     NotifyCanGetAddressesChanged();
 }
 
-bool KeyMan::SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy, const std::string& mnemonic_passphrase, const std::optional<int64_t>& creation_time)
+bool KeyMan::SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy, const std::string& seedphrase_extension, const std::optional<int64_t>& creation_time)
 {
     auto masterKey = [&] {
-        if (mnemonic_passphrase.empty()) {
+        if (seedphrase_extension.empty()) {
             // Legacy derivation: master key directly from the entropy
             return PrivateKey(BLS12_381_KeyGen::derive_master_SK(entropy));
         }
-        // BIP-39: stretch the mnemonic sentence + passphrase into a 64-byte seed
+        // BIP-39: stretch the mnemonic sentence + passphrase (the seedphrase
+        // extension) into a 64-byte seed
         std::string words = mnemonic::EntropyToMnemonic(entropy);
-        auto seed = mnemonic::MnemonicToSeed(words, mnemonic_passphrase);
+        auto seed = mnemonic::MnemonicToSeed(words, seedphrase_extension);
         memory_cleanse(words.data(), words.size());
         auto key = PrivateKey(BLS12_381_KeyGen::derive_master_SK(seed));
         memory_cleanse(seed.data(), seed.size());
@@ -336,14 +337,14 @@ std::optional<AuditKey> DecodeAuditKey(const std::vector<unsigned char>& audit_k
     return ret;
 }
 
-bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force, const std::string& mnemonic_passphrase, const std::optional<int64_t>& creation_time)
+bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force, const std::string& seedphrase_extension, const std::optional<int64_t>& creation_time)
 {
     if ((CanGenerateKeys() && !force) || m_storage.IsLocked()) {
         return false;
     }
 
     if (seed.size() == 32 && type == IMPORT_MNEMONIC) {
-        if (!SetupMnemonicFromEntropy(seed, mnemonic_passphrase, creation_time)) return false;
+        if (!SetupMnemonicFromEntropy(seed, seedphrase_extension, creation_time)) return false;
     } else if (seed.size() == 32 && type == IMPORT_MASTER_KEY) {
         BlstScalar scalarSeed;
         scalarSeed.SetVch(seed);
@@ -361,7 +362,7 @@ bool KeyMan::SetupGeneration(const std::vector<unsigned char>& seed, const SeedT
     } else if (seed.empty()) {
         std::vector<unsigned char> entropy(32);
         GetStrongRandBytes(entropy);
-        if (!SetupMnemonicFromEntropy(entropy, mnemonic_passphrase, creation_time)) return false;
+        if (!SetupMnemonicFromEntropy(entropy, seedphrase_extension, creation_time)) return false;
     } else {
         return false;
     }
