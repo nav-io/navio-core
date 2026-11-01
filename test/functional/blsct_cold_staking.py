@@ -390,13 +390,14 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         assert_equal(stats["delegations"][0]["blocks_accepted"], 0)
 
         # A rename that keeps failing (here the target is a directory) does
-        # not leave the new copy behind as a .tmp file.
+        # not leave the new copy behind as a .tmp file. A directory in the
+        # way is not worth retrying, so the staker gives up at once.
         stats_dir = os.path.join(self.options.tmpdir, "stats-dir")
         os.mkdir(stats_dir)
         staker = self.spawn_staker([f"-delegationkeyfile={keyfile}", f"-statsfile={stats_dir}"])
         try:
-            found = self.wait_for_staker_line(staker, ["Could not rename"])
-            assert found, "staker did not report the failed stats file rename"
+            found = self.wait_for_staker_line(staker, ["(attempts: 1)", "Could not rename"])
+            assert_equal(found, "(attempts: 1)")
             self.wait_until(lambda: not os.path.exists(stats_dir + ".tmp"))
         finally:
             staker.kill()
