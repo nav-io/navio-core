@@ -21,7 +21,7 @@ bool PrivateKey::operator==(const PrivateKey& rhs) const
 
 PrivateKey::Point PrivateKey::GetPoint() const
 {
-    return Point::GetBasePoint() * Scalar(std::vector<unsigned char>(k.begin(), k.end()));
+    return Point::GetBasePoint() * GetScalar();
 }
 
 PublicKey PrivateKey::GetPublicKey() const
@@ -32,7 +32,10 @@ PublicKey PrivateKey::GetPublicKey() const
 
 PrivateKey::Scalar PrivateKey::GetScalar() const
 {
-    auto ret = std::vector<unsigned char>(k.begin(), k.end());
+    // Read k in place: copying it into a plain vector would leave the secret
+    // on the heap after the vector is freed.
+    Scalar ret;
+    ret.SetVch(k);
     return ret;
 }
 

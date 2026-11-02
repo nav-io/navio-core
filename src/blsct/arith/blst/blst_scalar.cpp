@@ -390,7 +390,7 @@ std::vector<uint8_t> BlstScalar::GetVch(const bool trim_preceeding_zeros) const
     return vec;
 }
 
-void BlstScalar::SetVch(const std::vector<uint8_t>& v)
+void BlstScalar::SetVch(Span<const uint8_t> v)
 {
     // mclBnFr_setBigEndianMod rejects inputs longer than 2 * sizeof(Fr) and
     // the wrapper then falls back to zero; mirror that.

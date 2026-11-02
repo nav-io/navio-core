@@ -11,6 +11,7 @@
 #include <blst.h>
 #include <hash.h>
 #include <serialize.h>
+#include <span.h>
 #include <streams.h>
 #include <uint256.h>
 
@@ -82,7 +83,7 @@ public:
     uint64_t GetUint64() const;
 
     std::vector<uint8_t> GetVch(bool trim_preceeding_zeros = false) const;
-    void SetVch(const std::vector<uint8_t>& v);
+    void SetVch(Span<const uint8_t> v);
 
     void SetPow2(const uint32_t& n);
 
