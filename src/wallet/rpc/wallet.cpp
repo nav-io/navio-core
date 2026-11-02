@@ -873,7 +873,7 @@ RPCHelpMan simulaterawtransaction()
         include_watchonly = options["include_watchonly"];
     }
 
-    isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT;
+    isminefilter filter = ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT | ISMINE_STAKED_COMMITMENT_BLSCT;
     if (ParseIncludeWatchonly(include_watchonly, wallet)) {
         filter |= ISMINE_WATCH_ONLY;
     }
@@ -922,8 +922,10 @@ RPCHelpMan simulaterawtransaction()
 
         for (size_t i = 0; i < mtx.vout.size(); ++i) {
             const auto& txout = mtx.vout[i];
-            bool is_mine = 0 < (wallet.IsMine(txout) & filter);
-            changes += new_utxos[COutPoint(txout.GetHash())] = is_mine ? txout.nValue : 0;
+            // A BLSCT output hides its amount behind the range proof, and a
+            // token output's amount is not NAV, so neither can be read from
+            // nValue. The debit side above likewise counts only NAV.
+            changes += new_utxos[COutPoint(txout.GetHash())] = OutputGetCredit(wallet, txout, filter);
         }
     }
 
