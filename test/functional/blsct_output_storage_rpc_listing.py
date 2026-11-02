@@ -16,14 +16,24 @@ is known to the wallet twice. This test pins how the listing RPCs present it:
   no containing txid. Such rows must omit `txid` rather than repeat `outid`
   under that name; any `txid` a row does carry must resolve via
   gettransaction.
+* A chain of sends the miner merges into one block tx under a new txid: the
+  wallet matches its sends to the block tx, and the final change is listed
+  once by listunspent, never as a history row of its own, and the history
+  sums to the balance in listtransactions and listsinceblock.
+* A send that left the mempool unmined: its CWalletTx is neither confirmed
+  nor in the mempool, and the history lists it through that CWalletTx only,
+  without a second, output-storage row for an output it created. Its outputs
+  are not in the balance, and listunspent does not list them either.
 """
 
+from collections import Counter
 from decimal import Decimal
 
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_greater_than
 
 SEND_AMOUNT = Decimal("10.00000000")
+CHAIN_LENGTH = 3
 
 
 def to_dec(value):
@@ -38,6 +48,9 @@ class BlsctOutputStorageRpcListingTest(BitcoinTestFramework):
         self.num_nodes = 1
         self.chain = 'blsctregtest'
         self.setup_clean_chain = True
+        # Plain sends: the chain below is merged by the miner, not by
+        # aggregation with cover candidates.
+        self.extra_args = [["-aggregatesends=0"]]
 
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
@@ -90,6 +103,93 @@ class BlsctOutputStorageRpcListingTest(BitcoinTestFramework):
             if "txid" in e:
                 assert_equal(wallet.gettransaction(e["txid"])["txid"], e["txid"])
         return output_storage_rows
+
+    def history_sum(self, rows):
+        """Balance delta the rows describe: the amounts, plus each send's fee
+        once per txid (it is repeated on every send row of a tx)."""
+        fees = {e["txid"]: to_dec(e["fee"]) for e in rows if e["category"] == "send"}
+        return sum(to_dec(e["amount"]) for e in rows) + sum(fees.values())
+
+    def check_history(self, wallet, start_block, label):
+        """listtransactions and listsinceblock list no output twice and sum to
+        the balance."""
+        balances = wallet.getbalances()["mine"]
+        total = sum(to_dec(balances[k]) for k in ("trusted", "untrusted_pending", "immature"))
+        rows = wallet.listtransactions("*", 100000, 0, True)
+        since = wallet.listsinceblock(start_block)["transactions"]
+        for name, listed in (("listtransactions", rows), ("listsinceblock", since)):
+            keys = Counter((e.get("txid"), e.get("outid"), e.get("vout"), e["category"]) for e in listed)
+            dupes = [k for k, n in keys.items() if n > 1]
+            assert_equal(dupes, [])
+            outids = Counter(e["outid"] for e in listed if "outid" in e)
+            assert_equal([k for k, n in outids.items() if n > 1], [])
+            self.check_txids(wallet, listed, f"{label} {name}")
+        self.log.info(f"[{label}] history sum={self.history_sum(rows)} balance={total}")
+        assert_equal(self.history_sum(rows), total)
+        return rows, since
+
+    def test_merged_chain(self, sender, receiver_addr):
+        node = self.nodes[0]
+        self.log.info(f"Chain {CHAIN_LENGTH} sends, each spending the previous one's unconfirmed change")
+        start_block = node.getbestblockhash()
+        txids = []
+        for _ in range(CHAIN_LENGTH):
+            mempool_before = set(node.getrawmempool())
+            sender.sendtoblsctaddress(receiver_addr, SEND_AMOUNT)
+            new = set(node.getrawmempool()) - mempool_before
+            assert_equal(len(new), 1)
+            txids.append(new.pop())
+        unspent = self.check_listunspent(sender, "chain in mempool")
+        change = [u for u in unspent if u["confirmations"] == 0]
+        assert_equal(len(change), 1)
+        change_outid = change[0]["outid"]
+
+        self.log.info("Mine the chain: the miner merges it into one block tx under a new txid")
+        self.generate_blsct_blocks(sender.getnewaddress(label="", address_type="blsct"), 1)
+        block_txids = node.getblock(node.getbestblockhash())["tx"]
+        assert_equal(len(block_txids), 2)
+        assert not set(txids) & set(block_txids)
+        merged_txid = block_txids[1]
+        assert_equal(node.gettxfromoutputhash(change_outid)["txid"], merged_txid)
+
+        unspent = self.check_listunspent(sender, "chain merged")
+        assert_equal([u["outid"] for u in unspent if u["outid"] == change_outid], [change_outid])
+        assert_greater_than([u for u in unspent if u["outid"] == change_outid][0]["confirmations"], 0)
+        rows, since = self.check_history(sender, start_block, "chain merged")
+        # The change nets into the send rows; it is never a row of its own.
+        for listed in (rows, since):
+            assert_equal([e for e in listed if e.get("outid") == change_outid], [])
+        sends = [e for e in rows if e["category"] == "send" and e["txid"] in txids]
+        assert_equal(sorted(e["txid"] for e in sends), sorted(txids))
+        assert all(e["confirmations"] > 0 for e in sends)
+
+    def test_send_out_of_mempool(self, sender):
+        node = self.nodes[0]
+        self.log.info("A self-send that leaves the mempool unmined")
+        start_block = node.getbestblockhash()
+        self_addr = sender.getnewaddress(label="", address_type="blsct")
+        sender.sendtoblsctaddress(self_addr, SEND_AMOUNT)
+        self.check_history(sender, start_block, "self-send in mempool")
+        # Drop the mempool and keep the wallet from resubmitting the send.
+        self.restart_node(0, extra_args=["-aggregatesends=0", "-persistmempool=0", "-walletbroadcast=0"])
+        node = self.nodes[0]
+        node.loadwallet("sender")
+        sender = node.get_wallet_rpc("sender")
+        assert_equal(node.getrawmempool(), [])
+        rows = sender.listtransactions("*", 100000, 0, True)
+        unconfirmed = [e for e in rows if e["confirmations"] == 0]
+        self.log.info(f"rows of the send out of the mempool: {[(e['category'], e['amount'], e.get('output_storage', False)) for e in unconfirmed]}")
+        # Listed once, through its CWalletTx: a send row and a receive row for
+        # the output paid to the wallet's own address.
+        assert_equal(Counter(e["category"] for e in unconfirmed), Counter({"send": 1, "receive": 1}))
+        assert not any(e.get("output_storage") for e in unconfirmed)
+        self.check_txids(sender, rows, "send out of mempool")
+        since = sender.listsinceblock(start_block)["transactions"]
+        assert_equal(Counter(e["category"] for e in since if e["confirmations"] == 0), Counter({"send": 1, "receive": 1}))
+        # Its outputs are no coins: neither confirmed nor in the mempool, and
+        # not in the balance.
+        assert_equal([u for u in sender.listunspent(0) if u["confirmations"] == 0], [])
+        self.check_listunspent(sender, "send out of mempool")
 
     def run_test(self):
         node = self.nodes[0]
@@ -146,6 +246,9 @@ class BlsctOutputStorageRpcListingTest(BitcoinTestFramework):
             assert holder["txid"] != e["outid"]
             assert_equal(holder["blockhash"], e["blockhash"])
         assert_greater_than(self.check_txids(sender, sender.listtransactions("*", 100000, 0, True), "sender"), 0)
+
+        self.test_merged_chain(sender, receiver_addr)
+        self.test_send_out_of_mempool(sender)
 
 
 if __name__ == '__main__':

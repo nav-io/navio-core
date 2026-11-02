@@ -15,3 +15,14 @@
   own sends once. It used to list it twice, once without an `address`, so the
   listed amounts summed to more than the balance. Every BLSCT coin is now listed
   with its address and recovered amount.
+
+- `listunspent` on an output-storage wallet no longer lists the outputs of a
+  transaction that is neither confirmed nor in the mempool (for instance a
+  send that expired from the mempool or was never relayed), even with
+  `include_unsafe`. They were listed as unsafe 0-confirmation coins although
+  no balance counts them; the full-transaction path never listed such coins.
+
+## GUI
+
+- The amount available to send no longer counts the change of the wallet's
+  own unconfirmed or confirmed sends twice on an output-storage wallet.

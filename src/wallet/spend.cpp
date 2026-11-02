@@ -499,6 +499,14 @@ CoinsResult AvailableBlsctCoins(const CWallet& wallet,
         if (nDepth < 0)
             continue;
 
+        // As in AvailableCoins(): an output that is neither confirmed nor in
+        // our mempool (its tx expired, was evicted, or was never relayed) is
+        // no coin, even to a caller that accepts unsafe ones. The balance
+        // does not count it either (see AddOutputBalance()).
+        if (nDepth == 0 && !wout.InMempool()) {
+            continue;
+        }
+
         // 0-conf outputs are eligible only if the wallet produced them and
         // m_spend_zero_conf_change is set — enforced via IsOutputTrusted +
         // the only_safe gate below. External mempool receives stay filtered
