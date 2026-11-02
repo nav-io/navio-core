@@ -117,9 +117,10 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
         self.generatetoblsctaddress(self.nodes[0], 1, self.addr1)
         return signed
 
-    def _spend_bls_check_script(self, n_checks, bk):
-        """Lock a coin to `n_checks` x `PUSH48(G1) OP_BLSCHECKSIG`, then OP_TRUE,
-        and return a 1-input wallet-signed spend of it.
+    def _spend_bls_check_script(self, checks_per_input, bk_prefix):
+        """For each entry n of `checks_per_input`, lock a coin to n x
+        `PUSH48(G1) OP_BLSCHECKSIG`, then OP_TRUE. Return one wallet-signed
+        transaction spending all of those coins, one input per coin.
 
         Each OP_BLSCHECKSIG decodes the key, queues a (key, input hash) pair
         for the aggregate signature check and pushes true, so the script itself
@@ -128,49 +129,69 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
         with failed-signature-check.
         """
         g1 = "97f1d3a73197d7942695638c4fa9ac0fc3688c4f9774b905a14e3a3f171bac586c55e83ff97a1aeffb3af00adb22c6bb"
-        script_hex = ("30" + g1 + "b3") * n_checks + "51"
 
-        signed_tx = self._create_custom_script_output(script_hex, bk)
-        oh, amt, gamma = self._recover_output(self.w1, signed_tx, COIN)
-        sk = self.w1.deriveblsctspendingkey(bk, self.addr1)
+        inputs = []
+        for i, n_checks in enumerate(checks_per_input):
+            script_hex = ("30" + g1 + "b3") * n_checks + "51"
+            bk = bk_prefix + f"{i:02x}" * 31
+            signed_tx = self._create_custom_script_output(script_hex, bk)
+            oh, amt, gamma = self._recover_output(self.w1, signed_tx, COIN)
+            sk = self.w1.deriveblsctspendingkey(bk, self.addr1)
+            inputs.append({"outid": oh, "value": amt, "gamma": gamma,
+                           "spending_key": sk})
 
-        inputs = [{"outid": oh, "value": amt, "gamma": gamma,
-                   "spending_key": sk}]
-        outputs = [{"address": self.addr1, "amount": 99000000}]
+        outputs = [{"address": self.addr1, "amount": 99000000 * len(inputs)}]
         raw = self.w1.createblsctrawtransaction(inputs, outputs)
         funded = self.w1.fundblsctrawtransaction(raw)
         signed = self.w1.signblsctrawtransaction(funded)
         # The budget is per input, so pin the input count it is computed from.
-        assert_equal(len(self.nodes[0].decoderawtransaction(signed)["vin"]), 1)
+        assert_equal(len(self.nodes[0].decoderawtransaction(signed)["vin"]), len(inputs))
         return signed
 
     def test_too_many_bls_pairs(self):
         """Mempool bound on OP_BLSCHECKSIG calls made by input scripts.
 
-        For one input the budget is MAX_SCRIPT_BLS_CHECKS_BASE (16) +
-        MAX_SCRIPT_BLS_CHECKS_PER_INPUT (2) * 1 = 18. A spend at the budget
-        gets past the bound and fails only on the aggregate signature; one
-        call over it, and a 100-call script, are rejected by the bound before
-        any pairing is done.
+        The budget is MAX_SCRIPT_BLS_CHECKS_BASE (16) +
+        MAX_SCRIPT_BLS_CHECKS_PER_INPUT (2) * vin, counted across all inputs
+        of the tx. A spend at the budget gets past the bound and fails only on
+        the aggregate signature; one call over it, and a 100-call script, are
+        rejected by the bound before any pairing is done.
         """
-        self.log.info("=== D1: OP_BLSCHECKSIG budget ===")
+        self.log.info("=== D1: OP_BLSCHECKSIG budget, one input ===")
         budget = 16 + 2 * 1
 
-        at_budget = self._spend_bls_check_script(budget, "d1" * 32)
+        at_budget = self._spend_bls_check_script([budget], "d1")
         assert_raises_rpc_error(-26, "failed-signature-check",
                                 self.nodes[0].sendrawtransaction, at_budget)
         self.log.info("  %d calls: past the bound, fails only on the signature", budget)
 
-        over_budget = self._spend_bls_check_script(budget + 1, "d2" * 32)
+        over_budget = self._spend_bls_check_script([budget + 1], "d2")
         assert_raises_rpc_error(-26, "too-many-bls-signature-pairs",
                                 self.nodes[0].sendrawtransaction, over_budget)
         self.log.info("  %d calls: rejected by the bound", budget + 1)
 
-        heavy = self._spend_bls_check_script(100, "d3" * 32)
+        heavy = self._spend_bls_check_script([100], "d3")
         assert_raises_rpc_error(-26, "too-many-bls-signature-pairs",
                                 self.nodes[0].sendrawtransaction, heavy)
         self.log.info("  100 calls: rejected by the bound")
         self.log.info("=== D1 PASSED ===")
+
+        # With two inputs the budget is 20 for the whole tx, not per input.
+        # Each split below stays under 20 per input, so a checker that gave
+        # every input the full budget would let the over-budget case through.
+        self.log.info("=== D2: OP_BLSCHECKSIG budget, two inputs ===")
+        budget = 16 + 2 * 2
+
+        at_budget = self._spend_bls_check_script([10, 10], "d4")
+        assert_raises_rpc_error(-26, "failed-signature-check",
+                                self.nodes[0].sendrawtransaction, at_budget)
+        self.log.info("  10 + 10 calls: past the bound, fails only on the signature")
+
+        over_budget = self._spend_bls_check_script([10, 11], "d5")
+        assert_raises_rpc_error(-26, "too-many-bls-signature-pairs",
+                                self.nodes[0].sendrawtransaction, over_budget)
+        self.log.info("  10 + 11 calls: rejected by the bound (budget %d)", budget)
+        self.log.info("=== D2 PASSED ===")
 
     # ------------------------------------------------------------------
     # Group A: HTLC / atomic_swap (spendingKey nullified)
