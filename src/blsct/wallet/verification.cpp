@@ -455,6 +455,9 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
 // throw std::runtime_error deep inside the arithmetic wrappers / the bulletproofs+ logic. Uncaught
 // on the validation or mempool thread that would abort() the node. Convert any
 // such throw into a clean consensus rejection.
+//
+// `options` has no default here on purpose: VerifyTxOptions{} is the mempool
+// policy, so every caller, block paths included, has to state its options.
 bool VerifyTxCore(const CTransaction& tx,
                   CCoinsViewCache& view,
                   TxValidationState& state,
@@ -465,10 +468,10 @@ bool VerifyTxCore(const CTransaction& tx,
                   int64_t nMedianTimePast,
                   bool verify_rp_inline,
                   const CAmount& nBLSCTDefaultFee,
-                  int nBLSCTProofV2Height = std::numeric_limits<int>::max(),
-                  PreparedTxSignatureCheck* out_sig_check = nullptr,
-                  size_t threads = 0,
-                  const VerifyTxOptions& options = {.enforce_script_pair_limit = false})
+                  int nBLSCTProofV2Height,
+                  PreparedTxSignatureCheck* out_sig_check,
+                  size_t threads,
+                  const VerifyTxOptions& options)
 {
     try {
         return VerifyTxCoreImpl(tx, view, state, out_proofs, blockReward, minStake,
@@ -501,7 +504,8 @@ bool PrepareTxForDeferredVerification(const CTransaction& tx,
                                       const CAmount& nBLSCTDefaultFee,
                                       int nBLSCTProofV2Height)
 {
-    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee, nBLSCTProofV2Height, &out_sig_check);
+    // Block path: every VerifyTxOptions policy switch off.
+    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee, nBLSCTProofV2Height, &out_sig_check, /*threads=*/0, VerifyTxOptions{.enforce_script_pair_limit = false});
 }
 
 bool VerifyTxCollectProofs(const CTransaction& tx,
@@ -515,7 +519,8 @@ bool VerifyTxCollectProofs(const CTransaction& tx,
                            const CAmount& nBLSCTDefaultFee,
                            int nBLSCTProofV2Height)
 {
-    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee, nBLSCTProofV2Height);
+    // Block path: every VerifyTxOptions policy switch off.
+    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee, nBLSCTProofV2Height, /*out_sig_check=*/nullptr, /*threads=*/0, VerifyTxOptions{.enforce_script_pair_limit = false});
 }
 
 TxSignatureBatchResult VerifyPreparedTxSignatures(const std::vector<PreparedTxSignatureCheck>& sig_checks, size_t threads)

@@ -63,12 +63,17 @@ inline size_t MaxScriptBlsChecks(size_t n_inputs)
 
 // Options for VerifyTx. Named fields, so that call sites cannot mix up two
 // trailing booleans.
+//
+// The defaults are mempool/relay policy, not consensus. A default-constructed
+// VerifyTxOptions{} is only correct for mempool-style callers; block
+// validation must never use it. The internal verifier takes the options
+// without a default, and the block paths (PrepareTxForDeferredVerification,
+// VerifyTxCollectProofs) pass every policy switch off explicitly.
 struct VerifyTxOptions {
     // Reject with "too-many-bls-signature-pairs" (TX_MEMPOOL_POLICY) once the
     // input scripts make more than MaxScriptBlsChecks(vin) OP_BLSCHECKSIG
     // calls. On by default: VerifyTx is the mempool/relay entry point. Block
-    // validation goes through PrepareTxForDeferredVerification and
-    // VerifyTxCollectProofs, which never apply it, so consensus is unchanged.
+    // validation passes it off explicitly, so consensus is unchanged.
     bool enforce_script_pair_limit{true};
 };
 
