@@ -13,6 +13,7 @@
 #include <consensus/tx_verify.h>
 #include <consensus/validation.h>
 #include <kernel/mempool_entry.h>
+#include <policy/policy.h>
 #include <primitives/block.h>
 #include <random.h>
 #include <txmempool.h>
@@ -65,6 +66,17 @@ bool CheckCandidate(const CTransaction& tx, CCoinsViewCache& view, const CTxMemP
                     int spend_height, int64_t median_time_past, const Consensus::Params& params,
                     TxValidationState& state)
 {
+    // IsStandardTx's per-input rules, which mempool acceptance applies to the
+    // aggregate. Checked first: they are cheap, and a push-only scriptSig
+    // keeps the script work VerifyTx does below down to the prevout's script.
+    for (const CTxIn& in : tx.vin) {
+        if (in.scriptSig.size() > MAX_STANDARD_SCRIPTSIG_SIZE) {
+            return state.Invalid(TxValidationResult::TX_NOT_STANDARD, "scriptsig-size");
+        }
+        if (!in.scriptSig.IsPushOnly()) {
+            return state.Invalid(TxValidationResult::TX_NOT_STANDARD, "scriptsig-not-pushonly");
+        }
+    }
     if (!CheckTransaction(tx, state)) return false;
     if (mempool != nullptr) {
         for (const CTxIn& in : tx.vin) {

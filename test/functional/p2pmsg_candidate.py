@@ -15,6 +15,8 @@ listpendingcandidaterequests and answered via replycandidate.
 """
 
 from decimal import Decimal
+
+from test_framework.script import OP_NOP
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 
@@ -142,6 +144,24 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
             assert n1.sendcandidate(uniq[0], forged_hex)
         assert_equal(n0.getaggregationhint()["available"], 0)
         self.log.info("forged candidate sent to a valid reply key was dropped")
+
+        # A candidate whose scriptSig is not push-only. Mempool acceptance
+        # applies IsStandardTx's per-input rules to the aggregate, so such a
+        # candidate, even one its author signed, would fail every aggregate
+        # that picks it with scriptsig-not-pushonly. It is dropped before any
+        # signature or script check.
+        # Layout: nVersion (4 bytes), vin count (1), prevout hash (32), then
+        # the scriptSig, empty here (length 0x00). Make it OP_NOP.
+        assert_equal(unpooled["hex"][8:10], "01")
+        assert_equal(unpooled["hex"][74:76], "00")
+        nop_hex = unpooled["hex"][:74] + "01" + bytes([OP_NOP]).hex() + unpooled["hex"][76:]
+        nop_dec = n0.decoderawtransaction(nop_hex)
+        assert_equal(nop_dec["vin"][0]["scriptSig"]["hex"], bytes([OP_NOP]).hex())
+        nop_txid = nop_dec["txid"]
+        with n0.assert_debug_log([f"p2pmsg: dropping CANDIDATE_TX {nop_txid}: scriptsig-not-pushonly"], timeout=240):
+            assert n1.sendcandidate(uniq[0], nop_hex)
+        assert_equal(n0.getaggregationhint()["available"], 0)
+        self.log.info("candidate with a non-push-only scriptSig was dropped")
 
         # An honest candidate whose coin a mempool tx already spends. Its
         # mempool eviction already ran, so if pooled it would stay until

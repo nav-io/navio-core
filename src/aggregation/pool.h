@@ -47,7 +47,10 @@ static constexpr size_t POOL_SHARDS = 16;
 bool IsCandidateShape(const CTransaction& tx);
 
 //! Check a cover candidate the way mempool acceptance would check it, except
-//! for the minimum-fee rule (a candidate is fee-0): CheckTransaction, an input
+//! for the minimum-fee rule (a candidate is fee-0): the per-input standardness
+//! rules of IsStandardTx (scriptSig push-only and at most
+//! MAX_STANDARD_SCRIPTSIG_SIZE, which mempool acceptance applies to the
+//! aggregate), CheckTransaction, an input
 //! that a mempool tx already spends ("txn-mempool-conflict"),
 //! Consensus::CheckTxInputs against `view` (missing or spent coin, immature
 //! coinbase), and blsct::VerifyTx (scripts, balance, txSig, range proof).

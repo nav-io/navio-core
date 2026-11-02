@@ -13,7 +13,9 @@
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
 #include <coins.h>
+#include <policy/policy.h>
 #include <primitives/transaction.h>
+#include <script/script.h>
 #include <serialize.h>
 #include <set>
 #include <streams.h>
@@ -101,9 +103,9 @@ BOOST_FIXTURE_TEST_CASE(candidate_verifies_with_fee_rule_skipped, TestingSetup)
 }
 
 // Network ingress runs aggregation::CheckCandidate before pooling. Skipping
-// the fee rule must not skip anything else: a forged signature, a missing
-// input, an input a mempool tx already spends and an immature coinbase input
-// are each rejected.
+// the fee rule must not skip anything else: a non-standard scriptSig, a forged
+// signature, a missing input, an input a mempool tx already spends and an
+// immature coinbase input are each rejected.
 BOOST_FIXTURE_TEST_CASE(check_candidate_rejects_invalid, TestingSetup)
 {
     auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
@@ -137,6 +139,20 @@ BOOST_FIXTURE_TEST_CASE(check_candidate_rejects_invalid, TestingSetup)
 
     // The honest candidate passes.
     BOOST_CHECK_MESSAGE(check(*good, cache, reason), reason);
+
+    // IsStandardTx's per-input rules: mempool acceptance would reject an
+    // aggregate containing either input, so the candidate is refused up front.
+    {
+        CMutableTransaction nop{*good};
+        nop.vin[0].scriptSig = CScript() << OP_NOP;
+        BOOST_CHECK(!check(CTransaction{nop}, cache, reason));
+        BOOST_CHECK_EQUAL(reason, "scriptsig-not-pushonly");
+
+        CMutableTransaction big{*good};
+        big.vin[0].scriptSig = CScript() << std::vector<unsigned char>(MAX_STANDARD_SCRIPTSIG_SIZE, 0x01);
+        BOOST_CHECK(!check(CTransaction{big}, cache, reason));
+        BOOST_CHECK_EQUAL(reason, "scriptsig-size");
+    }
 
     // A forged txSig: same tx, signature taken from another candidate.
     {
