@@ -22,6 +22,13 @@ it no longer has.
 
 A full-tx wallet doing the same thing is the control: both must end up holding
 exactly the funding coin, before and after a restart.
+
+When the staker merges the send with another into one block transaction under a
+different hash, that transaction spent the funding coin and created the change
+on chain. Forgetting the local send must then leave both as they are: the
+funding coin stays spent and the change stays held. (A full-tx wallet has no
+counterpart: it replaces the local send with the block transaction as soon as
+the block connects.)
 """
 
 from decimal import Decimal
@@ -103,6 +110,55 @@ class BlsctOutputStorageRemovePrunedFundsTest(BitcoinTestFramework):
         self.assert_holds_only(wallet, funding_outid, f"storage={storage_output} zapped")
         return name, funding_outid
 
+    def merge_send_and_forget(self):
+        """Fund a fresh output-storage wallet, mine its send in one block with
+        a send of the miner's so the two are merged, then removeprunedfunds
+        the local send. Returns (wallet name, change outid, change amount)."""
+        node = self.nodes[0]
+        name = "zap_storage_merged"
+        node.createwallet(wallet_name=name, blsct=True, storage_output=True)
+        wallet = node.get_wallet_rpc(name)
+        addr = wallet.getnewaddress(label="", address_type="blsct")
+
+        self.miner.sendtoblsctaddress(addr, FUND_AMOUNT)
+        self.generate_blsct_blocks(self.miner_addr, 1)
+        funding_outid = wallet.listblsctunspent(0, 9999999)[0]["outid"]
+
+        wallet.sendtoblsctaddress(self.receiver_addr, SEND_AMOUNT)
+        self.miner.sendtoblsctaddress(self.receiver_addr, SEND_AMOUNT)
+        mempool = node.getrawmempool()
+        assert_equal(len(mempool), 2)
+        sends = [e for e in wallet.listtransactions("*", 10 ** 9, 0, True)
+                 if e.get("category") == "send"]
+        assert_equal(len(sends), 1)
+        send_txid = sends[0]["txid"]
+        assert send_txid in mempool
+        block_hash = self.generatetoblsctaddress(node, 1, self.miner_addr)[0]
+        assert_equal(node.getrawmempool(), [])
+        assert send_txid not in node.getblock(block_hash)["tx"], "send was not merged"
+
+        unspent = wallet.listblsctunspent(0, 9999999)
+        assert_equal(len(unspent), 1)
+        change_outid = unspent[0]["outid"]
+        change = to_dec(unspent[0]["amount"])
+        assert change_outid != funding_outid
+        assert change < FUND_AMOUNT - SEND_AMOUNT
+
+        wallet.removeprunedfunds(send_txid)
+        self.assert_holds_change(wallet, change_outid, change, "merged zapped")
+        return name, change_outid, change
+
+    def assert_holds_change(self, wallet, outid, change, scenario):
+        """`wallet` holds exactly the confirmed change `outid`."""
+        mine = wallet.getbalances()["mine"]
+        unspent = wallet.listblsctunspent(0, 9999999)
+        self.log.info(f"[{scenario}] getbalances.mine={mine} listblsctunspent="
+                      f"{[(u['outid'], u['amount']) for u in unspent]}")
+        assert_equal(to_dec(mine["trusted"]), change)
+        assert_equal(to_dec(mine["untrusted_pending"]), Decimal("0"))
+        assert_equal([(u["outid"], to_dec(u["amount"])) for u in unspent],
+                     [(outid, change)])
+
     def run_test(self):
         node = self.nodes[0]
 
@@ -119,11 +175,17 @@ class BlsctOutputStorageRemovePrunedFundsTest(BitcoinTestFramework):
         self.log.info("removeprunedfunds of a send in an output-storage wallet")
         storage = self.fund_send_and_forget(storage_output=True)
 
-        self.log.info("Both wallets still hold only the funding coin after a restart")
+        self.log.info("removeprunedfunds of a send merged into a block transaction")
+        merged_name, merged_outid, merged_change = self.merge_send_and_forget()
+
+        self.log.info("Every wallet keeps what it held after a restart")
         self.restart_node(0)
         for name, outid in (control, storage):
             node.loadwallet(name)
             self.assert_holds_only(node.get_wallet_rpc(name), outid, f"{name} restarted")
+        node.loadwallet(merged_name)
+        self.assert_holds_change(node.get_wallet_rpc(merged_name), merged_outid, merged_change,
+                                 "merged restarted")
 
 
 if __name__ == '__main__':

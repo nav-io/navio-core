@@ -3361,8 +3361,18 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
     for (const uint256& hash : vHashOut) {
         const auto& it = mapWallet.find(hash);
         wtxOrdered.erase(it->second.m_it_wtxOrdered);
+        // A send the staker merged into a block transaction under another
+        // hash: the block scan recorded its inputs as spent by that
+        // transaction and confirmed its outputs, which are on chain and so
+        // stay. Unconfirmed outputs of a send whose inputs another
+        // transaction spent were conflicted, not merged, and go.
+        bool merged_elsewhere{false};
         for (const auto& txin : it->second.tx->vin) {
             zapped_spends.emplace_back(txin.prevout, hash);
+            const auto spent = mapOutputs.find(txin.prevout);
+            if (spent != mapOutputs.end() && !spent->second.m_spent_by.IsNull() && spent->second.m_spent_by != hash) {
+                merged_elsewhere = true;
+            }
             auto range = mapTxSpends.equal_range(txin.prevout);
             for (auto iter = range.first; iter != range.second; ++iter) {
                 if (iter->second == hash) {
@@ -3372,7 +3382,10 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
             }
         }
         for (const Outid& out_id : it->second.tx->GetOutputIds()) {
-            zapped_outputs.emplace_back(out_id);
+            const auto row = mapOutputs.find(COutPoint(out_id));
+            if (!merged_elsewhere || row == mapOutputs.end() || !row->second.state<TxStateConfirmed>()) {
+                zapped_outputs.emplace_back(out_id);
+            }
             const auto idx = mapOutpointHashToWalletTx.find(out_id.ToUint256());
             if (idx != mapOutpointHashToWalletTx.end() && idx->second == &it->second) {
                 mapOutpointHashToWalletTx.erase(idx);
