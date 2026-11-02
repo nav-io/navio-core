@@ -10,6 +10,14 @@
   `getoutputinfo` with `-outindex`) finds the transaction holding it, and
   `gettransaction` still accepts the `outid` of such an entry. Entries for
   transactions the wallet built itself are unchanged and keep their `txid`.
+  Rows in `listsinceblock`'s `removed` array are the exception: they come from
+  reading the detached block, so they carry the `txid` of the transaction that
+  held the output.
+
+- `gettransaction` called with the `outid` of such an entry still returns that
+  `outid` in its top-level `txid` field, because the field is required there.
+  The value is an output id, not a transaction id; use `gettxfromoutputhash`
+  to find the transaction.
 
 - `listunspent` on an output-storage wallet lists the change of the wallet's
   own sends once. It used to list it twice, once without an `address`, so the

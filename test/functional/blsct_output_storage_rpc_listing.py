@@ -209,6 +209,13 @@ class BlsctOutputStorageRpcListingTest(BitcoinTestFramework):
         sender.sendtoblsctaddress(receiver_addr, SEND_AMOUNT)
         before = self.check_listunspent(sender, "send in mempool")
         assert any(u["confirmations"] == 0 for u in before), "unconfirmed change not listed"
+        # listpendingtransactions shares the listings' row shape: the send is
+        # listed under its real txid and no row repeats an outid as txid.
+        pending = sender.listpendingtransactions("*", 100000, 0, True)
+        assert_greater_than(len(pending), 0)
+        self.check_txids(sender, pending, "sender listpendingtransactions")
+        assert all("txid" in e for e in pending if not e.get("output_storage")), pending
+        self.check_txids(receiver, receiver.listpendingtransactions("*", 100000, 0, True), "receiver listpendingtransactions")
 
         self.log.info("Confirm the send; check both wallets")
         self.generate_blsct_blocks(sender_addr, 1)
@@ -222,6 +229,21 @@ class BlsctOutputStorageRpcListingTest(BitcoinTestFramework):
         self.generate_blsct_blocks(sender_addr, 1)
         self.check_listunspent(sender, "second send")
         self.check_listunspent(receiver, "second receive")
+
+        self.log.info("listsinceblock's removed rows name the detached tx")
+        # The removed array is filled from a block read, so its output-storage
+        # rows know their containing tx and report it as txid.
+        detached = node.getbestblockhash()
+        block_txids = set(node.getblock(detached)["tx"])
+        node.invalidateblock(detached)
+        removed = receiver.listsinceblock(detached)["removed"]
+        storage_rows = [e for e in removed if e.get("output_storage")]
+        assert_greater_than(len(storage_rows), 0)
+        for e in storage_rows:
+            assert e["txid"] in block_txids, e
+            assert e["txid"] != e["outid"], e
+        node.reconsiderblock(detached)
+        assert_equal(node.getbestblockhash(), detached)
 
         self.log.info("listtransactions/listsinceblock never report an outid as txid")
         for name, wallet in (("sender", sender), ("receiver", receiver)):

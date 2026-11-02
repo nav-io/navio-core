@@ -1098,7 +1098,12 @@ RPCHelpMan listsinceblock()
                     if (wallet.GetWalletTxFromOutpoint(op) != nullptr) continue;
                     ListOutputTransaction(wallet, op, mit->second, -100000000, 100000000, out_entries, filter, filter_label);
                 }
-                for (auto& [_, e] : out_entries) removed.push_back(std::move(e));
+                // Unlike the other output-storage rows, these come from a block
+                // read, so their containing transaction is known: report it.
+                for (auto& [_, e] : out_entries) {
+                    e.pushKV("txid", tx->GetHash().GetHex());
+                    removed.push_back(std::move(e));
+                }
             }
         }
         blockId = block.hashPrevBlock;
