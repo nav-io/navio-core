@@ -150,6 +150,15 @@ struct Amounts {
     }
 };
 
+//! True if tx has a fee output with a non-zero value in a token other than the
+//! native one. Consensus accepts such a tx on its own (the balance check uses
+//! the fee output's token generator), but its fee is not native value: mempool
+//! policy rejects it and the block assembler cannot aggregate it.
+bool HasNonNativeFeeOutput(const CTransaction& tx);
+
+//! Merge txs into one, folding their PayFee outputs into a single native fee
+//! output. Throws std::invalid_argument if any input tx pays a non-zero fee in
+//! a token other than the native one: the merged output could not balance it.
 CTransactionRef
 AggregateTransactions(const std::vector<CTransactionRef>& txs);
 UnsignedOutput CreateOutput(const Scalar& tokenKey, const blsct::TokenInfo& tokenInfo);
