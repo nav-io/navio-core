@@ -17,6 +17,7 @@
 
 #include <univalue.h>
 
+#include <set>
 
 namespace wallet {
 
@@ -759,8 +760,9 @@ RPCHelpMan listunspent()
     blsct::KeyMan* blsct_km = pwallet->GetBLSCTKeyMan();
 
     // Emits one listunspent entry for `out`. BLSCT coins are rendered using
-    // their recovered nv1... destination and amount (AvailableBlsctCoins
-    // already substitutes the recovered amount into out.txout.nValue) and
+    // their recovered nv1... destination and amount (AvailableCoins and
+    // AvailableBlsctCoins both substitute the recovered amount into
+    // out.txout.nValue) and
     // skip the redeemScript/witnessScript/desc fields, which assume a
     // standard, unmasked scriptPubKey and have no meaning for a confidential
     // output.
@@ -854,8 +856,22 @@ RPCHelpMan listunspent()
         results.push_back(entry);
     };
 
-    for (const COutput& out : vecOutputs) add_entry(out, /*is_blsct=*/false);
-    for (const COutput& out : vecBlsctOutputs) add_entry(out, /*is_blsct=*/true);
+    // Under output storage the outputs of the wallet's own sends (their
+    // change, above all) are known twice: through their CWalletTx, in
+    // vecOutputs, and through their mapOutputs mirror, in vecBlsctOutputs.
+    // List each output once, skipping the mirror under the rule the balance
+    // RPCs use (IsOutputCoveredByWalletTx), so listunspent agrees with them.
+    // A BLSCT output is rendered as one whichever list it came from.
+    std::set<COutPoint> listed;
+    for (const COutput& out : vecOutputs) {
+        if (!listed.insert(out.outpoint).second) continue;
+        add_entry(out, /*is_blsct=*/out.txout.HasBLSCTRangeProof() || out.txout.HasBLSCTKeys());
+    }
+    for (const COutput& out : vecBlsctOutputs) {
+        if (IsOutputCoveredByWalletTx(*pwallet, out.outpoint)) continue;
+        if (!listed.insert(out.outpoint).second) continue;
+        add_entry(out, /*is_blsct=*/true);
+    }
 
     return results;
 },
