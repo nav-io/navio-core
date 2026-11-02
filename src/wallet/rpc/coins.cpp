@@ -109,16 +109,12 @@ static CAmount GetReceived(const CWallet& wallet, const UniValue& params, bool b
     // Under WALLET_FLAG_BLSCT_OUTPUT_STORAGE, receive-side BLSCT outputs can
     // live in mapOutputs without ever getting a matching CWalletTx (range
     // proofs stripped, recovery data cached per-output) -- see
-    // GetBlsctBalance() in wallet/receive.cpp for the same pattern. Skip an
-    // entry only when its matching CWalletTx is confirmed or in the mempool,
-    // since that means the mapWallet pass above already tallied it; an
-    // inactive CWalletTx (e.g. superseded by a staker-aggregated tx with a
-    // different txid) leaves the mapOutputs entry as the sole record of the
-    // credit.
+    // GetBlsctBalance() in wallet/receive.cpp for the same pattern. Skip the
+    // entries the mapWallet pass above already tallied (see
+    // IsOutputCoveredByWalletTx()).
     if (!blsct_destinations.empty() && wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
         for (const auto& [outpoint, wout] : wallet.mapOutputs) {
-            const CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(outpoint);
-            if (wtx != nullptr && (wtx->isConfirmed() || wtx->InMempool())) continue;
+            if (IsOutputCoveredByWalletTx(wallet, outpoint)) continue;
 
             const int depth{wallet.GetOutputDepthInMainChain(wout)};
             if (depth < min_depth

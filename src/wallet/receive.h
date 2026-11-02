@@ -60,6 +60,21 @@ bool IsOutputTrusted(const CWallet& wallet, const CWalletOutput& wout) EXCLUSIVE
  * covered.
  */
 bool TxTrustCoversOutput(const CWallet& wallet, const CWalletTx& wtx, const uint256& output_hash) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
+/**
+ * Whether the mapOutputs entry at `outpoint` is already accounted for by the
+ * mapWallet path, so walks over mapOutputs must skip it to avoid counting or
+ * listing the output twice.
+ *
+ * Under WALLET_FLAG_BLSCT_OUTPUT_STORAGE, locally-created BLSCT transactions
+ * are still recorded in mapWallet and their outputs are mirrored into
+ * mapOutputs. The CWalletTx path covers such an output only while that
+ * CWalletTx is alive, i.e. confirmed or in the mempool. When a chain of BLSCT
+ * sends is mined together the staker aggregates them into one block tx with a
+ * different txid, and the originating CWalletTx goes TxStateInactive: the
+ * CWalletTx path then skips its outputs, and the mapOutputs entry is the only
+ * record of them.
+ */
+bool IsOutputCoveredByWalletTx(const CWallet& wallet, const COutPoint& outpoint) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 
 struct Balance {
     CAmount m_mine_trusted{0};           //!< Trusted, at depth=GetBalance.min_depth or more

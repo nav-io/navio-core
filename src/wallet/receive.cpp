@@ -574,6 +574,13 @@ bool TxTrustCoversOutput(const CWallet& wallet, const CWalletTx& wtx, const uint
     return wallet.GetTxDepthInMainChain(wtx) >= 1;
 }
 
+bool IsOutputCoveredByWalletTx(const CWallet& wallet, const COutPoint& outpoint)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    const CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(outpoint);
+    return wtx != nullptr && (wtx->isConfirmed() || wtx->InMempool());
+}
+
 bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx)
 {
     std::set<uint256> trusted_parents;
@@ -640,25 +647,14 @@ Balance GetBalance(const CWallet& wallet, const int min_depth, bool avoid_reuse,
 static void AddOutputBalance(const CWallet& wallet, const COutPoint& outpoint, const CWalletOutput& wout, const int min_depth, const TokenId& token_id,
                              Balance& ret) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
 {
-    // In BLSCT output-storage mode, locally-created BLSCT transactions
-    // are still recorded in mapWallet for broadcast/history purposes and
-    // their outputs are mirrored into mapOutputs by sync callbacks.
-    // Skip the mapOutputs entry only when the matching CWalletTx is
-    // alive on chain or in the mempool — in those cases the
-    // CWalletTx-driven path counts the output and we'd double-count.
-    //
-    // When a chain of BLSCT sends is mined together, the staker
-    // aggregates them into a single block tx with a different txid;
-    // the originating CWalletTx ends up in TxStateInactive because
-    // its hash is not in the chain. Its outputs still belong to us
-    // (mapOutputs proves it), so the CWalletTx path will not count
-    // them and we must count them here, lest the wallet's reported
-    // balance lose the change a chain-spend produced.
-    if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
-        const CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(outpoint);
-        if (wtx != nullptr && (wtx->isConfirmed() || wtx->InMempool())) {
-            return;
-        }
+    // In BLSCT output-storage mode the outputs of locally-created BLSCT
+    // transactions are mirrored into mapOutputs; GetBalance() counts them
+    // while their CWalletTx is alive, and we would double-count. When that
+    // CWalletTx went inactive (a chain of sends the staker aggregated into
+    // one block tx) this entry is the only record of the output, and we
+    // must count it, lest the balance lose the change a chain-spend made.
+    if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE) && IsOutputCoveredByWalletTx(wallet, outpoint)) {
+        return;
     }
     // Both spend records, same rule as GetStakedCommitmentInfo(): the
     // spending tx may be known only as a CWalletTx (mapTxSpends) and
@@ -772,16 +768,11 @@ BlsctTrustedBalance GetBlsctTrustedBalance(const CWallet& wallet, const int min_
     }
 
     // mapOutputs is populated only under WALLET_FLAG_BLSCT_OUTPUT_STORAGE, where
-    // externally-received outputs never get a CWalletTx at all. Skip an entry
-    // only when its matching CWalletTx is confirmed or in the mempool, since
-    // that means the mapWallet pass above already counted it; an inactive
-    // CWalletTx (e.g. superseded by a staker-aggregated tx with a different
-    // txid) is untrusted there, leaving the mapOutputs entry as the sole record
-    // of the credit. This is the dedup rule GetBlsctBalance() and GetReceived()
-    // (wallet/rpc/coins.cpp) already use.
+    // externally-received outputs never get a CWalletTx at all. Skip the
+    // entries the mapWallet pass above already counted; see
+    // IsOutputCoveredByWalletTx(), the dedup rule GetBlsctBalance() uses too.
     for (const auto& [outpoint, wout] : wallet.mapOutputs) {
-        const CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(outpoint);
-        if (wtx != nullptr && (wtx->isConfirmed() || wtx->InMempool())) continue;
+        if (IsOutputCoveredByWalletTx(wallet, outpoint)) continue;
         if (!wout.fBLSCTOutput) continue;
         if (!wout.out->tokenId.IsNull()) continue;
         if (wout.IsSpent() || wallet.IsSpent(outpoint)) continue;
