@@ -365,7 +365,7 @@ static RPCHelpMan createwallet()
             {"storage_output", RPCArg::Type::BOOL, RPCArg::DefaultHint{"true for BLSCT wallets, otherwise false"}, "Store outputs instead of full transactions. BLSCT wallets enable this by default; pass false to keep full transactions."},
             {"seed", RPCArg::Type::STR_HEX, RPCArg::Default{""}, "Create the BLSCT wallet from the specified seed (a master seed, or an audit key for a watch-only wallet). Requires blsct=true."},
             {"mnemonic", RPCArg::Type::STR, RPCArg::Default{""}, "BIP-39 mnemonic phrase (24 words, or 26 with the Navio birthday suffix encoding the wallet creation time) to restore a BLSCT wallet from. Requires blsct=true. Mutually exclusive with 'seed'."},
-            {"mnemonic_passphrase", RPCArg::Type::STR, RPCArg::Default{""}, "Optional BIP-39 passphrase used to extend the mnemonic when deriving the wallet keys. Requires blsct=true. Cannot be combined with 'seed'. The same passphrase must be provided again to restore the wallet from its mnemonic. Must be ASCII when creating a new wallet, since no NFKD normalization is applied and a non-ASCII passphrase would not be interoperable with other BIP-39 wallets. A non-ASCII passphrase is still accepted, with a warning, when restoring from 'mnemonic', so wallets created that way remain recoverable."},
+            {"seedphrase_extension|mnemonic_passphrase", RPCArg::Type::STR, RPCArg::Default{""}, "Optional seedphrase extension (BIP-39 passphrase): extra text combined with the mnemonic when deriving the wallet keys. It is unrelated to the wallet encryption 'passphrase'. Requires blsct=true. Cannot be combined with 'seed'. The same extension must be provided again to restore the wallet from its mnemonic. Must be ASCII when creating a new wallet, since no NFKD normalization is applied and a non-ASCII extension would not be interoperable with other BIP-39 wallets. A non-ASCII extension is still accepted, with a warning, when restoring from 'mnemonic', so wallets created that way remain recoverable. 'mnemonic_passphrase' is a deprecated alias for this argument and will be removed in a future release."},
         },
         RPCResult{
             RPCResult::Type::OBJ, "", "", {
@@ -471,29 +471,29 @@ static RPCHelpMan createwallet()
                 mnemonic_str = request.params[11].get_str();
             }
 
-            std::string mnemonic_passphrase;
+            std::string seedphrase_extension;
             if (!request.params[12].isNull()) {
-                mnemonic_passphrase = request.params[12].get_str();
+                seedphrase_extension = request.params[12].get_str();
             }
-            if (!mnemonic_passphrase.empty()) {
+            if (!seedphrase_extension.empty()) {
                 if (!(flags & WALLET_FLAG_BLSCT)) {
-                    throw JSONRPCError(RPC_INVALID_PARAMETER, "The 'mnemonic_passphrase' parameter requires blsct=true");
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "The 'seedphrase_extension' parameter requires blsct=true");
                 }
                 if (has_seed_param) {
-                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot specify both 'seed' and 'mnemonic_passphrase'");
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot specify both 'seed' and 'seedphrase_extension'");
                 }
                 // MnemonicToSeed derives the seed from raw UTF-8 without BIP-39
-                // NFKD normalization (see mnemonic.h), so a non-ASCII passphrase
+                // NFKD normalization (see mnemonic.h), so a non-ASCII extension
                 // selects a different wallet than a conforming BIP-39 wallet.
                 // Refuse to create a new wallet that way. A restore must still
                 // accept it: a wallet already created with a non-ASCII
-                // passphrase is only recoverable from those exact bytes.
-                if (!mnemonic::IsAsciiPassphrase(mnemonic_passphrase)) {
+                // extension is only recoverable from those exact bytes.
+                if (!mnemonic::IsAsciiPassphrase(seedphrase_extension)) {
                     if (!has_mnemonic_param) {
-                        throw JSONRPCError(RPC_INVALID_PARAMETER, "The 'mnemonic_passphrase' must be ASCII when creating a new wallet");
+                        throw JSONRPCError(RPC_INVALID_PARAMETER, "The 'seedphrase_extension' must be ASCII when creating a new wallet");
                     }
                     warnings.emplace_back(Untranslated(
-                        "The 'mnemonic_passphrase' contains non-ASCII characters. It is used as raw UTF-8 without "
+                        "The 'seedphrase_extension' contains non-ASCII characters. It is used as raw UTF-8 without "
                         "BIP-39 normalization, so this restore only matches a wallet created from the exact same bytes, "
                         "and may not match other BIP-39 wallets."));
                 }
@@ -510,14 +510,14 @@ static RPCHelpMan createwallet()
             if ((flags & WALLET_FLAG_DISABLE_PRIVATE_KEYS) && type != blsct::IMPORT_VIEW_KEY && (!seed.empty() || !mnemonic_str.empty())) {
                 throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot combine 'disable_private_keys' with a master seed or 'mnemonic', which hold private keys. Pass an audit key as 'seed' to create a watch-only BLSCT wallet.");
             }
-            // Such a wallet derives no keys, so a passphrase would be dropped.
-            if ((flags & WALLET_FLAG_DISABLE_PRIVATE_KEYS) && !mnemonic_passphrase.empty()) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot combine 'disable_private_keys' with 'mnemonic_passphrase'");
+            // Such a wallet derives no keys, so an extension would be dropped.
+            if ((flags & WALLET_FLAG_DISABLE_PRIVATE_KEYS) && !seedphrase_extension.empty()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot combine 'disable_private_keys' with 'seedphrase_extension'");
             }
             // CreateWallet sets up no keys for a blank wallet, so these would
             // be dropped without a word.
-            if ((flags & WALLET_FLAG_BLANK_WALLET) && (has_seed_param || has_mnemonic_param || !mnemonic_passphrase.empty())) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot combine 'blank' with 'seed', 'mnemonic' or 'mnemonic_passphrase'. A blank wallet is created without keys.");
+            if ((flags & WALLET_FLAG_BLANK_WALLET) && (has_seed_param || has_mnemonic_param || !seedphrase_extension.empty())) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "Cannot combine 'blank' with 'seed', 'mnemonic' or 'seedphrase_extension'. A blank wallet is created without keys.");
             }
 
             // If mnemonic provided, convert to entropy. Accepts plain
@@ -588,7 +588,7 @@ static RPCHelpMan createwallet()
             bilingual_str error;
 
             std::optional<bool> load_on_start = request.params[6].isNull() ? std::nullopt : std::optional<bool>(request.params[6].get_bool());
-            const std::shared_ptr<CWallet> wallet = CreateWallet(context, request.params[0].get_str(), seed, type, load_on_start, options, status, error, warnings, mnemonic_passphrase, creation_time);
+            const std::shared_ptr<CWallet> wallet = CreateWallet(context, request.params[0].get_str(), seed, type, load_on_start, options, status, error, warnings, seedphrase_extension, creation_time);
             // Cleanse entropy from local buffer now that CreateWallet has consumed it
             memory_cleanse(seed.data(), seed.size());
             if (!wallet) {

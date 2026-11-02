@@ -20,7 +20,7 @@ class WalletMnemonicTest(BitcoinTestFramework):
     def skip_test_if_missing_module(self):
         self.skip_if_no_wallet()
 
-    def navio_wallet_create(self, wallet_name, mnemonic=None, seed=None, mnemonic_passphrase=None):
+    def navio_wallet_create(self, wallet_name, mnemonic=None, seed=None, seedphrase_extension=None, mnemonic_passphrase=None):
         """Run navio-wallet create with -blsct. Options must come BEFORE the command."""
         args = [
             '-datadir={}'.format(self.nodes[0].datadir_path),
@@ -32,7 +32,10 @@ class WalletMnemonicTest(BitcoinTestFramework):
             args.append('-mnemonic={}'.format(mnemonic))
         if seed is not None:
             args.append('-seed={}'.format(seed))
+        if seedphrase_extension is not None:
+            args.append('-seedphraseextension={}'.format(seedphrase_extension))
         if mnemonic_passphrase is not None:
+            # deprecated alias of -seedphraseextension
             args.append('-mnemonicpassphrase={}'.format(mnemonic_passphrase))
         args.append('create')
         p = subprocess.Popen(
@@ -192,19 +195,19 @@ class WalletMnemonicTest(BitcoinTestFramework):
         assert_raises_rpc_error(-8, nopriv_msg,
             node.createwallet, wallet_name="test_nopriv_mnemonic",
             blsct=True, disable_private_keys=True, mnemonic="abandon " * 23 + "art")
-        assert_raises_rpc_error(-8, "Cannot combine 'disable_private_keys' with 'mnemonic_passphrase'",
-            node.createwallet, wallet_name="test_nopriv_passphrase",
-            blsct=True, disable_private_keys=True, mnemonic_passphrase="extra")
+        assert_raises_rpc_error(-8, "Cannot combine 'disable_private_keys' with 'seedphrase_extension'",
+            node.createwallet, wallet_name="test_nopriv_extension",
+            blsct=True, disable_private_keys=True, seedphrase_extension="extra")
         # the refusal must come before the wallet database is written
-        for name in ("test_nopriv_seed", "test_nopriv_mnemonic", "test_nopriv_passphrase"):
+        for name in ("test_nopriv_seed", "test_nopriv_mnemonic", "test_nopriv_extension"):
             assert_raises_rpc_error(-18, "Path does not exist", node.loadwallet, name)
 
-        self.log.info("Test createwallet refuses a seed, mnemonic or mnemonic passphrase for a blank wallet")
-        blank_msg = "Cannot combine 'blank' with 'seed', 'mnemonic' or 'mnemonic_passphrase'"
+        self.log.info("Test createwallet refuses a seed, mnemonic or seedphrase extension for a blank wallet")
+        blank_msg = "Cannot combine 'blank' with 'seed', 'mnemonic' or 'seedphrase_extension'"
         blank_keys = {
             "test_blank_seed": {"seed": "00" * 32},
             "test_blank_mnemonic": {"mnemonic": "abandon " * 23 + "art"},
-            "test_blank_passphrase": {"mnemonic_passphrase": "extra"},
+            "test_blank_extension": {"seedphrase_extension": "extra"},
         }
         for name, keys in blank_keys.items():
             assert_raises_rpc_error(-8, blank_msg, node.createwallet, wallet_name=name, blsct=True, blank=True, **keys)
@@ -410,97 +413,129 @@ class WalletMnemonicTest(BitcoinTestFramework):
         assert_equal(p_no_blsct_seed.poll(), 1)
         assert "requires -blsct" in stderr_nbs
 
-        # === BIP-39 mnemonic passphrase ===
+        # === Seedphrase extension (BIP-39 passphrase) ===
 
-        self.log.info("Test mnemonic_passphrase: restore with passphrase derives different keys")
+        self.log.info("Test seedphrase_extension: restore with an extension derives different keys")
         node.createwallet(wallet_name="test_mp_source", blsct=True)
         w_mp = node.get_wallet_rpc("test_mp_source")
         mnemonic_mp = w_mp.dumpmnemonic()
         seed_plain = w_mp.getblsctseed()
         node.createwallet(wallet_name="test_mp_pass", blsct=True, mnemonic=mnemonic_mp,
-                          mnemonic_passphrase="hunter2")
+                          seedphrase_extension="hunter2")
         w_mp2 = node.get_wallet_rpc("test_mp_pass")
         seed_pass = w_mp2.getblsctseed()
         assert seed_plain != seed_pass
 
-        self.log.info("Test mnemonic_passphrase: same mnemonic + passphrase is deterministic")
+        self.log.info("Test seedphrase_extension: same mnemonic + extension is deterministic")
         node.createwallet(wallet_name="test_mp_pass2", blsct=True, mnemonic=mnemonic_mp,
-                          mnemonic_passphrase="hunter2")
+                          seedphrase_extension="hunter2")
         w_mp3 = node.get_wallet_rpc("test_mp_pass2")
         assert_equal(seed_pass, w_mp3.getblsctseed())
 
-        self.log.info("Test mnemonic_passphrase: different passphrases derive different keys")
+        self.log.info("Test seedphrase_extension: different extensions derive different keys")
         node.createwallet(wallet_name="test_mp_other", blsct=True, mnemonic=mnemonic_mp,
-                          mnemonic_passphrase="other")
+                          seedphrase_extension="other")
         w_mp4 = node.get_wallet_rpc("test_mp_other")
         assert w_mp4.getblsctseed() != seed_pass
 
-        self.log.info("Test mnemonic_passphrase: dumpmnemonic returns the mnemonic without passphrase")
+        self.log.info("Test seedphrase_extension: dumpmnemonic returns the mnemonic without the extension")
         assert_equal(w_mp2.dumpmnemonic(), mnemonic_mp)
 
-        self.log.info("Test mnemonic_passphrase on newly generated wallet: restore roundtrip")
+        self.log.info("Test seedphrase_extension on newly generated wallet: restore roundtrip")
         result_mp = node.createwallet(wallet_name="test_mp_new", blsct=True,
-                                      mnemonic_passphrase="newpass")
+                                      seedphrase_extension="newpass")
         assert "mnemonic" in result_mp
         w_mp_new = node.get_wallet_rpc("test_mp_new")
         node.createwallet(wallet_name="test_mp_new_restored", blsct=True,
-                          mnemonic=result_mp["mnemonic"], mnemonic_passphrase="newpass")
+                          mnemonic=result_mp["mnemonic"], seedphrase_extension="newpass")
         w_mp_new2 = node.get_wallet_rpc("test_mp_new_restored")
         assert_equal(w_mp_new.getblsctseed(), w_mp_new2.getblsctseed())
-        # Restoring without the passphrase yields a different wallet
+        # Restoring without the extension yields a different wallet
         node.createwallet(wallet_name="test_mp_new_nopass", blsct=True,
                           mnemonic=result_mp["mnemonic"])
         w_mp_new3 = node.get_wallet_rpc("test_mp_new_nopass")
         assert w_mp_new3.getblsctseed() != w_mp_new.getblsctseed()
 
-        self.log.info("Test non-ASCII mnemonic_passphrase is rejected for a new wallet")
+        self.log.info("Test non-ASCII seedphrase_extension is rejected for a new wallet")
         assert_raises_rpc_error(-8, "must be ASCII when creating a new wallet",
             node.createwallet, wallet_name="test_mp_nonascii_new",
-            blsct=True, mnemonic_passphrase="h\u00fcnter2")
+            blsct=True, seedphrase_extension="h\u00fcnter2")
 
-        self.log.info("Test non-ASCII mnemonic_passphrase is accepted with a warning on restore")
+        self.log.info("Test non-ASCII seedphrase_extension is accepted with a warning on restore")
         res_na = node.createwallet(wallet_name="test_mp_nonascii_restore", blsct=True,
-                                   mnemonic=mnemonic_mp, mnemonic_passphrase="h\u00fcnter2")
+                                   mnemonic=mnemonic_mp, seedphrase_extension="h\u00fcnter2")
         assert any("non-ASCII" in w for w in res_na["warnings"]), res_na
         seed_na = node.get_wallet_rpc("test_mp_nonascii_restore").getblsctseed()
         assert seed_na != seed_plain
         assert seed_na != seed_pass
         node.createwallet(wallet_name="test_mp_nonascii_restore2", blsct=True,
-                          mnemonic=mnemonic_mp, mnemonic_passphrase="h\u00fcnter2")
+                          mnemonic=mnemonic_mp, seedphrase_extension="h\u00fcnter2")
         assert_equal(node.get_wallet_rpc("test_mp_nonascii_restore2").getblsctseed(), seed_na)
-        # An ASCII passphrase restore carries no such warning.
+        # An ASCII extension restore carries no such warning.
         assert not any("non-ASCII" in w for w in node.createwallet(
             wallet_name="test_mp_ascii_restore", blsct=True, mnemonic=mnemonic_mp,
-            mnemonic_passphrase="hunter2").get("warnings", []))
+            seedphrase_extension="hunter2").get("warnings", []))
 
-        self.log.info("Test mnemonic_passphrase without blsct errors")
+        self.log.info("Test seedphrase_extension without blsct errors")
         assert_raises_rpc_error(-8, "requires blsct=true",
             node.createwallet, wallet_name="test_mp_no_blsct",
-            mnemonic_passphrase="pass")
+            seedphrase_extension="pass")
 
-        self.log.info("Test mnemonic_passphrase with seed errors")
+        self.log.info("Test seedphrase_extension with seed errors")
         assert_raises_rpc_error(-8, "Cannot specify both",
             node.createwallet, wallet_name="test_mp_seed",
+            blsct=True, seed="00" * 32, seedphrase_extension="pass")
+
+        self.log.info("Test deprecated mnemonic_passphrase alias derives the same keys as seedphrase_extension")
+        node.createwallet_passthrough(wallet_name="test_mp_alias", blsct=True, mnemonic=mnemonic_mp,
+                                      mnemonic_passphrase="hunter2")
+        assert_equal(node.get_wallet_rpc("test_mp_alias").getblsctseed(), seed_pass)
+        # The alias also takes part in the argument checks
+        assert_raises_rpc_error(-8, "Cannot specify both 'seed' and 'seedphrase_extension'",
+            node.createwallet_passthrough, wallet_name="test_mp_alias_seed",
             blsct=True, seed="00" * 32, mnemonic_passphrase="pass")
 
-        self.log.info("Test CLI tool: -mnemonicpassphrase restore matches RPC-created wallet")
+        self.log.info("Test passing both seedphrase_extension and mnemonic_passphrase errors")
+        assert_raises_rpc_error(-8, "Parameter seedphrase_extension specified multiple times (also as its alias mnemonic_passphrase)",
+            node.createwallet_passthrough, wallet_name="test_mp_both", blsct=True, mnemonic=mnemonic_mp,
+            seedphrase_extension="hunter2", mnemonic_passphrase="hunter2")
+        assert_raises_rpc_error(-18, "Path does not exist", node.loadwallet, "test_mp_both")
+
+        self.log.info("Test CLI tool: -seedphraseextension restore matches RPC-created wallet")
         rc_mp, stdout_mp, stderr_mp = self.navio_wallet_create(
-            "test_cli_mp", mnemonic=mnemonic_mp, mnemonic_passphrase="hunter2")
+            "test_cli_mp", mnemonic=mnemonic_mp, seedphrase_extension="hunter2")
         assert_equal(rc_mp, 0)
         node.loadwallet("test_cli_mp")
         w_cli_mp = node.get_wallet_rpc("test_cli_mp")
         assert_equal(w_cli_mp.getblsctseed(), seed_pass)
 
-        self.log.info("Test CLI tool: non-ASCII -mnemonicpassphrase is rejected for a new wallet")
+        assert "deprecated" not in stderr_mp
+
+        self.log.info("Test CLI tool: deprecated -mnemonicpassphrase alias matches -seedphraseextension and warns")
+        rc_alias, stdout_alias, stderr_alias = self.navio_wallet_create(
+            "test_cli_mp_alias", mnemonic=mnemonic_mp, mnemonic_passphrase="hunter2")
+        assert_equal(rc_alias, 0)
+        assert "-mnemonicpassphrase is deprecated" in stderr_alias
+        node.loadwallet("test_cli_mp_alias")
+        assert_equal(node.get_wallet_rpc("test_cli_mp_alias").getblsctseed(), seed_pass)
+
+        self.log.info("Test CLI tool: -seedphraseextension together with -mnemonicpassphrase errors")
+        rc_both, stdout_both, stderr_both = self.navio_wallet_create(
+            "test_cli_mp_both", mnemonic=mnemonic_mp, seedphrase_extension="hunter2", mnemonic_passphrase="hunter2")
+        assert_equal(rc_both, 1)
+        assert "Cannot specify both -seedphraseextension and its deprecated alias -mnemonicpassphrase" in stderr_both
+        assert_raises_rpc_error(-18, "Path does not exist", node.loadwallet, "test_cli_mp_both")
+
+        self.log.info("Test CLI tool: non-ASCII -seedphraseextension is rejected for a new wallet")
         rc_na, stdout_na, stderr_na = self.navio_wallet_create(
-            "test_cli_mp_nonascii_new", mnemonic_passphrase="h\u00fcnter2")
+            "test_cli_mp_nonascii_new", seedphrase_extension="h\u00fcnter2")
         assert_equal(rc_na, 1)
         assert "must be ASCII when creating a new wallet" in stderr_na
         assert "Mnemonic:" not in stdout_na
 
-        self.log.info("Test CLI tool: non-ASCII -mnemonicpassphrase restore warns and matches RPC")
+        self.log.info("Test CLI tool: non-ASCII -seedphraseextension restore warns and matches RPC")
         rc_na2, stdout_na2, stderr_na2 = self.navio_wallet_create(
-            "test_cli_mp_nonascii_restore", mnemonic=mnemonic_mp, mnemonic_passphrase="h\u00fcnter2")
+            "test_cli_mp_nonascii_restore", mnemonic=mnemonic_mp, seedphrase_extension="h\u00fcnter2")
         assert_equal(rc_na2, 0)
         assert "non-ASCII" in stderr_na2
         node.loadwallet("test_cli_mp_nonascii_restore")
@@ -508,22 +543,22 @@ class WalletMnemonicTest(BitcoinTestFramework):
         # The ASCII restore above carries no such warning.
         assert "non-ASCII" not in stderr_mp
 
-        self.log.info("Test CLI tool: -mnemonicpassphrase with -seed errors")
+        self.log.info("Test CLI tool: -seedphraseextension with -seed errors")
         rc_mp2, stdout_mp2, stderr_mp2 = self.navio_wallet_create(
-            "test_cli_mp_seed", seed="00" * 32, mnemonic_passphrase="pass")
+            "test_cli_mp_seed", seed="00" * 32, seedphrase_extension="pass")
         assert_equal(rc_mp2, 1)
-        assert "Cannot specify both -seed and -mnemonicpassphrase" in stderr_mp2
+        assert "Cannot specify both -seed and -seedphraseextension" in stderr_mp2
 
-        self.log.info("Test CLI tool: -mnemonicpassphrase without -blsct errors")
+        self.log.info("Test CLI tool: -seedphraseextension without -blsct errors")
         # BLSCT is the tool's default wallet type, so -descriptors must be passed
-        # explicitly here to exercise the "-mnemonicpassphrase requires -blsct"
+        # explicitly here to exercise the "-seedphraseextension requires -blsct"
         # validation.
         cli_mp_no_blsct_args = [
             '-datadir={}'.format(self.nodes[0].datadir_path),
             '-chain={}'.format(self.chain),
             '-wallet=test_cli_mp_no_blsct',
             '-descriptors',
-            '-mnemonicpassphrase=pass',
+            '-seedphraseextension=pass',
             'create',
         ]
         p_mp_no_blsct = subprocess.Popen(

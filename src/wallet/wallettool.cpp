@@ -32,7 +32,7 @@ static void WalletToolReleaseWallet(CWallet* wallet)
     delete wallet;
 }
 
-static bool WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flags, const std::vector<unsigned char>& seed, const blsct::SeedType& type, const std::string& mnemonic_passphrase, const std::optional<int64_t>& creation_time = std::nullopt)
+static bool WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flags, const std::vector<unsigned char>& seed, const blsct::SeedType& type, const std::string& seedphrase_extension, const std::optional<int64_t>& creation_time = std::nullopt)
 {
     LOCK(wallet_instance->cs_wallet);
     wallet_instance->SetMinVersion(FEATURE_LATEST);
@@ -49,7 +49,7 @@ static bool WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flag
         auto blsct_man = wallet_instance->GetOrCreateBLSCTKeyMan();
 
         if (blsct_man) {
-            if (!blsct_man->SetupGeneration(seed, type, /*force=*/false, mnemonic_passphrase, creation_time)) {
+            if (!blsct_man->SetupGeneration(seed, type, /*force=*/false, seedphrase_extension, creation_time)) {
                 tfm::format(std::cerr, "Unable to generate initial blsct keys\n");
                 return false;
             }
@@ -64,7 +64,7 @@ static bool WalletCreate(CWallet* wallet_instance, uint64_t wallet_creation_flag
     return true;
 }
 
-static std::shared_ptr<CWallet> MakeWallet(const std::string& name, const fs::path& path, DatabaseOptions options, const std::vector<unsigned char>& seed, const blsct::SeedType& type, const std::string& mnemonic_passphrase = "", const std::optional<int64_t>& creation_time = std::nullopt)
+static std::shared_ptr<CWallet> MakeWallet(const std::string& name, const fs::path& path, DatabaseOptions options, const std::vector<unsigned char>& seed, const blsct::SeedType& type, const std::string& seedphrase_extension = "", const std::optional<int64_t>& creation_time = std::nullopt)
 {
     DatabaseStatus status;
     bilingual_str error;
@@ -112,7 +112,7 @@ static std::shared_ptr<CWallet> MakeWallet(const std::string& name, const fs::pa
         }
     }
 
-    if (options.require_create && !WalletCreate(wallet_instance.get(), options.create_flags, seed, type, mnemonic_passphrase, creation_time)) {
+    if (options.require_create && !WalletCreate(wallet_instance.get(), options.create_flags, seed, type, seedphrase_extension, creation_time)) {
         return nullptr;
     }
 
@@ -161,9 +161,18 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         tfm::format(std::cerr, "The -mnemonic option can only be used with the 'create' command.\n");
         return false;
     }
-    if (args.IsArgSet("-mnemonicpassphrase") && command != "create") {
-        tfm::format(std::cerr, "The -mnemonicpassphrase option can only be used with the 'create' command.\n");
+    // -mnemonicpassphrase is the deprecated name of -seedphraseextension.
+    if (args.IsArgSet("-seedphraseextension") && args.IsArgSet("-mnemonicpassphrase")) {
+        tfm::format(std::cerr, "Cannot specify both -seedphraseextension and its deprecated alias -mnemonicpassphrase\n");
         return false;
+    }
+    const char* const seedphrase_extension_arg = args.IsArgSet("-mnemonicpassphrase") ? "-mnemonicpassphrase" : "-seedphraseextension";
+    if (args.IsArgSet(seedphrase_extension_arg) && command != "create") {
+        tfm::format(std::cerr, "The -seedphraseextension option can only be used with the 'create' command.\n");
+        return false;
+    }
+    if (args.IsArgSet("-mnemonicpassphrase")) {
+        tfm::format(std::cerr, "Warning: -mnemonicpassphrase is deprecated and will be removed in a future release. Use -seedphraseextension instead.\n");
     }
     if (command == "create" && !args.IsArgSet("-wallet")) {
         tfm::format(std::cerr, "Wallet name must be provided when creating a new wallet.\n");
@@ -202,7 +211,7 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
 
         std::string seed = args.GetArg("-seed", "");
         std::string mnemonic_str = args.GetArg("-mnemonic", "");
-        std::string mnemonic_passphrase = args.GetArg("-mnemonicpassphrase", "");
+        std::string seedphrase_extension = args.GetArg(seedphrase_extension_arg, "");
 
         // Reject seed/mnemonic when BLSCT is not enabled
         if (!seed.empty() && !make_blsct) {
@@ -213,8 +222,8 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
             tfm::format(std::cerr, "The -mnemonic option requires -blsct\n");
             return false;
         }
-        if (!mnemonic_passphrase.empty() && !make_blsct) {
-            tfm::format(std::cerr, "The -mnemonicpassphrase option requires -blsct\n");
+        if (!seedphrase_extension.empty() && !make_blsct) {
+            tfm::format(std::cerr, "The -seedphraseextension option requires -blsct\n");
             return false;
         }
 
@@ -223,8 +232,8 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
             tfm::format(std::cerr, "Cannot specify both -seed and -mnemonic\n");
             return false;
         }
-        if (!seed.empty() && !mnemonic_passphrase.empty()) {
-            tfm::format(std::cerr, "Cannot specify both -seed and -mnemonicpassphrase\n");
+        if (!seed.empty() && !seedphrase_extension.empty()) {
+            tfm::format(std::cerr, "Cannot specify both -seed and -seedphraseextension\n");
             return false;
         }
 
@@ -243,14 +252,14 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         }
 
         // Same rule as createwallet: no NFKD is applied, so a new wallet must
-        // not be created from a non-ASCII passphrase, but a restore must still
+        // not be created from a non-ASCII extension, but a restore must still
         // accept one -- such a wallet is only recoverable from those bytes.
-        if (!mnemonic::IsAsciiPassphrase(mnemonic_passphrase)) {
+        if (!mnemonic::IsAsciiPassphrase(seedphrase_extension)) {
             if (mnemonic_str.empty()) {
-                tfm::format(std::cerr, "The -mnemonicpassphrase must be ASCII when creating a new wallet\n");
+                tfm::format(std::cerr, "The -seedphraseextension must be ASCII when creating a new wallet\n");
                 return false;
             }
-            tfm::format(std::cerr, "Warning: -mnemonicpassphrase contains non-ASCII characters. It is used as raw UTF-8 "
+            tfm::format(std::cerr, "Warning: -seedphraseextension contains non-ASCII characters. It is used as raw UTF-8 "
                                    "without BIP-39 normalization, so this restore only matches a wallet created from "
                                    "the exact same bytes, and may not match other BIP-39 wallets.\n");
         }
@@ -304,7 +313,7 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
             options.create_flags |= WALLET_FLAG_DISABLE_PRIVATE_KEYS;
         }
 
-        const std::shared_ptr<CWallet> wallet_instance = MakeWallet(name, path, options, ParseHex(seed), type, mnemonic_passphrase, mnemonic_birthday);
+        const std::shared_ptr<CWallet> wallet_instance = MakeWallet(name, path, options, ParseHex(seed), type, seedphrase_extension, mnemonic_birthday);
         // Cleanse seed hex now that MakeWallet has consumed it
         memory_cleanse(seed.data(), seed.size());
         if (!wallet_instance) {

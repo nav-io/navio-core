@@ -57,7 +57,7 @@ public:
     explicit Manager(wallet::WalletStorage& storage) : m_storage(storage) {}
     virtual ~Manager()= default;
 
-    virtual bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force = false, const std::string& mnemonic_passphrase = "", const std::optional<int64_t>& creation_time = std::nullopt) { return false; }
+    virtual bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type, bool force = false, const std::string& seedphrase_extension = "", const std::optional<int64_t>& creation_time = std::nullopt) { return false; }
 
     /* Returns true if HD is enabled */
     virtual bool IsHDEnabled() const { return false; }
@@ -79,7 +79,7 @@ private:
     bool AddKeyPubKeyInner(const PrivateKey& key, const PublicKey& pubkey);
     bool AddCryptedKeyInner(const PublicKey& vchPubKey, const std::vector<unsigned char>& vchCryptedSecret);
 
-    bool SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy, const std::string& mnemonic_passphrase = "", const std::optional<int64_t>& creation_time = std::nullopt);
+    bool SetupMnemonicFromEntropy(const std::vector<unsigned char>& entropy, const std::string& seedphrase_extension = "", const std::optional<int64_t>& creation_time = std::nullopt);
 
     //! The HD-enabled predicate, for callers already holding cs_KeyStore.
     //! IsHDEnabled() takes the lock and answers on its own; the master-key
@@ -120,7 +120,7 @@ public:
     KeyMan(wallet::WalletStorage& storage, int64_t keypool_size)
         : Manager(storage), KeyRing(), m_keypool_size(keypool_size) {}
 
-    bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type = IMPORT_MASTER_KEY, bool force = false, const std::string& mnemonic_passphrase = "", const std::optional<int64_t>& creation_time = std::nullopt) override;
+    bool SetupGeneration(const std::vector<unsigned char>& seed, const SeedType& type = IMPORT_MASTER_KEY, bool force = false, const std::string& seedphrase_extension = "", const std::optional<int64_t>& creation_time = std::nullopt) override;
     bool IsHDEnabled() const override;
 
     void LoadMnemonicEntropy(const std::vector<unsigned char>& entropy)

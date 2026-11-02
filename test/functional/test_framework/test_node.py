@@ -860,7 +860,7 @@ class RPCOverloadWrapper():
     def createwallet_passthrough(self, *args, **kwargs):
         return self.__getattr__("createwallet")(*args, **kwargs)
 
-    def createwallet(self, wallet_name, disable_private_keys=None, blank=None, passphrase='', avoid_reuse=None, descriptors=None, load_on_startup=None, external_signer=None, blsct=False, storage_output=False, seed=None, mnemonic=None, mnemonic_passphrase=None):
+    def createwallet(self, wallet_name, disable_private_keys=None, blank=None, passphrase='', avoid_reuse=None, descriptors=None, load_on_startup=None, external_signer=None, blsct=False, storage_output=False, seed=None, mnemonic=None, seedphrase_extension=None):
         if descriptors is None:
             # BLSCT is the default wallet type on navio, and the RPC rejects
             # explicitly requesting both blsct=true and descriptors=true. Only
@@ -872,8 +872,8 @@ class RPCOverloadWrapper():
             kwargs['seed'] = seed
         if mnemonic is not None:
             kwargs['mnemonic'] = mnemonic
-        if mnemonic_passphrase is not None:
-            kwargs['mnemonic_passphrase'] = mnemonic_passphrase
+        if seedphrase_extension is not None:
+            kwargs['seedphrase_extension'] = seedphrase_extension
         return self.__getattr__('createwallet')(wallet_name, disable_private_keys, blank, passphrase, avoid_reuse, descriptors, load_on_startup, external_signer, blsct, storage_output, **kwargs)
 
     def importprivkey(self, privkey, label=None, rescan=None):
