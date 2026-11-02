@@ -93,8 +93,9 @@ class BlsctMintConflictTest(BitcoinTestFramework):
         # all three do not.
         weights = {txid: node.getmempoolentry(txid)["weight"] for txid in mints + [transfer]}
         fits = max(max(weights[m] for m in mints) + weights[transfer], sum(weights[m] for m in mints))
+        # All three do not fit: each pair above leaves out a tx far heavier
+        # than the 4 units of slack.
         max_weight = 4000 + fits + 4
-        assert 4000 + sum(weights.values()) >= max_weight
         self.restart_node(0, extra_args=[f"-blockmaxweight={max_weight}"])
         self.wait_until(lambda: node.getmempoolinfo()["loaded"])
         assert_equal(set(node.getrawmempool()), set(mints + [transfer]))
@@ -140,8 +141,15 @@ class BlsctMintConflictTest(BitcoinTestFramework):
 
         self.log.info("Disconnecting the block that caused the eviction makes the mint unconflicted again")
         node.invalidateblock(mint_block)
+        # A conflicted tx's depth is derived from heights, so right after the
+        # invalidation it reads 0 either way. Mine past the old height before
+        # checking it.
+        self.generate_blsct_blocks(node, issuer_addr, 2)
         node.syncwithvalidationinterfacequeue()
         assert_equal(issuer.gettransaction(evicted)["confirmations"], 0)
+        # Unconfirmed and out of the mempool, so it can be abandoned.
+        assert evicted not in node.getrawmempool()
+        issuer.abandontransaction(evicted)
 
 
 if __name__ == '__main__':
