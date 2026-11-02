@@ -424,12 +424,31 @@ private:
      */
     int m_last_block_processed_height GUARDED_BY(cs_wallet) = -1;
 
-    /** Wallet txs with token-state predicates that the mempool evicted as
-     * CONFLICT: a connected block made a predicate fail (e.g. a sibling mint
-     * filled the token's supply cap). No input conflict reveals these to the
-     * wallet, so blockConnected() marks them conflicted with the next block
-     * it processes. Not persisted. */
-    std::vector<uint256> m_pending_predicate_conflicts GUARDED_BY(cs_wallet);
+    /** A wallet tx with token-state predicates that the mempool evicted as
+     * CONFLICT: a connected block made one of its predicates fail (e.g. a
+     * sibling mint filled the token's supply cap). No input conflict reveals
+     * it to the wallet, so blockConnected() marks it conflicted with the block
+     * that touches one of its tokens. */
+    struct PendingPredicateConflict {
+        uint256 txid;
+        //! Token-set keys the tx's predicates touch.
+        std::set<uint256> token_keys;
+        //! The block of this connect step the tx was marked conflicted with.
+        std::optional<uint256> marked_block;
+    };
+    /** Evictions of the current connect step. Kept until the step ends
+     * (updatedBlockTip()) so a later block of the step touching the same token
+     * can take the conflict over. Not persisted. */
+    std::vector<PendingPredicateConflict> m_pending_predicate_conflicts GUARDED_BY(cs_wallet);
+
+    /** Mark each m_pending_predicate_conflicts entry whose tokens the block
+     * touches conflicted with the block. */
+    void MarkPendingPredicateConflicts(const interfaces::BlockInfo& block) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+
+    /** Wallet txs carrying a token-state predicate, the only ones that can be
+     * conflicted without an input conflict, so blockDisconnected() need not
+     * scan all of mapWallet for them. May hold txids no longer in mapWallet. */
+    std::set<uint256> m_token_predicate_txs GUARDED_BY(cs_wallet);
 
     std::map<OutputType, ScriptPubKeyMan*> m_external_spk_managers;
     std::map<OutputType, ScriptPubKeyMan*> m_internal_spk_managers;

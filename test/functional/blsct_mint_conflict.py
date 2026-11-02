@@ -151,6 +151,62 @@ class BlsctMintConflictTest(BitcoinTestFramework):
         assert evicted not in node.getrawmempool()
         issuer.abandontransaction(evicted)
 
+        self.test_multi_block_connect(node, issuer, issuer_addr)
+
+    def test_multi_block_connect(self, node, issuer, issuer_addr):
+        self.log.info("Blocks connecting in one step: the conflict goes to the block that touched the token")
+        self.restart_node(0)
+        node.loadwallet("issuer")
+        issuer = node.get_wallet_rpc("issuer")
+        token_id = issuer.createtoken({"name": "step"}, 1)["tokenId"]
+        self.generate_blsct_blocks(node, issuer_addr, 1)
+        assert_equal(node.getrawmempool(), [])
+
+        mints = [self.submit(node, issuer.minttoken, token_id, issuer_addr, 1) for _ in range(2)]
+        evicted = mints[1]
+        # Blocks connect in one step when a reorg switches to a branch that
+        # only overtakes the old one with its last block. Build branch X (one
+        # block) and branch A-B on the same parent: A carries neither mint, B
+        # the first one.
+        for txid in mints:
+            node.prioritisetransaction(txid=txid, fee_delta=-COIN)
+        (block_x,) = self.generate_blsct_blocks(node, issuer_addr, 1)
+        node.invalidateblock(block_x)
+        (block_a,) = self.generate_blsct_blocks(node, issuer_addr, 1)
+        assert set(mints) <= set(node.getrawmempool())
+        node.prioritisetransaction(txid=mints[0], fee_delta=2 * COIN)
+        (block_b,) = self.generate_blsct_blocks(node, issuer_addr, 1)
+        assert_equal(node.gettoken(token_id)["currentSupply"], 1 * COIN)
+        assert evicted not in node.getrawmempool()
+
+        self.log.info("Reorg from X to A-B with the second mint back in the mempool")
+        node.reconsiderblock(block_x)
+        assert_equal(node.getbestblockhash(), block_b)
+        node.invalidateblock(block_a)
+        assert_equal(node.getbestblockhash(), block_x)
+        node.syncwithvalidationinterfacequeue()
+        node.prioritisetransaction(txid=evicted, fee_delta=COIN)
+        node.sendrawtransaction(issuer.gettransaction(evicted)["hex"])
+        # A and B connect in one step: the mint's eviction while B connects is
+        # reported to the wallet before either block is.
+        node.reconsiderblock(block_a)
+        assert_equal(node.getbestblockhash(), block_b)
+        assert evicted not in node.getrawmempool()
+        node.syncwithvalidationinterfacequeue()
+        # Conflicted with B, the tip, not with A.
+        assert_equal(issuer.gettransaction(evicted)["confirmations"], -1)
+
+        self.log.info("Dropping B but keeping A makes the mint valid again")
+        # Keep the chain on A once B is gone.
+        node.invalidateblock(block_x)
+        node.invalidateblock(block_b)
+        assert_equal(node.getbestblockhash(), block_a)
+        self.generate_blsct_blocks(node, issuer_addr, 1)
+        node.syncwithvalidationinterfacequeue()
+        assert_equal(issuer.gettransaction(evicted)["confirmations"], 0)
+        assert evicted not in node.getrawmempool()
+        issuer.abandontransaction(evicted)
+
 
 if __name__ == '__main__':
     BlsctMintConflictTest(__file__).main()

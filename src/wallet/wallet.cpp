@@ -149,6 +149,17 @@ static void RefreshMempoolStatus(CWalletTx& tx, interfaces::Chain& chain)
  * its inputs alone do not identify it. This is the rule CTxMemPool applies to
  * remove merged txs for a block (IsContainedIn() in txmempool.cpp).
  */
+//! Token-set keys the token-state predicates (CREATE/MINT/NFT_MINT) of tx's
+//! outputs touch; empty for a tx without any.
+static std::set<uint256> TokenPredicateKeys(const CTransaction& tx)
+{
+    std::set<uint256> keys;
+    for (const CTxOut& out : tx.vout) {
+        if (auto key = blsct::GetPredicateTokenKey(out.predicate)) keys.insert(*key);
+    }
+    return keys;
+}
+
 static bool IsMergedInto(const CTransaction& tx, const CTransaction& block_tx)
 {
     for (const CTxIn& txin : tx.vin) {
@@ -1408,6 +1419,7 @@ CWalletTx* CWallet::AddToWallet(CTransactionRef tx, const TxState& state, const 
         AddToSpends(wtx, &batch);
         // Index the outputs for O(1) lookup in GetWalletTxFromOutpoint
         IndexWalletTxOutputs(wtx);
+        if (!TokenPredicateKeys(*wtx.tx).empty()) m_token_predicate_txs.insert(hash);
 
         // Update birth time when tx time is older than it.
         MaybeUpdateBirthTime(wtx.GetTxTime());
@@ -1554,6 +1566,7 @@ bool CWallet::LoadToWallet(const uint256& hash, const UpdateWalletTxFn& fill_wtx
         wtx.m_it_wtxOrdered = wtxOrdered.insert(std::make_pair(wtx.nOrderPos, &wtx));
         // Index the outputs for O(1) lookup in GetWalletTxFromOutpoint
         IndexWalletTxOutputs(wtx);
+        if (!TokenPredicateKeys(*wtx.tx).empty()) m_token_predicate_txs.insert(hash);
     }
     AddToSpends(wtx);
     for (const CTxIn& txin : wtx.tx->vin) {
@@ -2211,14 +2224,15 @@ void CWallet::transactionRemovedFromMempool(const CTransactionRef& tx, MemPoolRe
 
         // A tx evicted because one of its token predicates no longer holds at
         // the tip (see RemoveTokenPredicateConflicts in validation.cpp) has
-        // no input spent by the block, so the conflict detection above never
-        // fires and its inputs would stay spent until abandoned. Mark it
-        // conflicted with the block that caused the eviction instead.
-        const bool has_token_predicate = std::any_of(tx->vout.begin(), tx->vout.end(), [](const CTxOut& out) {
-            return blsct::IsTokenStatePredicate(out.predicate);
-        });
-        if (has_token_predicate && mapWallet.contains(tx->GetHash())) {
-            m_pending_predicate_conflicts.push_back(tx->GetHash());
+        // no input spent by the block, so the input-based conflict detection
+        // that blockConnected() runs (AddToWalletIfInvolvingMe) never reaches
+        // it, and its inputs would stay spent until abandoned. Remember it, so
+        // blockConnected() can mark it conflicted with the block that caused
+        // the eviction.
+        if (mapWallet.contains(tx->GetHash())) {
+            if (auto keys = TokenPredicateKeys(*tx); !keys.empty()) {
+                m_pending_predicate_conflicts.push_back({tx->GetHash(), std::move(keys), std::nullopt});
+            }
         }
     }
 }
@@ -2307,25 +2321,57 @@ void CWallet::blockConnected(ChainstateRole role, const interfaces::BlockInfo& b
 
     // No need to scan block if it was created before the wallet birthday.
     // Uses chain max time and twice the grace period to adjust time for block time variability.
-    if (block.chain_time_max < m_birth_time.load() - (TIMESTAMP_WINDOW * 2)) return;
-
-    // Scan block
-    for (size_t index = 0; index < block.data->vtx.size(); index++) {
-        SyncTransaction(block.data->vtx[index], TxStateConfirmed{block.hash, block.height, static_cast<int>(index)});
-        transactionRemovedFromMempool(block.data->vtx[index], MemPoolRemovalReason::BLOCK);
+    if (block.chain_time_max >= m_birth_time.load() - (TIMESTAMP_WINDOW * 2)) {
+        // Scan block
+        for (size_t index = 0; index < block.data->vtx.size(); index++) {
+            SyncTransaction(block.data->vtx[index], TxStateConfirmed{block.hash, block.height, static_cast<int>(index)});
+            transactionRemovedFromMempool(block.data->vtx[index], MemPoolRemovalReason::BLOCK);
+        }
     }
 
-    // The mempool evicts predicate conflicts while connecting the block, so
-    // their removal notifications arrive before this one. When several
-    // blocks connect in one step, all their removals precede the first
-    // BlockConnected, and the tx is marked conflicted with an earlier block
-    // than the one that caused it: it then only returns to inactive once
-    // that earlier block is disconnected.
-    for (const uint256& txid : std::exchange(m_pending_predicate_conflicts, {})) {
-        auto it = mapWallet.find(txid);
-        // Skip a tx that confirmed after all, e.g. if a reorg mined it.
-        if (it == mapWallet.end() || !it->second.isInactive()) continue;
-        MarkConflicted(block.hash, block.height, txid);
+    // After the scan, so a tx this block confirmed is left alone.
+    MarkPendingPredicateConflicts(block);
+}
+
+void CWallet::MarkPendingPredicateConflicts(const interfaces::BlockInfo& block)
+{
+    AssertLockHeld(cs_wallet);
+    if (m_pending_predicate_conflicts.empty()) return;
+
+    // The block that evicted a tx is one that touched one of its tokens:
+    // that is how RemoveTokenPredicateConflicts picks its candidates. When
+    // several blocks connect in one step, all their evictions come before the
+    // first of them is reported, so an entry waits for a block touching its
+    // tokens rather than going to the first block reported. If more than one
+    // block of the step touches them, the latest one takes the conflict over:
+    // that block is at or after the evicting one, so disconnecting the
+    // evicting block always disconnects it too and makes the tx unconflicted.
+    // (At worst, disconnecting only that later block leaves the tx
+    // unconfirmed, where abandontransaction can still free its inputs.) The
+    // entries are kept until the step ends, see updatedBlockTip().
+    std::set<uint256> touched;
+    for (const CTransactionRef& block_tx : block.data->vtx) touched.merge(TokenPredicateKeys(*block_tx));
+    if (touched.empty()) return;
+
+    for (PendingPredicateConflict& entry : m_pending_predicate_conflicts) {
+        if (std::none_of(entry.token_keys.begin(), entry.token_keys.end(), [&](const uint256& key) { return touched.contains(key); })) continue;
+        const auto it = mapWallet.find(entry.txid);
+        if (it == mapWallet.end()) continue;
+        // Only an unconfirmed tx, or one this step marked conflicted: leave a
+        // tx that confirmed after all (e.g. one this step's blocks merged) or
+        // that an input conflict marked.
+        const auto is_ours = [&](const CWalletTx& wtx) {
+            if (wtx.isInactive()) return true;
+            const auto* conflicted = wtx.state<TxStateConflicted>();
+            return conflicted && entry.marked_block && conflicted->conflicting_block_hash == *entry.marked_block;
+        };
+        if (!is_ours(it->second)) continue;
+        RecursiveUpdateTxState(entry.txid, [&](CWalletTx& wtx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet) {
+            if (!is_ours(wtx)) return TxUpdate::UNCHANGED;
+            wtx.m_state = TxStateConflicted{block.hash, block.height};
+            return TxUpdate::CHANGED;
+        });
+        entry.marked_block = block.hash;
     }
 }
 
@@ -2343,6 +2389,20 @@ void CWallet::blockDisconnected(const interfaces::BlockInfo& block)
 
     int disconnect_height = block.height;
 
+    // A tx conflicted by this block (or a later one) becomes unconfirmed again.
+    const auto conflicted_from_here = [&](const CWalletTx& tx) {
+        const auto* conflicted = tx.state<TxStateConflicted>();
+        return conflicted && conflicted->conflicting_block_height >= disconnect_height;
+    };
+    const auto unconflict = [&](CWalletTx& tx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet) {
+        if (!conflicted_from_here(tx)) return TxUpdate::UNCHANGED;
+        tx.m_state = TxStateInactive{};
+        return TxUpdate::CHANGED;
+    };
+
+    // Same for pending token predicate conflicts as for the output ones below.
+    m_pending_predicate_conflicts.clear();
+
     // Received outputs conflicted by this block (or a later one) become
     // unconfirmed again, with our sends spending them, as the CWalletTx
     // conflicts below do.
@@ -2352,12 +2412,6 @@ void CWallet::blockDisconnected(const interfaces::BlockInfo& block)
         // conflict it. Their outputs stay unconfirmed, as they are now.
         m_pending_output_conflicts.clear();
 
-        const auto unconflict = [&](CWalletTx& tx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet) {
-            const auto* conflicted = tx.state<TxStateConflicted>();
-            if (!conflicted || conflicted->conflicting_block_height < disconnect_height) return TxUpdate::UNCHANGED;
-            tx.m_state = TxStateInactive{};
-            return TxUpdate::CHANGED;
-        };
         std::vector<uint256> spenders;
         std::optional<WalletBatch> batch;
         for (auto& [outpoint, wout] : mapOutputs) {
@@ -2412,43 +2466,27 @@ void CWallet::blockDisconnected(const interfaces::BlockInfo& block)
 
                 if (!wtx.isConflicted()) continue;
 
-                auto try_updating_state = [&](CWalletTx& tx) {
-                    if (!tx.isConflicted()) return TxUpdate::UNCHANGED;
-                    if (tx.state<TxStateConflicted>()->conflicting_block_height >= disconnect_height) {
-                        tx.m_state = TxStateInactive{};
-                        return TxUpdate::CHANGED;
-                    }
-                    return TxUpdate::UNCHANGED;
-                };
-
-                RecursiveUpdateTxState(wtx.tx->GetHash(), try_updating_state);
+                RecursiveUpdateTxState(wtx.tx->GetHash(), unconflict);
             }
         }
     }
 
-    // Txs conflicted with this block without spending its inputs (marked from
-    // m_pending_predicate_conflicts in blockConnected) are not reached by the
-    // loop above. Once the block is gone nothing conflicts them any more.
+    // Txs conflicted by a token predicate (MarkPendingPredicateConflicts)
+    // spend no input of the block, so the loop above does not reach them.
     std::vector<uint256> unconflicted;
-    for (const auto& [txid, wtx] : mapWallet) {
-        if (const auto* conflicted = wtx.state<TxStateConflicted>(); conflicted && conflicted->conflicting_block_hash == block.hash) {
-            unconflicted.push_back(txid);
-        }
+    for (const uint256& txid : m_token_predicate_txs) {
+        const auto it = mapWallet.find(txid);
+        if (it != mapWallet.end() && conflicted_from_here(it->second)) unconflicted.push_back(txid);
     }
     for (const uint256& txid : unconflicted) {
-        RecursiveUpdateTxState(txid, [&](CWalletTx& tx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet) {
-            if (!tx.isConflicted()) return TxUpdate::UNCHANGED;
-            if (tx.state<TxStateConflicted>()->conflicting_block_height >= disconnect_height) {
-                tx.m_state = TxStateInactive{};
-                return TxUpdate::CHANGED;
-            }
-            return TxUpdate::UNCHANGED;
-        });
+        RecursiveUpdateTxState(txid, unconflict);
     }
 }
 
 void CWallet::updatedBlockTip()
 {
+    // The connect step whose evictions these are is over.
+    WITH_LOCK(cs_wallet, m_pending_predicate_conflicts.clear());
     m_best_block_time = GetTime();
 }
 
@@ -3418,6 +3456,7 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
                 orphaned_outputs.insert(out_id.ToUint256());
             }
         }
+        m_token_predicate_txs.erase(hash);
         mapWallet.erase(it);
     }
     // One pass over the remaining transactions, newest first, so each orphaned
