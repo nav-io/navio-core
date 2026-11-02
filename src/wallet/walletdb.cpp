@@ -307,22 +307,9 @@ bool WalletBatch::WriteBLSCTWatchOnly(const CScript& dest, const CKeyMetadata& k
     return WriteIC(std::make_pair(DBKeys::BLSCTWATCHS, dest), uint8_t{'1'});
 }
 
-bool WalletBatch::EraseBLSCTWatchOnly(const CScript& dest)
-{
-    if (!EraseIC(std::make_pair(DBKeys::BLSCTWATCHMETA, dest))) {
-        return false;
-    }
-    return EraseIC(std::make_pair(DBKeys::BLSCTWATCHS, dest));
-}
-
 bool WalletBatch::WriteBLSCTWatchOnlyNonce(const CScript& dest, const blsct::PublicKey& nonce)
 {
     return WriteIC(std::make_pair(DBKeys::BLSCTWATCHNONCE, dest), nonce);
-}
-
-bool WalletBatch::EraseBLSCTWatchOnlyNonce(const CScript& dest)
-{
-    return EraseIC(std::make_pair(DBKeys::BLSCTWATCHNONCE, dest));
 }
 
 bool WalletBatch::WriteBLSCTBlindingGeneration(const uint256& anchor, uint32_t generation)
@@ -1981,12 +1968,6 @@ bool WalletBatch::WriteCryptedBLSCTMnemonicEntropy(const std::vector<unsigned ch
     if (!WriteIC(DBKeys::CRYPTED_BLSCTMNEMONIC, crypted_entropy)) {
         return false;
     }
-    return EraseIC(DBKeys::BLSCTMNEMONIC);
-}
-
-//! Erase the BIP-39 mnemonic entropy from the wallet database.
-bool WalletBatch::EraseBLSCTMnemonicEntropy()
-{
     return EraseIC(DBKeys::BLSCTMNEMONIC);
 }
 
