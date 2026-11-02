@@ -125,10 +125,15 @@ struct ArchiveRequest {
     std::vector<uint8_t> detection_key;
     int64_t not_before{0}; //!< 0 = no lower bound on received_at
 
+    //! Longest detection key any precision can need. Bounded at the length
+    //! prefix so a request cannot make the parser allocate more before the
+    //! stamp and precision checks run.
+    static constexpr size_t MAX_DETECTION_KEY_BYTES = FMD_GAMMA * FMD_SCALAR_SIZE;
+
     SERIALIZE_METHODS(ArchiveRequest, obj)
     {
         READWRITE(obj.version, obj.stamp, obj.cursor, obj.limit, obj.precision,
-                  obj.scan_budget, obj.challenge, obj.detection_key, obj.not_before);
+                  obj.scan_budget, obj.challenge, LIMITED_BYTES(obj.detection_key, MAX_DETECTION_KEY_BYTES), obj.not_before);
     }
 
     //! What stamp.query_hash must equal: SHA256 over the query fields, which

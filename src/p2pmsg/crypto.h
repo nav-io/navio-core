@@ -7,6 +7,7 @@
 
 #include <blsct/private_key.h>
 #include <blsct/public_key.h>
+#include <p2pmsg/worker_pool.h>
 #include <serialize.h>
 #include <uint256.h>
 
@@ -31,6 +32,13 @@ static constexpr size_t ECIES_EPH_SIZE = blsct::PublicKey::SIZE; // 48
 //! Poly1305 tag length.
 static constexpr size_t ECIES_TAG_SIZE = 16;
 
+//! Largest ciphertext this wire format accepts. A packet only ever arrives
+//! inside a transport body, which is capped at MAX_JOB_BYTES, so no valid
+//! ciphertext can be longer than that. (The padding ladder does not bound it:
+//! a payload above the top bucket is sent unpadded.) This bounds the
+//! allocation at the length prefix, before the body cap is known to hold.
+static constexpr size_t MAX_ECIES_CIPHERTEXT_BYTES = MAX_JOB_BYTES;
+
 struct EciesPacket {
     blsct::PublicKey eph;                    //!< sender's per-message ephemeral pubkey
     std::vector<uint8_t> ciphertext;         //!< AEAD ciphertext (== plaintext length)
@@ -38,7 +46,7 @@ struct EciesPacket {
 
     SERIALIZE_METHODS(EciesPacket, obj)
     {
-        READWRITE(obj.eph, obj.ciphertext, obj.tag);
+        READWRITE(obj.eph, LIMITED_BYTES(obj.ciphertext, MAX_ECIES_CIPHERTEXT_BYTES), obj.tag);
     }
 
     //! Stable identifier for replay detection: SHA256(eph || ciphertext || tag).

@@ -6,10 +6,12 @@
 #include <p2pmsg/fmd.h>
 
 #include <arith_uint256.h>
+#include <streams.h>
 #include <test/util/setup_common.h>
 
 #include <boost/test/unit_test.hpp>
 
+#include <string>
 #include <vector>
 
 using namespace p2pmsg;
@@ -196,6 +198,48 @@ BOOST_AUTO_TEST_CASE(archive_prunes_by_age_and_size)
         BOOST_CHECK_LT(archive.Count(), 20U);
         BOOST_CHECK_GT(archive.OldestId(), 1U);
         BOOST_CHECK_EQUAL(archive.NewestId(), 20U);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(archive_request_bounds_detection_key_before_allocating)
+{
+    const auto has_limit_reason = [](const std::ios_base::failure& e) {
+        return std::string(e.what()).find("limit exceeded") != std::string::npos;
+    };
+
+    ArchiveRequest req;
+    req.precision = FMD_GAMMA;
+    req.detection_key = std::vector<uint8_t>(FMD_GAMMA * FMD_SCALAR_SIZE, 0x7);
+
+    // The longest key any precision needs still round-trips.
+    {
+        DataStream ss;
+        ss << req;
+        ArchiveRequest parsed;
+        ss >> parsed;
+        BOOST_CHECK(parsed.detection_key == req.detection_key);
+        BOOST_CHECK(parsed.QueryHash() == req.QueryHash());
+    }
+
+    // One byte more is refused at the length prefix.
+    {
+        ArchiveRequest longer = req;
+        longer.detection_key.push_back(0x7);
+        DataStream ss;
+        ss << longer;
+        ArchiveRequest parsed;
+        BOOST_CHECK_EXCEPTION(ss >> parsed, std::ios_base::failure, has_limit_reason);
+    }
+
+    // A multi-megabyte claim in a short message fails on the limit, not on
+    // the short read after allocating.
+    {
+        DataStream ss;
+        ss << req.version << req.stamp << req.cursor << req.limit << req.precision
+           << req.scan_budget << req.challenge;
+        WriteCompactSize(ss, 5'000'000);
+        ArchiveRequest parsed;
+        BOOST_CHECK_EXCEPTION(ss >> parsed, std::ios_base::failure, has_limit_reason);
     }
 }
 
