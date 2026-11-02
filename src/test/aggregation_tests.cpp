@@ -497,6 +497,56 @@ BOOST_FIXTURE_TEST_CASE(swap_unbalanced_halves_combine_verifies, TestingSetup)
     BOOST_CHECK(ok);
 }
 
+// NAV inputs worth exactly pay_amount plus the with-change fee land the change
+// on zero. The fee loop used to cycle there forever, the dropped change output
+// lowering the fee and the lower fee bringing the change back.
+BOOST_FIXTURE_TEST_CASE(swap_half_settles_when_change_lands_on_zero, TestingSetup)
+{
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+    LOCK(wallet->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_REQUIRE(km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+    CCoinsViewCache cache{&base, /*deterministic=*/true};
+    cache.SetBestBlock(InsecureRand256());
+
+    const TokenId NAV;
+    const TokenId TOKA(uint256(uint64_t{0xA}));
+    blsct::SubAddress recv_addr(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+    blsct::DoublePublicKey change_dest = std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value());
+    const CAmount pay = 50 * COIN;
+    const CAmount fill = 1000 * COIN;
+
+    const auto fee_of = [](const CMutableTransaction& tx) {
+        CAmount fee = 0;
+        for (const auto& o : tx.vout) {
+            if (o.scriptPubKey.IsFee()) fee += o.nValue;
+        }
+        return fee;
+    };
+
+    // Learn the with-change fee from a half whose change is comfortably positive.
+    auto probe = blsct::TxFactory(km);
+    BOOST_REQUIRE(probe.AddInput(cache, FundCoin(km, cache, 100 * COIN)));
+    auto probe_half = probe.BuildUnbalancedHalf(change_dest, recv_addr, NAV, pay, TOKA, fill, BLSCT_DEFAULT_FEE);
+    BOOST_REQUIRE(probe_half.has_value());
+    const CAmount with_change_fee = fee_of(*probe_half);
+    BOOST_REQUIRE_GT(with_change_fee, 0);
+
+    auto exact = blsct::TxFactory(km);
+    BOOST_REQUIRE(exact.AddInput(cache, FundCoin(km, cache, pay + with_change_fee)));
+    auto half = exact.BuildUnbalancedHalf(change_dest, recv_addr, NAV, pay, TOKA, fill, BLSCT_DEFAULT_FEE);
+    BOOST_REQUIRE(half.has_value());
+
+    // No change output, the whole remainder goes to the fee, and that fee
+    // still covers the change-less half's own weight.
+    BOOST_CHECK_EQUAL(half->vout.size(), probe_half->vout.size() - 1);
+    BOOST_CHECK_EQUAL(fee_of(*half), with_change_fee);
+    BOOST_CHECK_GE(fee_of(*half), static_cast<CAmount>(blsct::GetTransactionWeight(CTransaction(*half))) * BLSCT_DEFAULT_FEE);
+}
+
 // ---- Session fee math ----
 
 BOOST_FIXTURE_TEST_CASE(session_required_fee, TestingSetup)
