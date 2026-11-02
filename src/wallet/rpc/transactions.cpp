@@ -643,8 +643,10 @@ static void ListOutputTransaction(const CWallet& wallet,
 
 //! Walk wallet.mapOutputs, emitting one JSON entry per output that is not
 //! already reachable via the wtxOrdered / mapWallet walk. Local spends and
-//! their change outputs are deduped here via GetWalletTxFromOutpoint, matching
-//! the accounting path in GetBlsctBalance (src/wallet/receive.cpp).
+//! their change outputs are deduped here via GetWalletTxFromOutpoint. This is
+//! deliberately not the IsOutputCoveredByWalletTx() rule of the balance: that
+//! walk lists a CWalletTx in any state, so an output whose CWalletTx is
+//! neither confirmed nor in the mempool would otherwise be listed twice.
 //! No-op on wallets without WALLET_FLAG_BLSCT_OUTPUT_STORAGE.
 static void ListMapOutputTransactions(const CWallet& wallet,
                                       int nMinDepth, int nMaxDepth,

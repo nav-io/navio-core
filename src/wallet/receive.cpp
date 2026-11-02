@@ -649,10 +649,8 @@ static void AddOutputBalance(const CWallet& wallet, const COutPoint& outpoint, c
 {
     // In BLSCT output-storage mode the outputs of locally-created BLSCT
     // transactions are mirrored into mapOutputs; GetBalance() counts them
-    // while their CWalletTx is alive, and we would double-count. When that
-    // CWalletTx went inactive (a chain of sends the staker aggregated into
-    // one block tx) this entry is the only record of the output, and we
-    // must count it, lest the balance lose the change a chain-spend made.
+    // while their CWalletTx is alive, and we would double-count. Otherwise
+    // this entry is the record that counts.
     if (wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE) && IsOutputCoveredByWalletTx(wallet, outpoint)) {
         return;
     }
