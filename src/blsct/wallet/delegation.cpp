@@ -21,9 +21,9 @@ const std::vector<unsigned char> MAGIC{'N', 'V', 'D', 'G', 0x01};
 const std::string KDF_TAG_DELEGATE = "navio/stake-delegation/delegate/v1";
 const std::string KDF_TAG_OWNER = "navio/stake-delegation/owner/v1";
 
-//! Fixed size of the encrypted owner section:
-//! delegate key (48) + compact-size reward-address length. The address part
-//! is variable, so the section carries an explicit 2-byte length prefix.
+//! Size of the little-endian length prefix in front of the owner section
+//! ciphertext. That section holds the delegate key and the reward address,
+//! and the address is variable-length, so its size has to be carried.
 constexpr size_t OWNER_LEN_SIZE = 2;
 
 std::array<std::byte, AEADChaCha20Poly1305::KEYLEN> DeriveKey(const std::string& tag, const std::vector<uint8_t>& secret, const std::vector<uint8_t>& context)
