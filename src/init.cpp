@@ -2276,7 +2276,8 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
                             const CBlockIndex* tip = chainstate.m_chain.Tip();
                             if (!tip) return;
                             // Check against the confirmed UTXO set, with the
-                            // mempool consulted only for conflicts: a
+                            // mempool consulted only for conflicts (input
+                            // already spent, output already created): a
                             // candidate spending an unconfirmed output is
                             // dropped. Candidates are fee-0, so only the
                             // minimum-fee rule is skipped.

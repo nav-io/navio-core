@@ -85,6 +85,22 @@ bool CheckCandidate(const CTransaction& tx, CCoinsViewCache& view, const CTxMemP
             }
         }
     }
+    // Every spendable output must be new, as mempool acceptance requires of
+    // the aggregate: not an unspent coin, not created by a mempool tx.
+    // (Duplicates within the tx are ruled out by the 1-output shape, and
+    // against other pooled candidates by CandidatePool::AddCandidate.)
+    for (size_t i = 0; i < tx.vout.size(); ++i) {
+        if (tx.vout[i].scriptPubKey.IsUnspendable()) continue;
+        const uint256 outid = tx.GetOutputId(i).ToUint256();
+        bool created_in_mempool{false};
+        if (mempool != nullptr) {
+            LOCK(mempool->cs);
+            created_in_mempool = mempool->mapOutputToTx.contains(outid);
+        }
+        if (created_in_mempool || view.HaveCoin(COutPoint{outid})) {
+            return state.Invalid(TxValidationResult::TX_CONFLICT, "txn-duplicate-output");
+        }
+    }
     CAmount fee{0};
     if (!Consensus::CheckTxInputs(tx, state, view, spend_height, fee)) return false;
     return blsct::VerifyTx(tx, view, state, /*blockReward=*/0, params.nPePoSMinStakeAmount,
@@ -96,6 +112,12 @@ bool CheckCandidate(const CTransaction& tx, CCoinsViewCache& view, const CTxMemP
 bool CandidatePool::WouldAccept(const CTransaction& candidate) const
 {
     return IsCandidateShape(candidate) && !Contains(candidate.vin[0].prevout) && Size() < POOL_MAX_TOTAL;
+}
+
+std::optional<uint256> CandidatePool::SpendableOutputId(const CTransaction& tx)
+{
+    if (tx.vout.empty() || tx.vout[0].scriptPubKey.IsUnspendable()) return std::nullopt;
+    return tx.GetOutputId(0).ToUint256();
 }
 
 bool CandidatePool::AddCandidate(const CTransactionRef& candidate, bool reward_input)
@@ -116,12 +138,19 @@ bool CandidatePool::AddCandidate(const CTransactionRef& candidate, bool reward_i
     // input-outpoint dedupe, and evict-on-failure at aggregate time.
     if (Size() >= POOL_MAX_TOTAL) return false;
 
+    // Two pooled candidates creating the same output would make any aggregate
+    // that picks both fail with txn-duplicate-output.
+    const std::optional<uint256> output = SpendableOutputId(*candidate);
+    LOCK(m_output_mutex);
+    if (output && m_by_output.contains(*output)) return false;
+
     const size_t s = ShardFor(input);
     bool inserted = false;
     {
         LOCK(m_shard_mutex[s]);
         inserted = m_shards[s].emplace(input, Entry{candidate, reward_input}).second;
     }
+    if (inserted && output) m_by_output.emplace(*output, input);
     return inserted;
 }
 
@@ -193,28 +222,56 @@ std::vector<CTransactionRef> CandidatePool::PickForAggregate(size_t max_n, size_
 
 bool CandidatePool::EvictByInput(const COutPoint& input)
 {
-    const size_t s = ShardFor(input);
-    LOCK(m_shard_mutex[s]);
-    return m_shards[s].erase(input) > 0;
+    std::optional<uint256> output;
+    {
+        const size_t s = ShardFor(input);
+        LOCK(m_shard_mutex[s]);
+        const auto it = m_shards[s].find(input);
+        if (it == m_shards[s].end()) return false;
+        output = SpendableOutputId(*it->second.tx);
+        m_shards[s].erase(it);
+    }
+    if (output) {
+        LOCK(m_output_mutex);
+        const auto it = m_by_output.find(*output);
+        if (it != m_by_output.end() && it->second == input) m_by_output.erase(it);
+    }
+    return true;
 }
 
-void CandidatePool::EvictSpentBy(const CTransaction& tx)
+bool CandidatePool::EvictByOutput(const uint256& output)
+{
+    COutPoint input;
+    {
+        LOCK(m_output_mutex);
+        const auto it = m_by_output.find(output);
+        if (it == m_by_output.end()) return false;
+        input = it->second;
+    }
+    return EvictByInput(input);
+}
+
+void CandidatePool::EvictConflictingWith(const CTransaction& tx)
 {
     for (const CTxIn& in : tx.vin) {
         EvictByInput(in.prevout);
+    }
+    for (size_t i = 0; i < tx.vout.size(); ++i) {
+        if (tx.vout[i].scriptPubKey.IsUnspendable()) continue;
+        EvictByOutput(tx.GetOutputId(i).ToUint256());
     }
 }
 
 void CandidatePool::TransactionAddedToMempool(const NewMempoolTransactionInfo& tx, uint64_t)
 {
-    if (tx.info.m_tx) EvictSpentBy(*tx.info.m_tx);
+    if (tx.info.m_tx) EvictConflictingWith(*tx.info.m_tx);
 }
 
 void CandidatePool::BlockConnected(ChainstateRole, const std::shared_ptr<const CBlock>& block, const CBlockIndex*)
 {
     if (!block) return;
     for (const CTransactionRef& tx : block->vtx) {
-        if (tx) EvictSpentBy(*tx);
+        if (tx) EvictConflictingWith(*tx);
     }
 }
 

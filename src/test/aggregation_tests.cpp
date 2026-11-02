@@ -13,7 +13,9 @@
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
 #include <coins.h>
+#include <kernel/chain.h>
 #include <policy/policy.h>
+#include <primitives/block.h>
 #include <primitives/transaction.h>
 #include <script/script.h>
 #include <serialize.h>
@@ -104,8 +106,9 @@ BOOST_FIXTURE_TEST_CASE(candidate_verifies_with_fee_rule_skipped, TestingSetup)
 
 // Network ingress runs aggregation::CheckCandidate before pooling. Skipping
 // the fee rule must not skip anything else: a non-standard scriptSig, a forged
-// signature, a missing input, an input a mempool tx already spends and an
-// immature coinbase input are each rejected.
+// signature, a missing input, an immature coinbase input, an output that
+// already exists in the UTXO set or the mempool, and an input a mempool tx
+// already spends are each rejected.
 BOOST_FIXTURE_TEST_CASE(check_candidate_rejects_invalid, TestingSetup)
 {
     auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
@@ -179,6 +182,33 @@ BOOST_FIXTURE_TEST_CASE(check_candidate_rejects_invalid, TestingSetup)
         immature.AddCoin(prevout, Coin{coin.out, spend_height - 1, /*fCoinBaseIn=*/true}, /*possible_overwrite=*/false);
         BOOST_CHECK(!check(*good, immature, reason));
         BOOST_CHECK_EQUAL(reason, "bad-txns-premature-spend-of-coinbase");
+    }
+
+    // The candidate's output is already an unspent coin.
+    {
+        CCoinsViewCache dup{&cache, /*deterministic=*/true};
+        dup.AddCoin(COutPoint{good->GetOutputId(0)}, Coin{good->vout[0], 1, /*fCoinBaseIn=*/false}, /*possible_overwrite=*/false);
+        BOOST_CHECK(!check(*good, dup, reason));
+        BOOST_CHECK_EQUAL(reason, "txn-duplicate-output");
+    }
+
+    // A mempool tx already creates the candidate's output.
+    {
+        CMutableTransaction creator;
+        creator.vin.emplace_back(COutPoint{Txid::FromUint256(InsecureRand256())});
+        creator.vout.push_back(good->vout[0]);
+        const CTransactionRef creator_tx = MakeTransactionRef(creator);
+        {
+            LOCK2(cs_main, mempool.cs);
+            mempool.addUnchecked(TestMemPoolEntryHelper{}.FromTx(creator_tx));
+        }
+        BOOST_CHECK(!check(*good, cache, reason));
+        BOOST_CHECK_EQUAL(reason, "txn-duplicate-output");
+        {
+            LOCK2(cs_main, mempool.cs);
+            mempool.removeRecursive(*creator_tx, MemPoolRemovalReason::REPLACED);
+        }
+        BOOST_CHECK_MESSAGE(check(*good, cache, reason), reason);
     }
 
     // A mempool tx already spends the input. The candidate itself is valid
@@ -300,6 +330,16 @@ CTransactionRef FakeCandidate(const uint256& input_hash, uint32_t n = 0)
     mtx.nVersion = CTransaction::BLSCT_MARKER;
     mtx.vin.emplace_back(COutPoint(input_hash));
     mtx.vout.emplace_back();
+    // A distinct output per input: the pool also dedupes by output.
+    mtx.vout[0].scriptPubKey = CScript() << ToByteVector(input_hash) << OP_DROP << OP_TRUE;
+    return MakeTransactionRef(mtx);
+}
+
+//! A candidate with the given input and the output of `like`.
+CTransactionRef FakeCandidateWithOutput(const uint256& input_hash, const CTransaction& like)
+{
+    CMutableTransaction mtx{*FakeCandidate(input_hash)};
+    mtx.vout[0] = like.vout[0];
     return MakeTransactionRef(mtx);
 }
 } // namespace
@@ -346,6 +386,46 @@ BOOST_FIXTURE_TEST_CASE(pool_add_dedupe_evict, BasicTestingSetup)
     BOOST_CHECK(!pool.Contains(COutPoint(h1)));
     // Evicting a missing input is a no-op false.
     BOOST_CHECK(!pool.EvictByInput(COutPoint(h1)));
+}
+
+// Two pooled candidates creating the same output would fail any aggregate
+// that picks both (txn-duplicate-output), and a candidate whose output a
+// mempool tx or a block creates can no longer be combined. The pool dedupes
+// by output and evicts on output creation, as it does for inputs.
+BOOST_FIXTURE_TEST_CASE(pool_dedupe_evict_by_output, BasicTestingSetup)
+{
+    aggregation::CandidatePool pool;
+    const CTransactionRef a = FakeCandidate(InsecureRand256());
+    BOOST_REQUIRE(pool.AddCandidate(a));
+
+    // Different input, same output: refused.
+    const CTransactionRef b = FakeCandidateWithOutput(InsecureRand256(), *a);
+    BOOST_CHECK(!pool.AddCandidate(b));
+    BOOST_CHECK_EQUAL(pool.Size(), 1u);
+
+    // Once `a` is gone (here: its input spent), the output is free again.
+    BOOST_REQUIRE(pool.EvictByInput(a->vin[0].prevout));
+    BOOST_CHECK(pool.AddCandidate(b));
+    BOOST_CHECK_EQUAL(pool.Size(), 1u);
+
+    // A connected block that creates `b`'s output, without touching its
+    // input, evicts it.
+    CMutableTransaction creator;
+    creator.vin.emplace_back(COutPoint{Txid::FromUint256(InsecureRand256())});
+    creator.vout.push_back(b->vout[0]);
+    auto block = std::make_shared<CBlock>();
+    block->vtx.push_back(MakeTransactionRef(creator));
+    pool.BlockConnected(ChainstateRole::NORMAL, block, nullptr);
+    BOOST_CHECK(!pool.Contains(b->vin[0].prevout));
+    BOOST_CHECK_EQUAL(pool.Size(), 0u);
+    BOOST_CHECK(!pool.EvictByOutput(b->GetOutputId(0).ToUint256()));
+
+    // Unspendable outputs may repeat, as in mempool acceptance.
+    CMutableTransaction op_return{*FakeCandidate(InsecureRand256())};
+    op_return.vout[0].scriptPubKey = CScript() << OP_RETURN << std::vector<unsigned char>{0x01};
+    BOOST_CHECK(pool.AddCandidate(MakeTransactionRef(op_return)));
+    BOOST_CHECK(pool.AddCandidate(FakeCandidateWithOutput(InsecureRand256(), CTransaction{op_return})));
+    BOOST_CHECK_EQUAL(pool.Size(), 2u);
 }
 
 BOOST_FIXTURE_TEST_CASE(pool_type_aware_pick, BasicTestingSetup)
