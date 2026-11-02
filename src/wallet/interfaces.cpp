@@ -386,7 +386,13 @@ public:
 
         // And fetch the wallet available coins
         if (coin_control.m_allow_other_inputs) {
-            total_amount += AvailableCoins(*m_wallet, &coin_control).GetTotalAmount() + AvailableBlsctCoins(*m_wallet, &coin_control).GetTotalAmount();
+            total_amount += AvailableCoins(*m_wallet, &coin_control).GetTotalAmount();
+            // Under output storage the outputs of the wallet's own sends are
+            // in both lists; count the mapOutputs copy only when the
+            // CWalletTx one is not counted, as GetBlsctBalance() does.
+            for (const COutput& out : AvailableBlsctCoins(*m_wallet, &coin_control).All()) {
+                if (!IsOutputCoveredByWalletTx(*m_wallet, out.outpoint)) total_amount += out.txout.nValue;
+            }
         }
 
         return total_amount;
