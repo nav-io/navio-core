@@ -15,6 +15,9 @@ Mining and mempool
   longer hold at the new tip (for example a mint of a token whose supply cap
   that block reached) are evicted, like transactions whose inputs the block
   spent. Only transactions touching a token the block changed are checked.
+  After a reorg, mempool transactions whose token predicates no longer hold
+  (for example a mint of a token whose creation the reorg undid) are evicted
+  as well.
 
 Wallet
 ------
@@ -22,4 +25,14 @@ Wallet
 - A wallet transaction evicted this way is now marked conflicted with the
   block that caused the eviction (`confirmations` -1), so the coins it spent
   are available again without `abandontransaction`. If that block is
-  disconnected, the transaction returns to unconfirmed.
+  disconnected, the transaction returns to unconfirmed. When several blocks
+  connect at once, the conflict is recorded against the block that touched
+  the transaction's token.
+
+- The wallet learns about such a conflict only from the mempool eviction and
+  cannot rebuild it from chain state. A wallet that misses the eviction (it
+  was not loaded at the time, the node stopped before the block was reported
+  to it, or the transaction is found by a rescan), or a mint that confirmed on
+  a chain later reorganized away and is rejected when resubmitted, leaves the
+  transaction unconfirmed with its inputs spent, as before. Use
+  `abandontransaction` to free them.
