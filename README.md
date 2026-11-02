@@ -11,6 +11,10 @@ https://nav.io
 For an immediately usable, binary version of the Navio Core software, see
 https://nav.io/get-started.
 
+Release binaries are signed with the Nav.io Releases key (fingerprint
+`5E54 2D3B DB5F 4305 7623  30B3 7A17 AA08 3868 0153`). The key and
+verification steps are in [`contrib/release-keys`](/contrib/release-keys).
+
 Further information about Navio Core is available in the [doc folder](/doc),
 the [wiki](https://github.com/nav-io/navio-core/wiki) and the [documentation website](https://docs.nav.io).
 

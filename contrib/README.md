@@ -35,6 +35,9 @@ Test and Verify Tools
 ### [TestGen](/contrib/testgen) ###
 Utilities to generate test vectors for the data-driven Bitcoin tests.
 
+### [Release-Keys](/contrib/release-keys) ###
+The public key that signs Navio Core release binaries, with steps for verifying a download.
+
 ### [Verify-Binaries](/contrib/verify-binaries) ###
 This script attempts to download and verify the signature file SHA256SUMS.asc from bitcoin.org.
 
