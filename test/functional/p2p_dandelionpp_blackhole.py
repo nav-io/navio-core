@@ -61,12 +61,14 @@ class DandelionBlackholeTest(BitcoinTestFramework):
         # to force embargo to expire and get our tx returned
         self.nodes[0].setmocktime(int(time.time() + MAX_STEM_TIME))
 
-        res_tx = peer.last_message.get("tx")
-        if not res_tx:
+        if "tx" not in peer.last_message:
             # Create and send msg_mempool to node to bypass mempool request
             # security
-            peer.send_and_ping(msg_mempool())
-            res_tx = peer.last_message.get("tx")
+            peer.send_message(msg_mempool())
+            # The node answers with an inv and the tx only follows the
+            # probe's getdata, so a ping round-trip can finish before it
+            peer.wait_until(lambda: "tx" in peer.last_message)
+        res_tx = peer.last_message["tx"]
 
         self.log.info(res_tx)
         assert res_tx and res_tx.tx
