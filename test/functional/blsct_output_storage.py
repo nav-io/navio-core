@@ -98,7 +98,7 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
         listtransactions send row: the fee is the BLSCT fee output, not
         inputs minus the (range-proofed, nValue 0) outputs."""
         row = next(e for e in wallet.listtransactions("*", 10 ** 9, 0, True)
-                   if e["txid"] == txid and e.get("category") == "send")
+                   if e.get("txid") == txid and e.get("category") == "send")
         gt = wallet.gettransaction(txid)
         self.log.info(f"gettransaction {txid}: amount={gt['amount']} fee={gt['fee']}, "
                       f"send row amount={row['amount']} fee={row['fee']}")
@@ -142,7 +142,10 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
         ltx = wa.listtransactions("*", 100, 0, True)
         immature = [e for e in ltx if e.get("category") == "immature"]
         assert len(immature) >= 1, "no immature staking entries found"
-        assert all("txid" in e for e in immature)
+        # A row from mapOutputs alone names its output by outid; the wallet
+        # does not know the txid of the block tx holding it.
+        assert all("txid" in e or "outid" in e for e in immature)
+        assert all(e.get("txid") != e.get("outid") for e in immature)
 
         # Mature the first 5 coinbases so later scenarios can spend.
         self.generate_blsct_blocks(self.nodes[0], aa, 200)
@@ -249,7 +252,8 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
         receive_entry = next((e for e in b_recent
                               if e.get("category") == "receive" and e.get("output_storage")), None)
         assert receive_entry is not None, "no output-storage receive found for gettransaction test"
-        gt = wb.gettransaction(receive_entry["txid"])
+        assert "txid" not in receive_entry
+        gt = wb.gettransaction(receive_entry["outid"])
         assert_equal(gt["output_storage"], True)
         assert_greater_than(Decimal(str(gt["amount"])), Decimal("0"))
         assert len(gt["details"]) >= 1
