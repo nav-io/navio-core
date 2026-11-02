@@ -639,7 +639,10 @@ SIG_POP_BYTE = {"failure": {"sign": byte_popper(default_sign)}}
 SINGLE_SIG = {"inputs": [getter("sign")]}
 SIG_ADD_ZERO = {"failure": {"sign": zero_appender(default_sign)}}
 
-DUST_LIMIT = 600
+# Above every host output's dust threshold. A navio output serializes a value
+# marker, flags and a predicate besides nValue and scriptPubKey, so a P2PKH
+# output is dust at a higher value than Bitcoin's 600 covered.
+DUST_LIMIT = 700
 MIN_FEE = 50000
 
 # === Actual test cases ===
@@ -1615,26 +1618,35 @@ class TaprootTest(BitcoinTestFramework):
             old_spks.append(d['spk'])
             spend_info[d['spk']] = d
 
+        def fixed_txout(value, spk):
+            """A CTxOut whose predicate is derived from its contents instead of drawn
+            from the PRNG, so that the transactions below stay deterministic."""
+            out = CTxOut(value, spk)
+            out.predicate = bytes.fromhex("0410") + hashlib.sha256(value.to_bytes(8, 'little') + spk).digest()[:16]
+            return out
+
         # Construct a deterministic chain of transactions creating UTXOs to the test's spk's (so that they
         # come from distinct txids).
         txn = []
         amount = 5000000000
+        # Each transaction spends the OP_1 change of the one before it.
+        change_out = coinbase.vout[0]
         for i, spk in enumerate(old_spks + tap_spks):
             val = 42000000 * (i + 7)
             tx = CTransaction()
             tx.nVersion = 1
-            tx.vin = [CTxIn(COutPoint(coinbase.vout[0].hash()), CScript([]), SEQUENCE_FINAL)]
-            tx.vout = [CTxOut(val, spk), CTxOut(amount - val, CScript([OP_1]))]
-            for out in tx.vout:
-                out.predicate = random.randbytes(8)
+            tx.vin = [CTxIn(COutPoint(change_out.hash()), CScript([]), SEQUENCE_FINAL)]
+            spk_out = fixed_txout(val, spk)
+            change_out = fixed_txout(amount - val, CScript([OP_1]))
+            tx.vout = [spk_out, change_out]
             if i & 1:
                 tx.vout = list(reversed(tx.vout))
             tx.nLockTime = 0
             tx.rehash()
             amount -= val
             txn.append(tx)
-            spend_info[spk]['prevout'] = COutPoint(tx.vout[0].hash())
-            spend_info[spk]['utxo'] = CTxOut(val, spk)
+            spend_info[spk]['prevout'] = COutPoint(spk_out.hash())
+            spend_info[spk]['utxo'] = spk_out
         # Mine those transactions
         self.init_blockinfo(self.nodes[0])
         self.block_submit(self.nodes[0], txn, "Crediting txn", None, sigops_weight=10, accept=True)
@@ -1689,8 +1701,8 @@ class TaprootTest(BitcoinTestFramework):
         for i, spk in enumerate(input_spks):
             tx.vin.append(CTxIn(spend_info[spk]['prevout'], CScript(), sequences[i]))
             inputs.append(spend_info[spk]['utxo'])
-        tx.vout.append(CTxOut(1000000000, old_spks[1]))
-        tx.vout.append(CTxOut(3410000000, pubs[98]))
+        tx.vout.append(fixed_txout(1000000000, old_spks[1]))
+        tx.vout.append(fixed_txout(3410000000, pubs[98]))
         tx.nLockTime = 500000000
         precomputed = {
             "hashAmounts": BIP341_sha_amounts(inputs),
@@ -1747,7 +1759,7 @@ class TaprootTest(BitcoinTestFramework):
         aux = tx_test.setdefault("auxiliary", {})
         aux['fullySignedTx'] = tx.serialize().hex()
         keypath_tests.append(tx_test)
-        assert_equal(hashlib.sha256(tx.serialize()).hexdigest(), "24bab662cb55a7f3bae29b559f651674c62bcc1cd442d44715c0133939107b38")
+        assert_equal(hashlib.sha256(tx.serialize()).hexdigest(), "1c8a0b614943e91ba41c71bf50cfa2859ca7095516a83df8c577fb0ee9592a74")
         # Mine the spending transaction
         self.block_submit(self.nodes[0], [tx], "Spending txn", None, sigops_weight=10000, accept=True, witness=True)
 
@@ -1755,15 +1767,15 @@ class TaprootTest(BitcoinTestFramework):
             print(json.dumps(tests, indent=4, sort_keys=False))
 
     def run_test(self):
-        # self.gen_test_vectors()
+        self.gen_test_vectors()
 
         self.log.info("Post-activation tests...")
-        # self.test_spenders(self.nodes[0], spenders_taproot_active(), input_counts=[1, 2, 2, 2, 2, 3])
-        # # Run each test twice; once in isolation, and once combined with others. Testing in isolation
-        # # means that the standardness is verified in every test (as combined transactions are only standard
-        # # when all their inputs are standard).
-        # self.test_spenders(self.nodes[0], spenders_taproot_nonstandard(), input_counts=[1])
-        # self.test_spenders(self.nodes[0], spenders_taproot_nonstandard(), input_counts=[2, 3])
+        self.test_spenders(self.nodes[0], spenders_taproot_active(), input_counts=[1, 2, 2, 2, 2, 3])
+        # Run each test twice; once in isolation, and once combined with others. Testing in isolation
+        # means that the standardness is verified in every test (as combined transactions are only standard
+        # when all their inputs are standard).
+        self.test_spenders(self.nodes[0], spenders_taproot_nonstandard(), input_counts=[1])
+        self.test_spenders(self.nodes[0], spenders_taproot_nonstandard(), input_counts=[2, 3])
 
 
 if __name__ == '__main__':

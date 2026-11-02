@@ -657,7 +657,10 @@ def LegacySignatureMsg(script, txTo, inIdx, hashtype):
         tmp = txtmp.vout[outIdx]
         txtmp.vout = []
         for _ in range(outIdx):
-            txtmp.vout.append(CTxOut(-1))
+            # A null output, as C++ serializes CTxOut(): no predicate either.
+            null_out = CTxOut(-1)
+            null_out.predicate = b""
+            txtmp.vout.append(null_out)
         txtmp.vout.append(tmp)
 
         for i in range(len(txtmp.vin)):
@@ -802,7 +805,6 @@ def TaprootSignatureMsg(txTo, spent_utxos, hash_type, input_index = 0, scriptpat
     assert (input_index < len(txTo.vin))
     out_type = SIGHASH_ALL if hash_type == 0 else hash_type & 3
     in_type = hash_type & SIGHASH_ANYONECANPAY
-    spk = spent_utxos[input_index].scriptPubKey
     ss = bytes([0, hash_type]) # epoch, hash_type
     ss += struct.pack("<i", txTo.nVersion)
     ss += struct.pack("<I", txTo.nLockTime)
@@ -820,12 +822,14 @@ def TaprootSignatureMsg(txTo, spent_utxos, hash_type, input_index = 0, scriptpat
         spend_type |= 2
     ss += bytes([spend_type])
     if in_type == SIGHASH_ANYONECANPAY:
-        ss += txTo.vin[input_index].prevout.serialize()
-        ss += struct.pack("<q", spent_utxos[input_index].nValue)
-        ss += ser_string(spk)
-        ss += struct.pack("<I", txTo.vin[input_index].nSequence)
+        # The whole spent output, as SignatureHashSchnorr does: navio's
+        # CTxOut serialization is not just nValue and scriptPubKey.
+        input_data = txTo.vin[input_index].prevout.serialize()
+        input_data += spent_utxos[input_index].serialize()
+        input_data += struct.pack("<I", txTo.vin[input_index].nSequence)
     else:
-        ss += struct.pack("<I", input_index)
+        input_data = struct.pack("<I", input_index)
+    ss += input_data
     if (spend_type & 1):
         ss += sha256(ser_string(annex))
     if out_type == SIGHASH_SINGLE:
@@ -837,7 +841,9 @@ def TaprootSignatureMsg(txTo, spent_utxos, hash_type, input_index = 0, scriptpat
         ss += TaggedHash("TapLeaf", bytes([leaf_ver]) + ser_string(script))
         ss += bytes([0])
         ss += struct.pack("<i", codeseparator_pos)
-    assert len(ss) ==  175 - (in_type == SIGHASH_ANYONECANPAY) * 49 - (out_type != SIGHASH_ALL and out_type != SIGHASH_SINGLE) * 32 + (annex is not None) * 32 + scriptpath * 37
+    # ANYONECANPAY drops the four 32-byte input hashes, and input_data is
+    # variable-length with it.
+    assert len(ss) ==  171 + len(input_data) - (in_type == SIGHASH_ANYONECANPAY) * 128 - (out_type != SIGHASH_ALL and out_type != SIGHASH_SINGLE) * 32 + (annex is not None) * 32 + scriptpath * 37
     return ss
 
 def TaprootSignatureHash(*args, **kwargs):
