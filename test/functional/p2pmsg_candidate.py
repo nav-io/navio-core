@@ -155,6 +155,12 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         assert_equal(n0.getaggregationhint()["available"], 0)
         self.log.info("candidate spending a coin already spent in the mempool was dropped")
 
+        # Confirm that spend before serving again: replycandidate can pick its
+        # unconfirmed change, and a candidate spending an unconfirmed coin is
+        # dropped by the requester (bad-txns-inputs-missingorspent).
+        self.generate_blsct_blocks(n1, miner, 1)
+        self.sync_blocks()
+
         before = n0.getaggregationhint()["available"]
         res = w1.replycandidate(uniq[0])
         assert "candidate_txid" in res, res
