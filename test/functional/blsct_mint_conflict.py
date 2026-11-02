@@ -152,6 +152,7 @@ class BlsctMintConflictTest(BitcoinTestFramework):
         issuer.abandontransaction(evicted)
 
         self.test_multi_block_connect(node, issuer, issuer_addr)
+        self.test_reorg_undoes_create(node, issuer, issuer_addr)
 
     def test_multi_block_connect(self, node, issuer, issuer_addr):
         self.log.info("Blocks connecting in one step: the conflict goes to the block that touched the token")
@@ -206,6 +207,16 @@ class BlsctMintConflictTest(BitcoinTestFramework):
         assert_equal(issuer.gettransaction(evicted)["confirmations"], 0)
         assert evicted not in node.getrawmempool()
         issuer.abandontransaction(evicted)
+
+    def test_reorg_undoes_create(self, node, issuer, issuer_addr):
+        self.log.info("A mint whose token's creation a reorg undid is evicted")
+        issuer = node.get_wallet_rpc("issuer")
+        self.generate_blsct_blocks(node, issuer_addr, 1)
+        token_id = issuer.createtoken({"name": "reorged"}, 1)["tokenId"]
+        (create_block,) = self.generate_blsct_blocks(node, issuer_addr, 1)
+        mint = self.submit(node, issuer.minttoken, token_id, issuer_addr, 1)
+        node.invalidateblock(create_block)
+        assert mint not in node.getrawmempool()
 
 
 if __name__ == '__main__':

@@ -366,6 +366,16 @@ void Chainstate::MaybeUpdateMempoolForReorg(
             }
         }
 
+        // Token predicates: a reorg can undo the token state a tx relies on,
+        // e.g. the CREATE of the token a MINT mints. Acceptance checks the
+        // predicates against the chain only, so check them against the new
+        // tip the same way and evict a tx that no longer passes, instead of
+        // leaving it for expiry and reconsidering it in every block template.
+        if (tx.IsBLSCT() && std::any_of(tx.vout.begin(), tx.vout.end(), [](const CTxOut& out) { return blsct::IsTokenStatePredicate(out.predicate); })) {
+            CCoinsViewCache token_view(&CoinsTip());
+            if (!blsct::ApplyTokenPredicates(tx, token_view)) return true;
+        }
+
         // The transaction must be final.
         if (!CheckFinalTxAtTip(*Assert(m_chain.Tip()), tx)) return true;
 
