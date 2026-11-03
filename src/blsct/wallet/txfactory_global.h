@@ -12,6 +12,8 @@
 #include <consensus/amount.h>
 #include <primitives/transaction.h>
 
+#include <string_view>
+
 using T = Blst;
 using Point = T::Point;
 using Points = Elements<Point>;
@@ -26,6 +28,11 @@ using Scalars = Elements<Scalar>;
 static constexpr CAmount BLSCT_DEFAULT_FEE = 125;
 
 namespace blsct {
+//! Memo on the output of a cover candidate a wallet serves. The wallet uses it
+//! to recognise the output as its own coin coming back (see
+//! wallet::OutputIsCoverReturn), not as a payment.
+inline constexpr std::string_view COVER_CANDIDATE_MEMO{"candidate"};
+
 enum CreateTransactionType {
     NORMAL,
     STAKED_COMMITMENT,

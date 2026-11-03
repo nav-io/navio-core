@@ -234,11 +234,17 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
         }
 
         try {
-            blsct::PrivateKey spending_key;
-            if (!blsct_km->GetSpendingKeyForOutput(out, spending_key)) {
+            // Same lookup as GetSpendingKeyForOutput(out, key), keeping the
+            // subaddress id for callers that pay the coin back to it.
+            SubAddressIdentifier subaddress;
+            if (!blsct_km->GetSubAddressId(blsct_km->GetHashId(out), subaddress)) {
                 continue;
             }
-            gathered.push_back({value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash), isStakedCommitment, delegationId});
+            blsct::PrivateKey spending_key;
+            if (!blsct_km->GetSpendingKeyForOutput(out, subaddress, spending_key)) {
+                continue;
+            }
+            gathered.push_back({value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash), isStakedCommitment, delegationId, subaddress});
         } catch (const std::exception& e) {
             LogPrintf("Error adding input: %s\n", e.what());
             continue;
