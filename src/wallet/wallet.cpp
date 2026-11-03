@@ -3445,6 +3445,8 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
         // A remaining wallet transaction carrying the output still accounts
         // for it.
         if (mapOutpointHashToWalletTx.contains(outpoint.hash.ToUint256())) continue;
+        // blockDisconnected expects every indexed conflicted output to have a row.
+        m_conflicted_outputs.erase(outpoint);
         if (mapOutputs.erase(outpoint) && !output_batch.EraseOutput(outpoint)) {
             output_db_error = true;
         }
