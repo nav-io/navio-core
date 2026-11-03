@@ -598,6 +598,37 @@ BOOST_AUTO_TEST_CASE(test_unsigned_transaction_sign)
     auto fee_predicate = blsct::ParsePredicate(signed_tx.vout.back().predicate);
     BOOST_CHECK(fee_predicate.IsPayFeePredicate());
 
+    // Fee output off: a fee-0 cover candidate. The flag survives a
+    // serialization roundtrip, and a non-zero fee cannot be signed.
+    BOOST_CHECK(get_unsigned_transaction_emit_fee_output(unsigned_tx));
+    set_unsigned_transaction_emit_fee_output(unsigned_tx, false);
+    BOOST_CHECK(!get_unsigned_transaction_emit_fee_output(unsigned_tx));
+    auto* fee_rejected_rv = sign_unsigned_transaction(unsigned_tx);
+    BOOST_REQUIRE(fee_rejected_rv != nullptr);
+    BOOST_CHECK(fee_rejected_rv->result != BLSCT_SUCCESS);
+    free(fee_rejected_rv);
+    set_unsigned_transaction_fee(unsigned_tx, 0);
+    const char* candidate_hex = serialize_unsigned_transaction(unsigned_tx);
+    BOOST_REQUIRE(candidate_hex != nullptr);
+    BOOST_CHECK_EQUAL(std::string(candidate_hex).substr(0, 2), "02");
+    auto* candidate_rt_rv = deserialize_unsigned_transaction(candidate_hex);
+    BOOST_REQUIRE(candidate_rt_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(candidate_rt_rv->result, BLSCT_SUCCESS);
+    BOOST_CHECK(!get_unsigned_transaction_emit_fee_output(candidate_rt_rv->value));
+    auto* candidate_rv = sign_unsigned_transaction(candidate_rt_rv->value);
+    BOOST_REQUIRE(candidate_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(candidate_rv->result, BLSCT_SUCCESS);
+    CMutableTransaction candidate;
+    BOOST_REQUIRE(DecodeHexTx(candidate, static_cast<const char*>(candidate_rv->value)));
+    BOOST_CHECK_EQUAL(candidate.vin.size(), 1U);
+    BOOST_CHECK_EQUAL(candidate.vout.size(), 1U);
+    BOOST_CHECK(!candidate.vout[0].scriptPubKey.IsFee());
+    free_obj((void*)candidate_hex);
+    delete_unsigned_transaction(candidate_rt_rv->value);
+    free(candidate_rt_rv);
+    free_obj(candidate_rv->value);
+    free(candidate_rv);
+
     free_obj(view_key_rv->value);
     free(view_key_rv);
     free_obj(spend_key_rv->value);

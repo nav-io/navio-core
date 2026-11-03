@@ -2983,6 +2983,18 @@ uint64_t get_unsigned_transaction_fee(const void* vp_unsigned_transaction)
     return static_cast<uint64_t>(static_cast<const blsct::UnsignedTransaction*>(vp_unsigned_transaction)->GetFee());
 }
 
+void set_unsigned_transaction_emit_fee_output(void* vp_unsigned_transaction, const bool emit_fee_output)
+{
+    RETURN_IF_NULL(vp_unsigned_transaction);
+    static_cast<blsct::UnsignedTransaction*>(vp_unsigned_transaction)->SetEmitFeeOutput(emit_fee_output);
+}
+
+bool get_unsigned_transaction_emit_fee_output(const void* vp_unsigned_transaction)
+{
+    RETURN_RET_VAL_IF_NULL(vp_unsigned_transaction, true);
+    return static_cast<const blsct::UnsignedTransaction*>(vp_unsigned_transaction)->GetEmitFeeOutput();
+}
+
 size_t get_unsigned_transaction_inputs_size(const void* vp_unsigned_transaction)
 {
     RETURN_RET_VAL_IF_NULL(vp_unsigned_transaction, 0);

@@ -78,18 +78,19 @@ std::optional<CTransaction> UnsignedTransaction::Sign() const
             txSigs.push_back(in.sk.Sign(in.in.GetHash()));
         }
 
-        // Calculate fee based on transaction weight
-        CAmount fee = m_fee;
-
-        // Add fee output
-        CTxOut fee_out{fee, CScript(OP_RETURN)};
-        auto feeKey = blsct::PrivateKey(Scalar::Rand());
-        fee_out.predicate = blsct::PayFeePredicate(feeKey.GetPublicKey()).GetVch();
-        tx.vout.push_back(fee_out);
-
-        // Add balance and fee signatures
+        // The balance signature is always required.
         txSigs.push_back(PrivateKey(gammaAcc).SignBalance());
-        txSigs.push_back(PrivateKey(feeKey).SignFee());
+
+        if (m_emit_fee_output) {
+            CTxOut fee_out{m_fee, CScript(OP_RETURN)};
+            auto feeKey = blsct::PrivateKey(Scalar::Rand());
+            fee_out.predicate = blsct::PayFeePredicate(feeKey.GetPublicKey()).GetVch();
+            tx.vout.push_back(fee_out);
+            txSigs.push_back(PrivateKey(feeKey).SignFee());
+        } else if (m_fee != 0) {
+            // A candidate without a fee output cannot pay a fee.
+            return std::nullopt;
+        }
 
         // Aggregate all signatures
         tx.txSig = Signature::Aggregate(txSigs);
