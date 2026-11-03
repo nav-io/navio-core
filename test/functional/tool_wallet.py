@@ -47,10 +47,10 @@ class ToolWalletTest(BitcoinTestFramework):
         default_args = ['-datadir={}'.format(self.nodes[0].datadir_path), '-chain=%s' % self.chain]
         # navio-wallet defaults to creating a BLSCT wallet when none of
         # -legacy, -descriptors or -blsct are given, so pin down the wallet
-        # type explicitly here to match this test's self.options.descriptors
+        # type explicitly here to match this test's descriptor wallet
         # expectations instead of relying on the tool's own default.
         if 'create' in args:
-            default_args.append('-legacy' if not self.options.descriptors else '-descriptors')
+            default_args.append('-descriptors')
 
         return subprocess.Popen([self.options.naviowallet] + default_args + list(args), stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
 
@@ -83,36 +83,20 @@ class ToolWalletTest(BitcoinTestFramework):
 
     def get_expected_info_output(self, name="", transactions=0, keypool=2, address=0, imported_privs=0):
         wallet_name = self.default_wallet_name if name == "" else name
-        if self.options.descriptors:
-            output_types = 4  # p2pkh, p2sh, segwit, bech32m
-            return textwrap.dedent('''\
-                Wallet info
-                ===========
-                Name: %s
-                Format: sqlite
-                BLSCT: no
-                Descriptors: yes
-                Encrypted: no
-                HD (hd seed available): yes
-                Keypool Size: %d
-                Transactions: %d
-                Address Book: %d
-            ''' % (wallet_name, keypool * output_types, transactions, imported_privs * 3 + address))
-        else:
-            output_types = 3  # p2pkh, p2sh, segwit. Legacy wallets do not support bech32m.
-            return textwrap.dedent('''\
-                Wallet info
-                ===========
-                Name: %s
-                Format: bdb
-                BLSCT: no
-                Descriptors: no
-                Encrypted: no
-                HD (hd seed available): yes
-                Keypool Size: %d
-                Transactions: %d
-                Address Book: %d
-            ''' % (wallet_name, keypool, transactions, (address + imported_privs) * output_types))
+        output_types = 4  # p2pkh, p2sh, segwit, bech32m
+        return textwrap.dedent('''\
+            Wallet info
+            ===========
+            Name: %s
+            Format: sqlite
+            BLSCT: no
+            Descriptors: yes
+            Encrypted: no
+            HD (hd seed available): yes
+            Keypool Size: %d
+            Transactions: %d
+            Address Book: %d
+        ''' % (wallet_name, keypool * output_types, transactions, imported_privs * 3 + address))
 
     def read_dump(self, filename):
         dump = OrderedDict()
@@ -206,10 +190,7 @@ class ToolWalletTest(BitcoinTestFramework):
         self.assert_raises_tool_error('Error parsing command line arguments: Invalid parameter -foo', '-foo')
         self.assert_raises_tool_error('No method provided. Run `navio-wallet -help` for valid methods.')
         self.assert_raises_tool_error('Wallet name must be provided when creating a new wallet.', 'create')
-        locked_dir = self.nodes[0].wallets_path
-        error = 'Error initializing wallet database environment "{}"!'.format(locked_dir)
-        if self.options.descriptors:
-            error = f"SQLiteDatabase: Unable to obtain an exclusive lock on the database, is it being used by another instance of {self.config['environment']['CLIENT_NAME']}?"
+        error = f"SQLiteDatabase: Unable to obtain an exclusive lock on the database, is it being used by another instance of {self.config['environment']['CLIENT_NAME']}?"
         self.assert_raises_tool_error(
             error,
             '-wallet=' + self.default_wallet_name,
@@ -322,27 +303,13 @@ class ToolWalletTest(BitcoinTestFramework):
         self.log.debug('Wallet file timestamp after calling getwalletinfo: {}'.format(timestamp_after))
 
         assert_equal(0, out['txcount'])
-        if not self.options.descriptors:
-            assert_equal(32, out['keypoolsize'])
-            assert_equal(32, out['keypoolsize_hd_internal'])
-            assert_equal(True, 'hdseedid' in out)
-        else:
-            assert_equal(128, out['keypoolsize'])
-            assert_equal(128, out['keypoolsize_hd_internal'])
+        assert_equal(128, out['keypoolsize'])
+        assert_equal(128, out['keypoolsize_hd_internal'])
 
         self.log_wallet_timestamp_comparison(timestamp_before, timestamp_after)
         assert_equal(timestamp_before, timestamp_after)
         assert_equal(shasum_after, shasum_before)
         self.log.debug('Wallet file shasum unchanged\n')
-
-    def test_salvage(self):
-        # TODO: Check salvage actually salvages and doesn't break things. https://github.com/bitcoin/bitcoin/issues/7463
-        self.log.info('Check salvage')
-        self.start_node(0)
-        self.nodes[0].createwallet("salvage")
-        self.stop_node(0)
-
-        self.assert_tool_output('', '-wallet=salvage', 'salvage')
 
     def test_dump_createfromdump(self):
         self.start_node(0)
@@ -422,8 +389,6 @@ class ToolWalletTest(BitcoinTestFramework):
         self.write_dump(dump_data, bad_sum_wallet_dump)
         self.assert_raises_tool_error('Error: Checksum is not the correct size', '-wallet=badload', '-dumpfile={}'.format(bad_sum_wallet_dump), 'createfromdump')
         assert not (self.nodes[0].wallets_path / "badload").is_dir()
-        if not self.options.descriptors:
-            os.rename(self.nodes[0].wallets_path / "wallet.dat", self.nodes[0].wallets_path / "default.wallet.dat")
         self.assert_raises_tool_error('Error: Checksum is not the correct size', '-wallet=', '-dumpfile={}'.format(bad_sum_wallet_dump), 'createfromdump')
         assert self.nodes[0].wallets_path.exists()
         assert not (self.nodes[0].wallets_path / "wallet.dat").exists()
@@ -444,8 +409,6 @@ class ToolWalletTest(BitcoinTestFramework):
         self.do_tool_createfromdump("", "wallet.dump")
         assert (self.nodes[0].wallets_path / "wallet.dat").exists()
         os.unlink(self.nodes[0].wallets_path / "wallet.dat")
-        if not self.options.descriptors:
-            os.rename(self.nodes[0].wallets_path / "default.wallet.dat", self.nodes[0].wallets_path / "wallet.dat")
 
     def test_chainless_conflicts(self):
         self.log.info("Test wallet tool when wallet contains conflicting transactions")
@@ -490,16 +453,16 @@ class ToolWalletTest(BitcoinTestFramework):
         self.stop_node(0)
 
         # Wallet tool should successfully give info for this wallet
-        expected_output = textwrap.dedent(f'''\
+        expected_output = textwrap.dedent('''\
             Wallet info
             ===========
             Name: conflicts
-            Format: {"sqlite" if self.options.descriptors else "bdb"}
+            Format: sqlite
             BLSCT: no
-            Descriptors: {"yes" if self.options.descriptors else "no"}
+            Descriptors: yes
             Encrypted: no
             HD (hd seed available): yes
-            Keypool Size: {"8" if self.options.descriptors else "1"}
+            Keypool Size: 8
             Transactions: 4
             Address Book: 4
         ''')
@@ -514,9 +477,6 @@ class ToolWalletTest(BitcoinTestFramework):
         self.test_tool_wallet_create_on_existing_wallet()
         self.test_tool_wallet_create_fails_on_existing_wallet()
         self.test_getwalletinfo_on_different_wallet()
-        if not self.options.descriptors:
-            # Salvage is a legacy wallet only thing
-            self.test_salvage()
         self.test_dump_createfromdump()
         self.test_chainless_conflicts()
 

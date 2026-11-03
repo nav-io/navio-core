@@ -14,7 +14,7 @@ Then 5 iterations of 1/2/3 sending coins amongst
 themselves to get transactions in the wallets,
 and the miner mining one block.
 
-Wallets are backed up using dumpwallet/backupwallet.
+Wallets are backed up using backupwallet.
 Then 5 more iterations of transactions and mining a block.
 
 Miner then generates 101 more blocks, so any
@@ -26,14 +26,10 @@ Sanity check:
 1/2/3 are shutdown, and their wallets erased.
 Then restore using wallet.dat backup. And
 confirm 1/2/3/4 balances are same as before.
-
-Shutdown again, restore using importwallet,
-and confirm again balances are correct.
 """
 from decimal import Decimal
 import os
 from random import randint
-import shutil
 
 from test_framework.blocktools import COINBASE_MATURITY
 from test_framework.test_framework import BitcoinTestFramework
@@ -93,25 +89,6 @@ class WalletBackupTest(BitcoinTestFramework):
         self.sync_mempools()
         self.generate(self.nodes[3], 1)
 
-    # As above, this mirrors the original bash test.
-    def start_three(self, args=()):
-        self.start_node(0, self.extra_args[0] + list(args))
-        self.start_node(1, self.extra_args[1] + list(args))
-        self.start_node(2, self.extra_args[2] + list(args))
-        self.connect_nodes(0, 3)
-        self.connect_nodes(1, 3)
-        self.connect_nodes(2, 3)
-        self.connect_nodes(2, 0)
-
-    def stop_three(self):
-        self.stop_node(0)
-        self.stop_node(1)
-        self.stop_node(2)
-
-    def erase_three(self):
-        for node_num in range(3):
-            (self.nodes[node_num].wallets_path / self.default_wallet_name / self.wallet_data_filename).unlink()
-
     def restore_invalid_wallet(self):
         node = self.nodes[3]
         invalid_wallet_file = self.nodes[0].datadir_path / 'invalid_wallet_file.bak'
@@ -161,10 +138,6 @@ class WalletBackupTest(BitcoinTestFramework):
         for node_num in range(3):
             self.nodes[node_num].backupwallet(self.nodes[node_num].datadir_path / 'wallet.bak')
 
-        if not self.options.descriptors:
-            for node_num in range(3):
-                self.nodes[node_num].dumpwallet(self.nodes[node_num].datadir_path / 'wallet.dump')
-
         self.log.info("More transactions")
         for _ in range(5):
             self.do_one_round()
@@ -207,29 +180,6 @@ class WalletBackupTest(BitcoinTestFramework):
         assert_equal(res2_rpc.getbalance(), balance2)
 
         self.restore_wallet_existent_name()
-
-        if not self.options.descriptors:
-            self.log.info("Restoring using dumped wallet")
-            self.stop_three()
-            self.erase_three()
-
-            #start node2 with no chain
-            shutil.rmtree(self.nodes[2].blocks_path)
-            shutil.rmtree(self.nodes[2].chain_path / 'chainstate')
-
-            self.start_three(["-nowallet"])
-            # Create new wallets for the three nodes.
-            # We will use this empty wallets to test the 'importwallet()' RPC command below.
-            for node_num in range(3):
-                self.nodes[node_num].createwallet(wallet_name=self.default_wallet_name, descriptors=self.options.descriptors, load_on_startup=True)
-                assert_equal(self.nodes[node_num].getbalance(), 0)
-                self.nodes[node_num].importwallet(self.nodes[node_num].datadir_path / 'wallet.dump')
-
-            self.sync_blocks()
-
-            assert_equal(self.nodes[0].getbalance(), balance0)
-            assert_equal(self.nodes[1].getbalance(), balance1)
-            assert_equal(self.nodes[2].getbalance(), balance2)
 
         # Backup to source wallet file must fail
         sourcePaths = [
