@@ -12,75 +12,114 @@ fingerprint in the top-level README and https://nav.io/releases.asc together.
 
 ### Before every release candidate
 
-* Update release candidate version in `CMakeLists.txt` (`CLIENT_VERSION_RC`).
-* Update manpages (after rebuilding the binaries), see [gen-manpages.py](https://github.com/bitcoin/bitcoin/blob/master/contrib/devtools/README.md#gen-manpagespy).
-* Update navio.conf and commit, see [gen-navio-conf.sh](https://github.com/bitcoin/bitcoin/blob/master/contrib/devtools/README.md#gen-navio-confsh).
+- Update release candidate version in `CMakeLists.txt` (`CLIENT_VERSION_RC`).
+- Update manpages (after rebuilding the binaries), see
+  [gen-manpages.py](https://github.com/bitcoin/bitcoin/blob/master/contrib/devtools/README.md#gen-manpagespy).
+- Update navio.conf and commit, see
+  [gen-navio-conf.sh](https://github.com/bitcoin/bitcoin/blob/master/contrib/devtools/README.md#gen-navio-confsh).
 
 ### Before every major and minor release
 
-* Update [bips.md](bips.md) to account for changes since the last release.
-* Update version in `CMakeLists.txt` (don't forget to set `CLIENT_VERSION_RC` to `0`).
-* Update manpages (see previous section)
-* Write release notes (see "Write the release notes" below).
+- Update [bips.md](bips.md) to account for changes since the last release.
+- Update version in `CMakeLists.txt` (don't forget to set `CLIENT_VERSION_RC` to
+  `0`).
+- Update manpages (see previous section)
+- Write release notes (see "Write the release notes" below).
 
 ### Before every major release
 
-* On both the master branch and the new release branch:
+- On both the master branch and the new release branch:
   - update `CLIENT_VERSION_MAJOR` in [`CMakeLists.txt`](../CMakeLists.txt)
-* On the new release branch in [`CMakeLists.txt`](../CMakeLists.txt)(see [this commit](https://github.com/bitcoin/bitcoin/commit/742f7dd)):
+- On the new release branch in [`CMakeLists.txt`](../CMakeLists.txt)(see
+  [this commit](https://github.com/bitcoin/bitcoin/commit/742f7dd)):
   - set `CLIENT_VERSION_MINOR` to `0`
   - set `CLIENT_VERSION_BUILD` to `0`
   - set `CLIENT_VERSION_IS_RELEASE` to `true`
 
 #### Before branch-off
 
-* Update hardcoded [seeds](/contrib/seeds/README.md), see [this pull request](https://github.com/bitcoin/bitcoin/pull/27488) for an example.
-* Update the following variables in [`src/kernel/chainparams.cpp`](/src/kernel/chainparams.cpp) for mainnet, testnet, and signet:
-  - `m_assumed_blockchain_size` and `m_assumed_chain_state_size` with the current size plus some overhead (see
-    [this](#how-to-calculate-assumed-blockchain-and-chain-state-size) for information on how to calculate them).
-  - The following updates should be reviewed with `reindex-chainstate` and `assumevalid=0` to catch any defect
-    that causes rejection of blocks in the past history.
-  - `chainTxData` with statistics about the transaction count and rate. Use the output of the `getchaintxstats` RPC with an
-    `nBlocks` of 4096 (28 days) and a `bestblockhash` of RPC `getbestblockhash`; see
-    [this pull request](https://github.com/bitcoin/bitcoin/pull/28591) for an example. Reviewers can verify the results by running
-    `getchaintxstats <window_block_count> <window_final_block_hash>` with the `window_block_count` and `window_final_block_hash` from your output.
-  - `defaultAssumeValid` with the output of RPC `getblockhash` using the `height` of `window_final_block_height` above
-    (and update the block height comment with that height), taking into account the following:
-    - On mainnet, the selected value must not be orphaned, so it may be useful to set the height two blocks back from the tip.
-    - Testnet should be set with a height some tens of thousands back from the tip, due to reorgs there.
-  - `nMinimumChainWork` with the "chainwork" value of RPC `getblockheader` using the same height as that selected for the previous step.
-* Consider updating the headers synchronization tuning parameters to account for the chainparams updates.
-  The optimal values change very slowly, so this isn't strictly necessary every release, but doing so doesn't hurt.
-  - Update configuration variables in [`contrib/devtools/headerssync-params.py`](/contrib/devtools/headerssync-params.py):
-    - Set `TIME` to the software's expected supported lifetime -- after this time, its ability to defend against a high bandwidth timewarp attacker will begin to degrade.
-    - Set `MINCHAINWORK_HEADERS` to the height used for the `nMinimumChainWork` calculation above.
+- Update hardcoded seeds: edit `contrib/seeds/nodes_main.txt` and regenerate
+  `src/chainparamsseeds.h` as the [seeds README](/contrib/seeds/README.md)
+  describes.
+- Update the following variables in
+  [`src/kernel/chainparams.cpp`](/src/kernel/chainparams.cpp) for mainnet,
+  testnet, and signet:
+  - `m_assumed_blockchain_size` and `m_assumed_chain_state_size` with the
+    current size plus some overhead (see
+    [this](#how-to-calculate-assumed-blockchain-and-chain-state-size) for
+    information on how to calculate them).
+  - The following updates should be reviewed with `reindex-chainstate` and
+    `assumevalid=0` to catch any defect that causes rejection of blocks in the
+    past history.
+  - `chainTxData` with statistics about the transaction count and rate. Use the
+    output of the `getchaintxstats` RPC with an `nBlocks` of 4096 (28 days) and
+    a `bestblockhash` of RPC `getbestblockhash`; see
+    [this pull request](https://github.com/bitcoin/bitcoin/pull/28591) for an
+    example. Reviewers can verify the results by running
+    `getchaintxstats <window_block_count> <window_final_block_hash>` with the
+    `window_block_count` and `window_final_block_hash` from your output.
+  - `defaultAssumeValid` with the output of RPC `getblockhash` using the
+    `height` of `window_final_block_height` above (and update the block height
+    comment with that height), taking into account the following:
+    - On mainnet, the selected value must not be orphaned, so it may be useful
+      to set the height two blocks back from the tip.
+    - Testnet should be set with a height some tens of thousands back from the
+      tip, due to reorgs there.
+  - `nMinimumChainWork` with the "chainwork" value of RPC `getblockheader` using
+    the same height as that selected for the previous step.
+- Consider updating the headers synchronization tuning parameters to account for
+  the chainparams updates. The optimal values change very slowly, so this isn't
+  strictly necessary every release, but doing so doesn't hurt.
+  - Update configuration variables in
+    [`contrib/devtools/headerssync-params.py`](/contrib/devtools/headerssync-params.py):
+    - Set `TIME` to the software's expected supported lifetime -- after this
+      time, its ability to defend against a high bandwidth timewarp attacker
+      will begin to degrade.
+    - Set `MINCHAINWORK_HEADERS` to the height used for the `nMinimumChainWork`
+      calculation above.
     - Check that the other variables still look reasonable.
-  - Run the script. It works fine in CPython, but PyPy is much faster (seconds instead of minutes): `pypy3 contrib/devtools/headerssync-params.py`.
-  - Paste the output defining `HEADER_COMMITMENT_PERIOD` and `REDOWNLOAD_BUFFER_SIZE` into the top of [`src/headerssync.cpp`](/src/headerssync.cpp).
-- Clear the release notes and move them to the wiki (see "Write the release notes" below).
+  - Run the script. It works fine in CPython, but PyPy is much faster (seconds
+    instead of minutes): `pypy3 contrib/devtools/headerssync-params.py`.
+  - Paste the output defining `HEADER_COMMITMENT_PERIOD` and
+    `REDOWNLOAD_BUFFER_SIZE` into the top of
+    [`src/headerssync.cpp`](/src/headerssync.cpp).
+
+* Clear the release notes and move them to the wiki (see "Write the release
+  notes" below).
+
 #### After branch-off (on the major release branch)
 
 - Update the versions.
-- Create the draft, named "*version* Release Notes Draft", as a [collaborative wiki](https://github.com/bitcoin-core/bitcoin-devwiki/wiki/_new).
-- Clear the release notes: `cp doc/release-notes-empty-template.md doc/release-notes.md`
-- Create a pinned meta-issue for testing the release candidate (see [this issue](https://github.com/bitcoin/bitcoin/issues/27621) for an example) and provide a link to it in the release announcements where useful.
-- Prune inputs from the qa-assets repo (See [pruning
-  inputs](https://github.com/bitcoin-core/qa-assets#pruning-inputs)).
+- Create the draft, named "_version_ Release Notes Draft", as a
+  [collaborative wiki](https://github.com/bitcoin-core/bitcoin-devwiki/wiki/_new).
+- Clear the release notes:
+  `cp doc/release-notes-empty-template.md doc/release-notes.md`
+- Create a pinned meta-issue for testing the release candidate (see
+  [this issue](https://github.com/bitcoin/bitcoin/issues/27621) for an example)
+  and provide a link to it in the release announcements where useful.
+- Prune inputs from the qa-assets repo (See
+  [pruning inputs](https://github.com/bitcoin-core/qa-assets#pruning-inputs)).
 
 #### Before final release
 
-- Merge the release notes from [the wiki](https://github.com/bitcoin-core/bitcoin-devwiki/wiki/) into the branch.
+- Merge the release notes from
+  [the wiki](https://github.com/bitcoin-core/bitcoin-devwiki/wiki/) into the
+  branch.
 - Ensure the "Needs release note" label is removed from all relevant pull
   requests and issues:
   https://github.com/bitcoin/bitcoin/issues?q=label%3A%22Needs+release+note%22
 
 #### Tagging a release (candidate)
 
-To tag the version (or release candidate) in git, use the `make-tag.py` script from [bitcoin-maintainer-tools](https://github.com/bitcoin-core/bitcoin-maintainer-tools). From the root of the repository run:
+To tag the version (or release candidate) in git, use the `make-tag.py` script
+from
+[bitcoin-maintainer-tools](https://github.com/bitcoin-core/bitcoin-maintainer-tools).
+From the root of the repository run:
 
     ../bitcoin-maintainer-tools/make-tag.py v(new version, e.g. 25.0)
 
-This will perform a few last-minute consistency checks in the build system files, and if they pass, create a signed tag.
+This will perform a few last-minute consistency checks in the build system
+files, and if they pass, create a signed tag.
 
 ## Building
 
@@ -98,9 +137,12 @@ Check out the source code in the following directory hierarchy.
 
 ### Write the release notes
 
-Open a draft of the release notes for collaborative editing at https://github.com/bitcoin-core/bitcoin-devwiki/wiki.
+Open a draft of the release notes for collaborative editing at
+https://github.com/bitcoin-core/bitcoin-devwiki/wiki.
 
-For the period during which the notes are being edited on the wiki, the version on the branch should be wiped and replaced with a link to the wiki which should be used for all announcements until `-final`.
+For the period during which the notes are being edited on the wiki, the version
+on the branch should be wiped and replaced with a link to the wiki which should
+be used for all announcements until `-final`.
 
 Generate list of authors:
 
@@ -128,13 +170,14 @@ git -C ./guix.sigs pull
 
 ### Create the macOS SDK tarball (first time, or when SDK version changes)
 
-Create the macOS SDK tarball, see the [macdeploy
-instructions](/contrib/macdeploy/README.md#deterministic-macos-app-notes) for
-details.
+Create the macOS SDK tarball, see the
+[macdeploy instructions](/contrib/macdeploy/README.md#deterministic-macos-app-notes)
+for details.
 
 ### Build and attest to build outputs
 
 Follow the relevant Guix README.md sections:
+
 - [Building](/contrib/guix/README.md#building)
 - [Attesting to build outputs](/contrib/guix/README.md#attesting-to-build-outputs)
 
@@ -151,7 +194,8 @@ git commit -m "Add attestations by ${SIGNER} for ${VERSION} non-codesigned"
 popd
 ```
 
-Then open a Pull Request to the [guix.sigs repository](https://github.com/bitcoin-core/guix.sigs).
+Then open a Pull Request to the
+[guix.sigs repository](https://github.com/bitcoin-core/guix.sigs).
 
 ## Codesigning
 
@@ -170,8 +214,12 @@ Then open a Pull Request to the [guix.sigs repository](https://github.com/bitcoi
     signature-win.tar.gz will be created
 
 ### Windows and macOS codesigners only: test code signatures
-It is advised to test that the code signature attaches properly prior to tagging by performing the `guix-codesign` step.
-However if this is done, once the release has been tagged in the bitcoin-detached-sigs repo, the `guix-codesign` step must be performed again in order for the guix attestation to be valid when compared against the attestations of non-codesigner builds.
+
+It is advised to test that the code signature attaches properly prior to tagging
+by performing the `guix-codesign` step. However if this is done, once the
+release has been tagged in the bitcoin-detached-sigs repo, the `guix-codesign`
+step must be performed again in order for the guix attestation to be valid when
+compared against the attestations of non-codesigner builds.
 
 ### Windows and macOS codesigners only: Commit the detached codesign payloads
 
@@ -190,8 +238,12 @@ popd
 
 ### Non-codesigners: wait for Windows and macOS detached signatures
 
-- Once the Windows and macOS builds each have 3 matching signatures, they will be signed with their respective release keys.
-- Detached signatures will then be committed to the [bitcoin-detached-sigs](https://github.com/bitcoin-core/bitcoin-detached-sigs) repository, which can be combined with the unsigned apps to create signed binaries.
+- Once the Windows and macOS builds each have 3 matching signatures, they will
+  be signed with their respective release keys.
+- Detached signatures will then be committed to the
+  [bitcoin-detached-sigs](https://github.com/bitcoin-core/bitcoin-detached-sigs)
+  repository, which can be combined with the unsigned apps to create signed
+  binaries.
 
 ### Create the codesigned build outputs
 
@@ -210,7 +262,8 @@ git commit -m "Add attestations by ${SIGNER} for ${VERSION} codesigned"
 popd
 ```
 
-Then open a Pull Request to the [guix.sigs repository](https://github.com/bitcoin-core/guix.sigs).
+Then open a Pull Request to the
+[guix.sigs repository](https://github.com/bitcoin-core/guix.sigs).
 
 ## After 3 or more people have guix-built and their results match
 
@@ -220,30 +273,31 @@ Combine the `all.SHA256SUMS.asc` file from all signers into `SHA256SUMS.asc`:
 cat "$VERSION"/*/all.SHA256SUMS.asc > SHA256SUMS.asc
 ```
 
+- Upload to the bitcoincore.org server
+  (`/var/www/bin/bitcoin-core-${VERSION}/`):
+  1. The contents of each `./bitcoin/guix-build-${VERSION}/output/${HOST}/`
+     directory, except for `*-debug*` files.
 
-- Upload to the bitcoincore.org server (`/var/www/bin/bitcoin-core-${VERSION}/`):
-    1. The contents of each `./bitcoin/guix-build-${VERSION}/output/${HOST}/` directory, except for
-       `*-debug*` files.
+     Guix will output all of the results into host subdirectories, but the
+     SHA256SUMS file does not include these subdirectories. In order for
+     downloads via torrent to verify without directory structure modification,
+     all of the uploaded files need to be in the same directory as the
+     SHA256SUMS file.
 
-       Guix will output all of the results into host subdirectories, but the SHA256SUMS
-       file does not include these subdirectories. In order for downloads via torrent
-       to verify without directory structure modification, all of the uploaded files
-       need to be in the same directory as the SHA256SUMS file.
+     The `*-debug*` files generated by the guix build contain debug symbols for
+     troubleshooting by developers. It is assumed that anyone that is interested
+     in debugging can run guix to generate the files for themselves. To avoid
+     end-user confusion about which file to pick, as well as save storage space
+     _do not upload these to the bitcoincore.org server, nor put them in the
+     torrent_.
 
-       The `*-debug*` files generated by the guix build contain debug symbols
-       for troubleshooting by developers. It is assumed that anyone that is
-       interested in debugging can run guix to generate the files for
-       themselves. To avoid end-user confusion about which file to pick, as well
-       as save storage space *do not upload these to the bitcoincore.org server,
-       nor put them in the torrent*.
+     ```sh
+     find guix-build-${VERSION}/output/ -maxdepth 2 -type f -not -name "SHA256SUMS.part" -and -not -name "*debug*" -exec scp {} user@bitcoincore.org:/var/www/bin/bitcoin-core-${VERSION} \;
+     ```
 
-       ```sh
-       find guix-build-${VERSION}/output/ -maxdepth 2 -type f -not -name "SHA256SUMS.part" -and -not -name "*debug*" -exec scp {} user@bitcoincore.org:/var/www/bin/bitcoin-core-${VERSION} \;
-       ```
+  2. The `SHA256SUMS` file
 
-    2. The `SHA256SUMS` file
-
-    3. The `SHA256SUMS.asc` combined signature file you just created
+  3. The `SHA256SUMS.asc` combined signature file you just created
 
 - Create a torrent of the `/var/www/bin/bitcoin-core-${VERSION}` directory such
   that at the top level there is only one file: the `bitcoin-core-${VERSION}`
@@ -256,10 +310,10 @@ cat "$VERSION"/*/all.SHA256SUMS.asc > SHA256SUMS.asc
   transmission-show -m <torrent file>
   ```
 
-  Insert the magnet URI into the announcement sent to mailing lists. This permits
-  people without access to `bitcoincore.org` to download the binary distribution.
-  Also put it into the `optional_magnetlink:` slot in the YAML file for
-  bitcoincore.org.
+  Insert the magnet URI into the announcement sent to mailing lists. This
+  permits people without access to `bitcoincore.org` to download the binary
+  distribution. Also put it into the `optional_magnetlink:` slot in the YAML
+  file for bitcoincore.org.
 
 - Update other repositories and websites for new version
 
@@ -268,31 +322,42 @@ cat "$VERSION"/*/all.SHA256SUMS.asc > SHA256SUMS.asc
   - bitcoincore.org maintained versions update:
     [table](https://github.com/bitcoin-core/bitcoincore.org/commits/master/_includes/posts/maintenance-table.md)
 
-  - Delete post-EOL [release branches](https://github.com/bitcoin/bitcoin/branches/all) and create a tag `v${branch_name}-final`.
+  - Delete post-EOL
+    [release branches](https://github.com/bitcoin/bitcoin/branches/all) and
+    create a tag `v${branch_name}-final`.
 
-  - Delete ["Needs backport" labels](https://github.com/bitcoin/bitcoin/labels?q=backport) for non-existing branches.
+  - Delete
+    ["Needs backport" labels](https://github.com/bitcoin/bitcoin/labels?q=backport)
+    for non-existing branches.
 
   - bitcoincore.org RPC documentation update
 
-      - See https://github.com/bitcoin-core/bitcoincore.org/blob/master/contrib/doc-gen/
+    - See
+      https://github.com/bitcoin-core/bitcoincore.org/blob/master/contrib/doc-gen/
 
   - Update packaging repo
 
-      - Push the flatpak to flathub, e.g. https://github.com/flathub/org.bitcoincore.navio-qt/pull/2
+    - Push the flatpak to flathub, e.g.
+      https://github.com/flathub/org.bitcoincore.navio-qt/pull/2
 
-      - Push the snap, see https://github.com/bitcoin-core/packaging/blob/main/snap/local/build.md
+    - Push the snap, see
+      https://github.com/bitcoin-core/packaging/blob/main/snap/local/build.md
 
   - This repo
 
-      - Archive the release notes for the new version to `doc/release-notes/` (branch `master` and branch of the release)
+    - Archive the release notes for the new version to `doc/release-notes/`
+      (branch `master` and branch of the release)
 
-      - Create a [new GitHub release](https://github.com/bitcoin/bitcoin/releases/new) with a link to the archived release notes
+    - Create a
+      [new GitHub release](https://github.com/bitcoin/bitcoin/releases/new) with
+      a link to the archived release notes
 
 - Announce the release:
 
   - bitcoin-dev and bitcoin-core-dev mailing list
 
-  - Bitcoin Core announcements list https://bitcoincore.org/en/list/announcements/join/
+  - Bitcoin Core announcements list
+    https://bitcoincore.org/en/list/announcements/join/
 
   - Bitcoin Core Twitter https://twitter.com/bitcoincoreorg
 
@@ -302,19 +367,31 @@ cat "$VERSION"/*/all.SHA256SUMS.asc > SHA256SUMS.asc
 
 #### <a name="how-to-calculate-assumed-blockchain-and-chain-state-size"></a>How to calculate `m_assumed_blockchain_size` and `m_assumed_chain_state_size`
 
-Both variables are used as a guideline for how much space the user needs on their drive in total, not just strictly for the blockchain.
-Note that all values should be taken from a **fully synced** node and have an overhead of 5-10% added on top of its base value.
+Both variables are used as a guideline for how much space the user needs on
+their drive in total, not just strictly for the blockchain. Note that all values
+should be taken from a **fully synced** node and have an overhead of 5-10% added
+on top of its base value.
 
-To calculate `m_assumed_blockchain_size`, take the size in GiB of these directories:
-- For `mainnet` -> the data directory, excluding the `/testnet3`, `/signet`, and `/regtest` directories and any overly large files, e.g. a huge `debug.log`
+To calculate `m_assumed_blockchain_size`, take the size in GiB of these
+directories:
+
+- For `mainnet` -> the data directory, excluding the `/testnet3`, `/signet`, and
+  `/regtest` directories and any overly large files, e.g. a huge `debug.log`
 - For `testnet` -> `/testnet3`
 - For `signet` -> `/signet`
 
-To calculate `m_assumed_chain_state_size`, take the size in GiB of these directories:
+To calculate `m_assumed_chain_state_size`, take the size in GiB of these
+directories:
+
 - For `mainnet` -> `/chainstate`
 - For `testnet` -> `/testnet3/chainstate`
 - For `signet` -> `/signet/chainstate`
 
 Notes:
-- When taking the size for `m_assumed_blockchain_size`, there's no need to exclude the `/chainstate` directory since it's a guideline value and an overhead will be added anyway.
-- The expected overhead for growth may change over time. Consider whether the percentage needs to be changed in response; if so, update it here in this section.
+
+- When taking the size for `m_assumed_blockchain_size`, there's no need to
+  exclude the `/chainstate` directory since it's a guideline value and an
+  overhead will be added anyway.
+- The expected overhead for growth may change over time. Consider whether the
+  percentage needs to be changed in response; if so, update it here in this
+  section.

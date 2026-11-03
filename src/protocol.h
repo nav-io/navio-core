@@ -497,8 +497,8 @@ std::vector<std::string> serviceFlagsToStr(uint64_t flags);
  * use when describing peers which we know to be desirable, but for which
  * we do not have a confirmed set of service flags.
  *
- * If the NODE_NONE return value is changed, contrib/seeds/makeseeds.py
- * should be updated appropriately to filter for the same nodes.
+ * If the NODE_NONE return value is changed, check that the hand-picked
+ * fixed seeds in contrib/seeds/nodes_main.txt still offer those services.
  */
 ServiceFlags GetDesirableServiceFlags(ServiceFlags services);
 
