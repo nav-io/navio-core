@@ -242,6 +242,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     netaddress.cpp
     netbase.cpp
     outputtype.cpp
+    pir/simplepir.cpp
     policy/feerate.cpp
     policy/policy.cpp
     protocol.cpp
@@ -351,6 +352,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     node/miner.cpp
     node/mini_miner.cpp
     node/outkeys.cpp
+    node/pir.cpp
     node/minisketchwrapper.cpp
     node/peerman_args.cpp
     node/transaction.cpp

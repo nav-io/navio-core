@@ -804,6 +804,9 @@ private:
     TxRequestTracker m_txrequest GUARDED_BY(::cs_main);
     std::unique_ptr<TxReconciliationTracker> m_txreconciliation;
 
+    /** Private output fetch server; only set with -peerpir. */
+    std::unique_ptr<node::PirServer> m_pir;
+
     /** The height of the best chain */
     std::atomic<int> m_best_height{-1};
 
@@ -1165,6 +1168,17 @@ private:
      * May disconnect from the peer in the case of a bad request.
      */
     void ProcessGetOutKeys(CNode& node, Peer& peer, DataStream& vRecv);
+
+    /**
+     * Handle getpirhint and pirquery (NODE_OUTKEYS_PIR). Malformed requests,
+     * requests to a node that does not serve PIR and peers over their work
+     * budget are disconnected; every other request gets a pirhint or pirreply,
+     * whose status says why if it was not served.
+     */
+    void ProcessGetPirHint(CNode& node, Peer& peer, DataStream& vRecv);
+    void ProcessPirQuery(CNode& node, Peer& peer, DataStream& vRecv);
+    /** Common result handling: the status to reply with, or std::nullopt if the peer is disconnected. */
+    std::optional<uint8_t> HandlePirStatus(CNode& node, node::PirServer::Status status, const char* what);
 
     /**
      * Handle a getcfcheckpt request.
@@ -1740,6 +1754,7 @@ void PeerManagerImpl::ReattemptInitialBroadcast(CScheduler& scheduler)
 void PeerManagerImpl::FinalizeNode(const CNode& node)
 {
     NodeId nodeid = node.GetId();
+    if (m_pir) m_pir->ForgetPeer(nodeid);
     int misbehavior{0};
     {
     LOCK(cs_main);
@@ -2039,6 +2054,9 @@ PeerManagerImpl::PeerManagerImpl(CConnman& connman, AddrMan& addrman,
     // This argument can go away after Erlay support is complete.
     if (opts.reconcile_txs) {
         m_txreconciliation = std::make_unique<TxReconciliationTracker>(TXRECONCILIATION_VERSION);
+    }
+    if (opts.serve_pir) {
+        m_pir = std::make_unique<node::PirServer>(m_chainman, opts.pir);
     }
 }
 
@@ -3586,6 +3604,91 @@ void PeerManagerImpl::ProcessGetOutKeys(CNode& node, Peer& peer, DataStream& vRe
         reply_bytes += size;
         MakeAndPushMessage(node, NetMsgType::OUTKEYS, out_keys);
     }
+}
+
+std::optional<uint8_t> PeerManagerImpl::HandlePirStatus(CNode& node, node::PirServer::Status status, const char* what)
+{
+    using Status = node::PirServer::Status;
+    switch (status) {
+    case Status::OK:
+        return node::PIR_STATUS_OK;
+    case Status::STALE:
+        return node::PIR_STATUS_STALE;
+    case Status::BUSY:
+        LogPrint(BCLog::NET, "pir: busy, deferring %s from peer %d\n", what, node.GetId());
+        return node::PIR_STATUS_BUSY;
+    case Status::UNAVAILABLE:
+        LogPrint(BCLog::NET, "pir: epoch unavailable for %s from peer %d\n", what, node.GetId());
+        return node::PIR_STATUS_UNAVAILABLE;
+    case Status::OVER_BUDGET:
+        LogPrint(BCLog::NET, "pir: peer %d exceeded its work budget with %s, disconnecting\n", node.GetId(), what);
+        node.fDisconnect = true;
+        return std::nullopt;
+    case Status::INVALID:
+        LogPrint(BCLog::NET, "pir: invalid %s from peer %d, disconnecting\n", what, node.GetId());
+        node.fDisconnect = true;
+        return std::nullopt;
+    }
+    assert(false);
+}
+
+void PeerManagerImpl::ProcessGetPirHint(CNode& node, Peer& peer, DataStream& vRecv)
+{
+    if (!m_pir || !(peer.m_our_services & NODE_OUTKEYS_PIR)) {
+        LogPrint(BCLog::NET, "peer %d sent getpirhint but we do not serve PIR\n", node.GetId());
+        node.fDisconnect = true;
+        return;
+    }
+    node::PirHintRequest req;
+    try {
+        vRecv >> req;
+        if (!vRecv.empty()) throw std::ios_base::failure("trailing data");
+    } catch (const std::exception&) {
+        LogPrint(BCLog::NET, "peer %d sent malformed getpirhint\n", node.GetId());
+        node.fDisconnect = true;
+        return;
+    }
+    std::vector<node::PirHintMsg> msgs;
+    const auto status{HandlePirStatus(node, m_pir->GetHint(node.GetId(), req.epoch, msgs), NetMsgType::GETPIRHINT)};
+    if (!status) return;
+    if (*status != node::PIR_STATUS_OK) {
+        Assume(*status != node::PIR_STATUS_STALE);
+        node::PirHintMsg msg;
+        msg.epoch = req.epoch;
+        msg.status = *status;
+        MakeAndPushMessage(node, NetMsgType::PIRHINT, msg);
+        return;
+    }
+    for (const auto& msg : msgs) MakeAndPushMessage(node, NetMsgType::PIRHINT, msg);
+}
+
+void PeerManagerImpl::ProcessPirQuery(CNode& node, Peer& peer, DataStream& vRecv)
+{
+    if (!m_pir || !(peer.m_our_services & NODE_OUTKEYS_PIR)) {
+        LogPrint(BCLog::NET, "peer %d sent pirquery but we do not serve PIR\n", node.GetId());
+        node.fDisconnect = true;
+        return;
+    }
+    node::PirQueryMsg query;
+    try {
+        vRecv >> query;
+        if (!vRecv.empty()) throw std::ios_base::failure("trailing data");
+    } catch (const std::exception&) {
+        LogPrint(BCLog::NET, "peer %d sent malformed pirquery\n", node.GetId());
+        node.fDisconnect = true;
+        return;
+    }
+    node::PirReplyMsg reply;
+    const auto status{HandlePirStatus(node, m_pir->Answer(node.GetId(), query, reply), NetMsgType::PIRQUERY)};
+    if (!status) return;
+    if (*status != node::PIR_STATUS_OK) {
+        // Not answered: tell the client why, so it can tell this from a lost message.
+        reply = {};
+        reply.epoch = query.epoch;
+        reply.anchor_hash = query.anchor_hash;
+        reply.status = *status;
+    }
+    MakeAndPushMessage(node, NetMsgType::PIRREPLY, reply);
 }
 
 void PeerManagerImpl::ProcessBlock(CNode& node, const std::shared_ptr<const CBlock>& block, bool force_processing, bool min_pow_checked)
@@ -5415,6 +5518,16 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
 
     if (msg_type == NetMsgType::GETOUTKEYS) {
         ProcessGetOutKeys(pfrom, *peer, vRecv);
+        return;
+    }
+
+    if (msg_type == NetMsgType::GETPIRHINT) {
+        ProcessGetPirHint(pfrom, *peer, vRecv);
+        return;
+    }
+
+    if (msg_type == NetMsgType::PIRQUERY) {
+        ProcessPirQuery(pfrom, *peer, vRecv);
         return;
     }
 

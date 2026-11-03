@@ -58,6 +58,7 @@ add_executable(bench_navio
   merkle_root.cpp
   p2pmsg.cpp
   peer_eviction.cpp
+  pir.cpp
   poly1305.cpp
   pool.cpp
   prevector.cpp
