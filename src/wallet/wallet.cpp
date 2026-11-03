@@ -3341,6 +3341,9 @@ void CWallet::MirrorBlsctBroadcast(const CTransaction& tx)
     if (!IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) return;
 
     WalletBatch batch(GetDatabase(), /*_fFlushOnClose=*/false);
+    // A failed write is reported only once every input is marked, so the
+    // in-memory spends are complete even when the database falls behind.
+    bool write_failed{false};
     for (const CTxIn& txin : tx.vin) {
         auto it = mapOutputs.find(txin.prevout);
         if (it == mapOutputs.end()) continue;
@@ -3358,9 +3361,10 @@ void CWallet::MirrorBlsctBroadcast(const CTransaction& tx)
         // under a different txid -- clear a spend it did not make.
         spent_output.m_state_spent = TxStateInMempool{};
         spent_output.m_spent_by = tx.GetHash();
-        if (!batch.WriteOutput(txin.prevout, spent_output)) {
-            throw std::runtime_error(std::string(__func__) + ": Wallet db error, failed to update spent BLSCT output state");
-        }
+        if (!batch.WriteOutput(txin.prevout, spent_output)) write_failed = true;
+    }
+    if (write_failed) {
+        throw std::runtime_error(std::string(__func__) + ": Wallet db error, failed to update spent BLSCT output state");
     }
 
     // Synchronously mirror our own outputs into mapOutputs. The

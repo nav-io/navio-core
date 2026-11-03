@@ -1319,6 +1319,43 @@ BOOST_FIXTURE_TEST_CASE(full_tx_own_aggregate_record_failure, TestingSetup)
     BOOST_CHECK(r.wallet->GetWalletTx(r.aggregate->GetHash()) != nullptr);
 }
 
+// A send whose transaction is written but whose input spends then fail to
+// write must still mark every input spent in memory, not only those before
+// the first failed write, and must still report the failure.
+BOOST_FIXTURE_TEST_CASE(output_storage_record_failure_marks_all_inputs, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    LOCK(r.wallet->cs_wallet);
+
+    // A second coin of the wallet, spent by the aggregate after the first.
+    const CTxOut second_coin{blsct::CreateOutput(r.address, 7 * COIN, "second coin").out};
+    const COutPoint second_outpoint(second_coin.GetHash());
+    BOOST_REQUIRE(r.wallet->AddToWallet(second_outpoint, std::make_shared<const CTxOut>(second_coin), TxStateConfirmed{InsecureRand256(), 1, 0}, nullptr, true, false, TxStateInactive{}, false));
+    CMutableTransaction mtx{*r.aggregate};
+    mtx.vin.emplace_back(second_outpoint);
+    const CTransactionRef tx{MakeTransactionRef(mtx)};
+
+    // Every write after the transaction's own record fails, starting with
+    // the spend of the first input.
+    btcsignals::scoped_connection fail_later_writes{r.wallet->NotifyTransactionChanged.connect([&](const uint256&, ChangeType) {
+        GetMockableDatabase(*r.wallet).m_pass = false;
+    })};
+    BOOST_CHECK(!r.wallet->RecordBroadcastTransaction(tx, r.own_half_outputs, {}));
+    fail_later_writes.disconnect();
+    GetMockableDatabase(*r.wallet).m_pass = true;
+
+    for (const COutPoint& outpoint : {r.coin_outpoint, second_outpoint}) {
+        const CWalletOutput* output{r.wallet->GetWalletOutput(outpoint)};
+        BOOST_REQUIRE(output != nullptr);
+        BOOST_CHECK(output->state_spent<TxStateInMempool>());
+        BOOST_CHECK(output->m_spent_by == tx->GetHash());
+    }
+    // The failure was reported by the inputs, before the outputs were
+    // mirrored, so the change is not in the wallet yet.
+    BOOST_CHECK(r.wallet->GetWalletOutput(r.change_outpoint) == nullptr);
+}
+
 // The own half's outputs that the trust covers are part of the wallet record
 // and survive a reload.
 BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_own_half_persists, TestingSetup)
