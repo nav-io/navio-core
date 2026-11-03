@@ -10,8 +10,6 @@ src/bench/bench_navio
 src/navio
 src/naviod
 src/navio-cli
-src/navio-gui
-src/navio-node
 src/navio-staker
 src/navio-tx
 src/navio-util
