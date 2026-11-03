@@ -458,17 +458,16 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
     def add_wallet_options(self, parser, *, descriptors=True, legacy=True, blsct=True):
         # The `legacy` parameter is retained for backwards-compatibility with
         # callers but legacy (BDB) wallets have been removed. Only descriptor
-        # and (optionally) BLSCT wallets are supported now.
-        del legacy
+        # and (optionally) BLSCT wallets are supported now. `blsct` is likewise
+        # accepted and ignored: tests create BLSCT wallets themselves with
+        # createwallet(blsct=True).
+        del legacy, blsct
         group = parser.add_mutually_exclusive_group()
         # Always register --descriptors so callers that previously passed
         # descriptors=False (legacy-only) still get a descriptor wallet by
         # default and the option is accepted.
         group.add_argument("--descriptors", action='store_const', const=True, default=True,
                            help="Run test using a descriptor wallet", dest='descriptors')
-        if blsct:
-            group.add_argument("--blsct", action='store_const', const=False, default=False,
-                               help="Run test using blsct wallets", dest='blsct')
 
     def add_nodes(self, num_nodes: int, extra_args=None, *, rpchost=None, binary=None, binary_cli=None, versions=None):
         """Instantiate TestNode objects.
