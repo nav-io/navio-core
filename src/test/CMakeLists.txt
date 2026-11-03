@@ -129,13 +129,13 @@ add_executable(test_navio
   pool_tests.cpp
   pow_tests.cpp
   prevector_tests.cpp
-  rfq_tests.cpp
   raii_event_tests.cpp
   random_tests.cpp
   rbf_tests.cpp
   rest_tests.cpp
   result_tests.cpp
   reverselock_tests.cpp
+  rfq_tests.cpp
   rpc_tests.cpp
   sanity_tests.cpp
   scheduler_tests.cpp
