@@ -150,6 +150,61 @@ bool OutputIsChange(const CWallet& wallet, const CTxOut& txout, const TokenId& t
     return ScriptIsChange(wallet, txout.scriptPubKey);
 }
 
+OwnSpentCoins GetOwnSpentCoins(const CWallet& wallet, const CTransaction& tx)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    OwnSpentCoins spent;
+    const auto* blsct_km = wallet.GetBLSCTKeyMan();
+    if (!blsct_km || !tx.IsBLSCT()) return spent;
+    for (const CTxIn& txin : tx.vin) {
+        const CTxOut* prev{nullptr};
+        CAmount amount{0};
+        if (const CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(txin.prevout)) {
+            const int ix = wtx->GetOutputIndexFromHash(txin.prevout);
+            if (ix < 0 || static_cast<size_t>(ix) >= wtx->tx->vout.size()) continue;
+            prev = &wtx->tx->vout[ix];
+            amount = wtx->GetBLSCTRecoveryData(ix).amount;
+        } else if (const CWalletOutput* wout = wallet.GetWalletOutput(txin.prevout)) {
+            prev = wout->out.get();
+            amount = wout->blsctRecoveryData.amount;
+        }
+        if (!prev || !prev->tokenId.IsNull() || !prev->HasBLSCTKeys() || !wallet.IsMine(*prev)) continue;
+        spent.emplace(blsct_km->GetHashId(*prev), amount);
+    }
+    return spent;
+}
+
+bool OutputIsCoverReturn(const CWallet& wallet, const CTxOut& txout, const range_proof::RecoveredData<Blst>& recovered, OwnSpentCoins& spent)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    if (spent.empty() || recovered.message != blsct::COVER_CANDIDATE_MEMO) return false;
+    if (!txout.tokenId.IsNull() || !txout.HasBLSCTKeys()) return false;
+    const auto* blsct_km = wallet.GetBLSCTKeyMan();
+    if (!blsct_km) return false;
+    const auto it = spent.find({blsct_km->GetHashId(txout), recovered.amount});
+    if (it == spent.end()) return false;
+    spent.erase(it);
+    return true;
+}
+
+bool OutputIsCoverReturn(const CWallet& wallet, const CWalletOutput& wout)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    if (wout.blsctRecoveryData.message != blsct::COVER_CANDIDATE_MEMO) return false;
+    if (!wout.out->tokenId.IsNull() || !wout.out->HasBLSCTKeys()) return false;
+    const auto* blsct_km = wallet.GetBLSCTKeyMan();
+    if (!blsct_km) return false;
+    const CKeyID hash_id = blsct_km->GetHashId(*wout.out);
+    const uint256 self = wout.GetOutputHash();
+    // Only rows that carry the memo get here, so the scan is rare.
+    for (const auto& [outpoint, other] : wallet.mapOutputs) {
+        if (other.GetOutputHash() == self || other.m_spent_by.IsNull()) continue;
+        if (other.blsctRecoveryData.amount != wout.blsctRecoveryData.amount || !other.out->tokenId.IsNull()) continue;
+        if (blsct_km->GetHashId(*other.out) == hash_id) return true;
+    }
+    return false;
+}
+
 CAmount OutputGetChange(const CWallet& wallet, const CTxOut& txout, const TokenId& token_id)
 {
     AssertLockHeld(wallet.cs_wallet);
@@ -365,6 +420,10 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
     // reimported wallet that sees only the merged block tx would otherwise
     // net every intermediate change against the debit of the original coins.
     const std::set<uint256> spent_in_tx{OutputsSpentInTx(*wtx.tx)};
+    // Our coins this tx spends, for recognising served cover candidates that
+    // return one of them to its own subaddress.
+    OwnSpentCoins own_spent;
+    if (nDebit > 0) own_spent = GetOwnSpentCoins(wallet, *wtx.tx);
 
     // Sent/received.
     for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i)
@@ -381,7 +440,8 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
             // Accumulate BLSCT change separately so the synthetic send entry
             // below reports the true balance debit (sent-to-others + fee),
             // not the inflated inputs-minus-explicit-outputs figure.
-            if (OutputIsChange(wallet, txout)) {
+            if (OutputIsChange(wallet, txout) ||
+                (txout.HasBLSCTRangeProof() && OutputIsCoverReturn(wallet, txout, wtx.GetBLSCTRecoveryData(i), own_spent))) {
                 if (txout.HasBLSCTRangeProof()) {
                     nChange += wtx.GetBLSCTRecoveryData(i).amount;
                     continue;
