@@ -92,6 +92,7 @@ add_executable(fuzz
   script_format.cpp
   script_interpreter.cpp
   script_ops.cpp
+  script_sigcache.cpp
   script_sign.cpp
   scriptnum_ops.cpp
   secp256k1_ec_seckey_import_export_der.cpp
@@ -137,5 +138,7 @@ target_link_libraries(fuzz
 )
 
 if(ENABLE_WALLET)
+  # The BIP39 mnemonic code is built into navio_wallet.
+  target_sources(fuzz PRIVATE mnemonic.cpp)
   add_subdirectory(${PROJECT_SOURCE_DIR}/src/wallet/test/fuzz wallet)
 endif()
