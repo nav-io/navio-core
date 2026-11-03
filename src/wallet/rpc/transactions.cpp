@@ -400,6 +400,7 @@ static void ListTransactions(const CWallet& wallet, const CWalletTx& wtx, int nM
     // Sent
     if (!filter_label.has_value())
     {
+        const bool fee_may_include_other_senders{!listSent.empty() && TxFeeMayIncludeOtherSenders(wallet, wtx)};
         for (const COutputEntry& s : listSent)
         {
             UniValue entry(UniValue::VOBJ);
@@ -416,6 +417,7 @@ static void ListTransactions(const CWallet& wallet, const CWalletTx& wtx, int nM
             if (s.vout != -1)
                 entry.pushKV("vout", s.vout);
             entry.pushKV("fee", ValueFromAmount(-nFee));
+            if (fee_may_include_other_senders) entry.pushKV("fee_may_include_other_senders", true);
             if (fLong)
                 WalletTxToJSON(wallet, wtx, entry);
             if (wtx.tx->IsBLSCT() && wtx.isAbandoned())
@@ -687,6 +689,14 @@ static void ListTransactionsOrdered(const CWallet& wallet, const CWalletTx& wtx,
 }
 
 
+//! Help for the flag a BLSCT send entry carries when TxFeeMayIncludeOtherSenders().
+static const std::string FEE_MAY_INCLUDE_OTHER_SENDERS_DOC{
+    "Only present, and then true, on a 'send' entry of a BLSCT transaction, and on the transaction itself when it\n"
+    "has such an entry, whose 'fee' may include fees that other wallets paid: the transaction also spends their\n"
+    "inputs, has a single fee output, and was not built by this wallet, such as a block transaction a staker\n"
+    "merged several senders' transactions into, learned by rescanning. 'fee' is then the whole fee of the\n"
+    "transaction and 'amount' leaves those fees out; their sum is what this wallet spent."};
+
 //! `txid_optional`: whether the result may hold output-storage entries, which
 //! carry no txid (see WalletOutputToJSON()).
 static std::vector<RPCResult> TransactionDescriptionString(bool txid_optional = false)
@@ -700,6 +710,7 @@ static std::vector<RPCResult> TransactionDescriptionString(bool txid_optional = 
            {RPCResult::Type::NUM, "blockheight", /*optional=*/true, "The block height containing the transaction."},
            {RPCResult::Type::NUM, "blockindex", /*optional=*/true, "The index of the transaction in the block that includes it."},
            {RPCResult::Type::NUM_TIME, "blocktime", /*optional=*/true, "The block time expressed in " + UNIX_EPOCH_TIME + "."},
+           {RPCResult::Type::BOOL, "fee_may_include_other_senders", /*optional=*/true, FEE_MAY_INCLUDE_OTHER_SENDERS_DOC},
            txid_optional ? RPCResult{RPCResult::Type::STR_HEX, "txid", /*optional=*/true, "The transaction id. Omitted for output-storage entries, whose containing\n"
                                          "transaction the wallet does not record: see outid."}
                          : RPCResult{RPCResult::Type::STR_HEX, "txid", "The transaction id."},
@@ -1163,6 +1174,7 @@ RPCHelpMan gettransaction()
                                 {RPCResult::Type::NUM, "vout", /*optional=*/true, "the vout value (omitted for BLSCT output-storage entries, which are keyed by outid)"},
                                 {RPCResult::Type::STR_AMOUNT, "fee", /*optional=*/true, "The amount of the fee in " + CURRENCY_UNIT + ". This is negative and only available for the \n"
                                     "'send' category of transactions."},
+                                {RPCResult::Type::BOOL, "fee_may_include_other_senders", /*optional=*/true, FEE_MAY_INCLUDE_OTHER_SENDERS_DOC},
                                 {RPCResult::Type::STR, "memo", /*optional=*/true, "BLSCT output memo recovered from the range proof, if any."},
                                 {RPCResult::Type::STR_HEX, "outid", /*optional=*/true, "BLSCT output id: the hash naming this output, preserved across range-proof stripping. It is not a transaction id;\n"
                                 "gettxfromoutputhash or getoutputinfo find the transaction holding the output. Only present for output-storage entries."},
@@ -1217,6 +1229,7 @@ RPCHelpMan gettransaction()
         CAmount nDebit = CachedTxGetDebit(*pwallet, wtx, filter);
         CAmount nNet = nCredit - nDebit;
         CAmount nFee = 0;
+        bool fee_may_include_other_senders{false};
         if (CachedTxIsFromMe(*pwallet, wtx, filter)) {
             if (wtx.tx->IsBLSCT()) {
                 // Range-proofed outputs carry nValue 0, so GetValueOut() is
@@ -1227,6 +1240,8 @@ RPCHelpMan gettransaction()
                 CAmount blsct_fee;
                 CachedTxGetAmounts(*pwallet, wtx, received, sent, blsct_fee, filter, /*include_change=*/false);
                 nFee = -blsct_fee;
+                // The rule the send entries follow (see ListTransactions).
+                fee_may_include_other_senders = !sent.empty() && TxFeeMayIncludeOtherSenders(*pwallet, wtx);
             } else {
                 nFee = wtx.tx->GetValueOut() - nDebit;
             }
@@ -1235,6 +1250,7 @@ RPCHelpMan gettransaction()
         entry.pushKV("amount", ValueFromAmount(nNet - nFee));
         if (CachedTxIsFromMe(*pwallet, wtx, filter))
             entry.pushKV("fee", ValueFromAmount(nFee));
+        if (fee_may_include_other_senders) entry.pushKV("fee_may_include_other_senders", true);
 
         WalletTxToJSON(*pwallet, wtx, entry);
 

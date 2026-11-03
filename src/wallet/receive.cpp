@@ -461,6 +461,20 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
     }
 }
 
+bool TxFeeMayIncludeOtherSenders(const CWallet& wallet, const CWalletTx& wtx)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    // An aggregate this wallet built (m_own_half_outputs) spends other
+    // wallets' inputs too, but their cover halves pay no fee.
+    if (!wtx.tx->IsBLSCT() || wtx.m_own_fee || !wtx.m_own_half_outputs.empty()) return false;
+    return std::any_of(wtx.tx->vin.begin(), wtx.tx->vin.end(), [&](const CTxIn& txin) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet) {
+        if (InputIsMine(wallet, txin) != ISMINE_NO) return false;
+        // An output-storage wallet may hold the spent output without its tx.
+        const CWalletOutput* wout = wallet.GetWalletOutput(txin.prevout);
+        return !wout || wallet.IsMine(*wout->out) == ISMINE_NO;
+    });
+}
+
 bool CachedTxIsFromMe(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter)
 {
     return (CachedTxGetDebit(wallet, wtx, filter) > 0);
