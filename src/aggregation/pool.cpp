@@ -248,6 +248,11 @@ std::vector<CTransactionRef> CandidatePool::PickForAggregate(size_t max_n, size_
 
 bool CandidatePool::EvictByInput(const COutPoint& input)
 {
+    return EvictEntry(input, /*expected_output=*/nullptr);
+}
+
+bool CandidatePool::EvictEntry(const COutPoint& input, const uint256* expected_output)
+{
     std::optional<uint256> output;
     {
         const size_t s = ShardFor(input);
@@ -255,6 +260,7 @@ bool CandidatePool::EvictByInput(const COutPoint& input)
         const auto it = m_shards[s].find(input);
         if (it == m_shards[s].end()) return false;
         output = SpendableOutputId(*it->second.tx);
+        if (expected_output && output != *expected_output) return false;
         m_shards[s].erase(it);
     }
     if (output) {
@@ -274,7 +280,11 @@ bool CandidatePool::EvictByOutput(const uint256& output)
         if (it == m_by_output.end()) return false;
         input = it->second;
     }
-    return EvictByInput(input);
+    // The index lock is released before the shard lock is taken (lock order),
+    // so the candidate found above may have been replaced by one with the
+    // same input and a different output in between. Only evict it if it
+    // still creates `output`.
+    return EvictEntry(input, &output);
 }
 
 void CandidatePool::EvictConflictingWith(const CTransaction& tx)

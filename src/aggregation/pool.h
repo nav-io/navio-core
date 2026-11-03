@@ -166,6 +166,9 @@ private:
     //! unspendable (mempool acceptance lets unspendable outputs repeat).
     static std::optional<uint256> SpendableOutputId(const CTransaction& tx);
     void EvictConflictingWith(const CTransaction& tx);
+    //! Drop the candidate holding `input`; if `expected_output` is set, only
+    //! when that candidate's output id still equals it.
+    bool EvictEntry(const COutPoint& input, const uint256* expected_output);
 
     //! Shard i is guarded by m_shard_mutex[i]. (Clang thread-safety annotations
     //! cannot express a mutex array, so the pairing is enforced by convention.)
