@@ -1,4 +1,4 @@
-# bash programmable completion for naviod(1) and bitcoin-qt(1)
+# bash programmable completion for naviod(1)
 # Copyright (c) 2012-2022 The Bitcoin Core developers
 # Distributed under the MIT software license, see the accompanying
 # file COPYING or http://www.opensource.org/licenses/mit-license.php.
@@ -45,7 +45,7 @@ _naviod() {
             ;;
     esac
 } &&
-complete -F _naviod naviod bitcoin-qt
+complete -F _naviod naviod
 
 # Local variables:
 # mode: shell-script
