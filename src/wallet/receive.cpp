@@ -451,6 +451,10 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
         //
         // A block tx that replaced sends of ours merged into it pays the fees
         // of every sender it merged; only the part we paid is ours.
+        //
+        // CWallet::AddToWalletIfInvolvingMe repeats this debit/change rule
+        // for the sends a block tx replaces, to record m_own_fee; keep the
+        // two in step.
         if (nDebit != nChange) {
             const CAmount blsct_fee = wtx.m_own_fee.value_or(wtx.tx->GetBLSCTFee());
             const CAmount sent_to_others = nDebit - nChange - blsct_fee;
