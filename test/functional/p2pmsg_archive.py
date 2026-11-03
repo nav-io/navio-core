@@ -100,6 +100,18 @@ def grind_stamp(qhash, timestamp, bits):
     raise AssertionError("could not grind an archive query stamp")
 
 
+def unground_stamp(qhash, timestamp, bits):
+    """A stamp for `qhash` whose hash misses `bits`: the first nonce that
+    grind_stamp() would reject."""
+    target = ((1 << 256) - 1) >> bits
+    prefix = struct.pack("<B", 1) + struct.pack("<q", timestamp) + qhash
+    for nonce in range(1 << 24):
+        h = sha256(prefix + struct.pack("<Q", nonce))
+        if int.from_bytes(h, "little") > target:
+            return prefix + struct.pack("<Q", nonce)
+    raise AssertionError("could not find an unground archive query stamp")
+
+
 def build_request(detection_key, precision, challenge, cursor=0, limit=100,
                   not_before=0, scan_budget=1000, base_bits=POW_BITS,
                   break_pow=False, stamp=None):
@@ -109,8 +121,10 @@ def build_request(detection_key, precision, challenge, cursor=0, limit=100,
     if stamp is not None:
         pass  # caller is replaying one it already has
     elif break_pow:
-        # A stamp that commits correctly but was never ground.
-        stamp = struct.pack("<B", 1) + struct.pack("<q", int(time.time())) + qh + struct.pack("<Q", 0)
+        # A stamp that commits correctly but misses the target. An arbitrary
+        # nonce meets `bits` with probability 2^-bits, so take the first one
+        # that does not, or the "unground" stamp is sometimes accepted.
+        stamp = unground_stamp(qh, int(time.time()), bits)
     else:
         stamp = grind_stamp(qh, int(time.time()), bits)
     body = struct.pack("<B", 1)
