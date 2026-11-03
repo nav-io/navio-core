@@ -1,26 +1,24 @@
 # Libraries
 
-| Name                     | Description                                                                                                                                                            |
-| ------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| _libbitcoin_cli_         | RPC client functionality used by _bitcoin-cli_ executable                                                                                                              |
-| _libbitcoin_common_      | Home for common functionality shared by different executables and libraries. Similar to _libbitcoin_util_, but higher-level (see [Dependencies](#dependencies)).       |
-| _libbitcoin_consensus_   | Stable, backwards-compatible consensus functionality used by _libbitcoin_node_ and _libbitcoin_wallet_ and also exposed as a [shared library](../shared-libraries.md). |
-| _libnavioconsensus_      | Shared library build of static _libbitcoin_consensus_ library                                                                                                          |
-| _libbitcoin_kernel_      | Consensus engine and support library used for validation by _libbitcoin_node_ and also exposed as a [shared library](../shared-libraries.md).                          |
-| _libbitcoinqt_           | GUI functionality used by _bitcoin-qt_ executable                                                                                                                      |
-| _libbitcoin_node_        | P2P and RPC server functionality used by _naviod_ and _bitcoin-qt_ executables.                                                                                        |
-| _libbitcoin_util_        | Home for common functionality shared by different executables and libraries. Similar to _libbitcoin_common_, but lower-level (see [Dependencies](#dependencies)).      |
-| _libbitcoin_wallet_      | Wallet functionality used by _naviod_ and _bitcoin-wallet_ executables.                                                                                                |
-| _libbitcoin_wallet_tool_ | Lower-level wallet functionality used by _bitcoin-wallet_ executable.                                                                                                  |
-| _libbitcoin_zmq_         | [ZeroMQ](../zmq.md) functionality used by _naviod_ and _bitcoin-qt_ executables.                                                                                       |
+| Name                     | Description                                                                                                                                                       |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| _libbitcoin_cli_         | RPC client functionality used by _bitcoin-cli_ executable                                                                                                         |
+| _libbitcoin_common_      | Home for common functionality shared by different executables and libraries. Similar to _libbitcoin_util_, but higher-level (see [Dependencies](#dependencies)).  |
+| _libbitcoin_consensus_   | Consensus functionality used by _libbitcoin_node_ and _libbitcoin_wallet_.                                                                                        |
+| _libbitcoin_kernel_      | Consensus engine and support library used for validation by _libbitcoin_node_.                                                                                    |
+| _libbitcoinqt_           | GUI functionality used by _bitcoin-qt_ executable                                                                                                                 |
+| _libbitcoin_node_        | P2P and RPC server functionality used by _naviod_ and _bitcoin-qt_ executables.                                                                                   |
+| _libbitcoin_util_        | Home for common functionality shared by different executables and libraries. Similar to _libbitcoin_common_, but lower-level (see [Dependencies](#dependencies)). |
+| _libbitcoin_wallet_      | Wallet functionality used by _naviod_ and _bitcoin-wallet_ executables.                                                                                           |
+| _libbitcoin_wallet_tool_ | Lower-level wallet functionality used by _bitcoin-wallet_ executable.                                                                                             |
+| _libbitcoin_zmq_         | [ZeroMQ](../zmq.md) functionality used by _naviod_ and _bitcoin-qt_ executables.                                                                                  |
 
 ## Conventions
 
 - Most libraries are internal libraries and have APIs which are completely
   unstable! There are few or no restrictions on backwards compatibility or rules
-  about external dependencies. Exceptions are _libbitcoin_consensus_ and
-  _libbitcoin_kernel_ which have external interfaces documented at
-  [../shared-libraries.md](../shared-libraries.md).
+  about external dependencies. An exception is _libbitcoin_kernel_, which, at
+  some future point, will have a documented external interface.
 
 - Generally each library should have a corresponding source directory and
   namespace. Source code organization is a work in progress, so it is true that
