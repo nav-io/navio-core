@@ -1,4 +1,4 @@
-## RPC
+## Updated RPCs
 
 - `getblsctauditkey` on a BLSCT wallet that holds no keys (a blank wallet, or
   one created with private keys disabled and no audit key) now fails with

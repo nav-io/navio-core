@@ -1,4 +1,4 @@
-## Wallet tool
+## Wallet
 
 - `navio-wallet create` now exits with a non-zero status when the wallet cannot
   be created, for example because a wallet of that name already exists or its

@@ -5,4 +5,9 @@
   `createwallet blsct=true disable_private_keys=true` by an earlier release,
   which generated a random seed) now warns "Private keys detected in wallet ...
   with disabled private keys", as it already did for non-BLSCT wallets.
-  Audit-key wallets hold no seed and load without the warning.
+  Audit-key wallets hold no seed and load without the warning. To get a truly
+  watch-only wallet, export the audit key of the affected wallet with
+  `getblsctauditkey` and recreate the wallet from it with
+  `createwallet blsct=true disable_private_keys=true seed=<audit key>`. The old
+  wallet file still holds a seed that can spend its funds, so keep it as
+  securely as any spending wallet.
