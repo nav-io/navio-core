@@ -4508,9 +4508,11 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
 
         LOCK(cs_main);
 
-        // Note that if we were to be on a chain that forks from the checkpointed
-        // chain, then serving those headers to a peer that has seen the
-        // checkpointed chain would cause that peer to disconnect us. Requiring
+        // Note that if we were to be on a chain that conflicts with one of the
+        // consensus.finalityCheckpoints pins, then serving those headers would
+        // make the peer reject them in ContextualCheckBlockHeader
+        // ("finality-checkpoint-mismatch", BLOCK_CHECKPOINT) and treat us as
+        // misbehaving, which disconnects us. Requiring
         // that our chainwork exceed the minimum chain work is a protection against
         // being fed a bogus chain when we started up for the first time and
         // getting partitioned off the honest network for serving that chain to
