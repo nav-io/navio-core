@@ -206,13 +206,6 @@ Then open a Pull Request to the
     Enter the keychain password and authorize the signature
     signature-osx.tar.gz will be created
 
-### Windows codesigner only: Create detached Windows signatures
-
-    tar xf bitcoin-win-unsigned.tar.gz
-    ./detached-sig-create.sh -key /path/to/codesign.key
-    Enter the passphrase for the key when prompted
-    signature-win.tar.gz will be created
-
 ### Windows and macOS codesigners only: test code signatures
 
 It is advised to test that the code signature attaches properly prior to tagging
@@ -228,7 +221,6 @@ pushd ./bitcoin-detached-sigs
 # checkout the appropriate branch for this release series
 rm -rf ./*
 tar xf signature-osx.tar.gz
-tar xf signature-win.tar.gz
 git add -A
 git commit -m "point to ${VERSION}"
 git tag -s "v${VERSION}" HEAD

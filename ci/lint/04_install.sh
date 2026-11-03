@@ -16,8 +16,7 @@ ${CI_RETRY_EXE} ${SUDO} apt-get update
 # Lint dependencies:
 # - curl/xz-utils (to install shellcheck)
 # - git (used in many lint scripts)
-# - gpg (used by verify-commits)
-${CI_RETRY_EXE} ${SUDO} apt-get install -y curl xz-utils git gpg
+${CI_RETRY_EXE} ${SUDO} apt-get install -y curl xz-utils git
 
 PYTHON_PATH="/python_build"
 if [ ! -d "${PYTHON_PATH}/bin" ]; then
