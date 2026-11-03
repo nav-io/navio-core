@@ -182,12 +182,16 @@ class BLSCTScriptValidationTest(BitcoinTestFramework):
         self.log.info("=== D2: OP_BLSCHECKSIG budget, two inputs ===")
         budget = 16 + 2 * 2
 
-        at_budget = self._spend_bls_check_script([10, 10], "d4")
+        at_split = [10, 10]
+        assert_equal(sum(at_split), budget)
+        at_budget = self._spend_bls_check_script(at_split, "d4")
         assert_raises_rpc_error(-26, "failed-signature-check",
                                 self.nodes[0].sendrawtransaction, at_budget)
         self.log.info("  10 + 10 calls: past the bound, fails only on the signature")
 
-        over_budget = self._spend_bls_check_script([10, 11], "d5")
+        over_split = [10, 11]
+        assert_equal(sum(over_split), budget + 1)
+        over_budget = self._spend_bls_check_script(over_split, "d5")
         assert_raises_rpc_error(-26, "too-many-bls-signature-pairs",
                                 self.nodes[0].sendrawtransaction, over_budget)
         self.log.info("  10 + 11 calls: rejected by the bound (budget %d)", budget)
