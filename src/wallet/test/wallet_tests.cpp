@@ -5,6 +5,7 @@
 #include <wallet/wallet.h>
 
 #include <algorithm>
+#include <fstream>
 #include <future>
 #include <memory>
 #include <cstdint>
@@ -1056,20 +1057,96 @@ BOOST_FIXTURE_TEST_CASE(FailedCreateWalletReleasesDatabase, TestingSetup)
     BOOST_CHECK(!created);
     BOOST_CHECK(status == DatabaseStatus::FAILED_CREATE);
     BOOST_CHECK_EQUAL(error.original, "Unable to generate initial blsct keys");
-    SyncWithValidationInterfaceQueue();
 
-    // The failed wallet must have been released, so loading it reaches the
-    // wallet's own check instead of finding the database still locked.
-    DatabaseOptions options;
-    options.require_existing = true;
+    // The failed wallet must have been released and the directory it created
+    // removed, so creating it again under the same name succeeds.
+    BOOST_CHECK(!fs::exists(GetWalletDir() / fs::PathFromString(name)));
+    DatabaseOptions retry_options;
+    retry_options.require_create = true;
+    retry_options.create_flags = WALLET_FLAG_BLSCT;
     error = {};
-    auto loaded = LoadWallet(context, name, /*load_on_start=*/std::nullopt, options, status, error, warnings);
-    BOOST_CHECK(!loaded);
-    BOOST_CHECK_MESSAGE(error.original.find("Unable to obtain an exclusive lock") == std::string::npos, error.original);
-    BOOST_CHECK_MESSAGE(error.original.find("BLSCT wallet has no seed") != std::string::npos, error.original);
-    if (loaded) {
-        RemoveWallet(context, loaded, /*load_on_start=*/std::nullopt);
-        TestUnloadWallet(std::move(loaded));
+    auto retried = wallet::CreateWallet(context, name, /*seed=*/{}, blsct::IMPORT_MASTER_KEY, /*load_on_start=*/std::nullopt, retry_options, status, error, warnings);
+    BOOST_CHECK_MESSAGE(retried, error.original);
+    if (retried) {
+        RemoveWallet(context, retried, /*load_on_start=*/std::nullopt);
+        TestUnloadWallet(std::move(retried));
+    }
+}
+
+// A failed creation removes only what it created: a wallet directory that
+// existed before, and anything else in it, is left in place.
+BOOST_FIXTURE_TEST_CASE(FailedCreateWalletKeepsExistingDirectory, TestingSetup)
+{
+    m_args.ForceSetArg("-unsafesqlitesync", "1");
+    WalletContext context;
+    context.args = &m_args;
+    context.chain = m_node.chain.get();
+    bilingual_str error;
+    std::vector<bilingual_str> warnings;
+    DatabaseStatus status;
+
+    const std::string name{"failed_create_existing_dir"};
+    const fs::path wallet_path{GetWalletDir() / fs::PathFromString(name)};
+    const fs::path other_file{wallet_path / "other.txt"};
+    BOOST_REQUIRE(fs::create_directories(wallet_path));
+    std::ofstream{other_file} << "kept";
+
+    DatabaseOptions create_options;
+    create_options.require_create = true;
+    create_options.create_flags = WALLET_FLAG_BLSCT;
+    const std::vector<unsigned char> short_seed(31, 1);
+    auto created = wallet::CreateWallet(context, name, short_seed, blsct::IMPORT_MASTER_KEY, /*load_on_start=*/std::nullopt, create_options, status, error, warnings);
+    BOOST_CHECK(!created);
+    BOOST_CHECK_EQUAL(error.original, "Unable to generate initial blsct keys");
+
+    // The database this call created is gone, the rest is untouched.
+    BOOST_CHECK(!fs::exists(SQLiteDataFile(wallet_path)));
+    BOOST_CHECK(fs::exists(other_file));
+
+    // An existing empty directory is kept as well.
+    BOOST_REQUIRE(fs::remove(other_file));
+    error = {};
+    created = wallet::CreateWallet(context, name, short_seed, blsct::IMPORT_MASTER_KEY, /*load_on_start=*/std::nullopt, create_options, status, error, warnings);
+    BOOST_CHECK(!created);
+    BOOST_CHECK(fs::is_directory(wallet_path));
+    BOOST_CHECK(fs::is_empty(wallet_path));
+    if (created) {
+        RemoveWallet(context, created, /*load_on_start=*/std::nullopt);
+        TestUnloadWallet(std::move(created));
+    }
+}
+
+// A data file that existed before the call is not this call's to remove, even
+// when it held no database and the creation wrote one into it.
+BOOST_FIXTURE_TEST_CASE(FailedCreateWalletKeepsExistingDataFile, TestingSetup)
+{
+    m_args.ForceSetArg("-unsafesqlitesync", "1");
+    WalletContext context;
+    context.args = &m_args;
+    context.chain = m_node.chain.get();
+    bilingual_str error;
+    std::vector<bilingual_str> warnings;
+    DatabaseStatus status;
+
+    const std::string name{"failed_create_existing_data_file"};
+    const fs::path wallet_path{GetWalletDir() / fs::PathFromString(name)};
+    const fs::path data_file{SQLiteDataFile(wallet_path)};
+    BOOST_REQUIRE(fs::create_directories(wallet_path));
+    std::ofstream{data_file};
+    BOOST_REQUIRE(fs::exists(data_file));
+    BOOST_REQUIRE_EQUAL(fs::file_size(data_file), 0U);
+
+    DatabaseOptions create_options;
+    create_options.require_create = true;
+    create_options.create_flags = WALLET_FLAG_BLSCT;
+    const std::vector<unsigned char> short_seed(31, 1);
+    auto created = wallet::CreateWallet(context, name, short_seed, blsct::IMPORT_MASTER_KEY, /*load_on_start=*/std::nullopt, create_options, status, error, warnings);
+    BOOST_CHECK(!created);
+    BOOST_CHECK_EQUAL(error.original, "Unable to generate initial blsct keys");
+    BOOST_CHECK(fs::exists(data_file));
+    if (created) {
+        RemoveWallet(context, created, /*load_on_start=*/std::nullopt);
+        TestUnloadWallet(std::move(created));
     }
 }
 
