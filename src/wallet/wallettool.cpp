@@ -19,8 +19,28 @@
 #include <wallet/wallet.h>
 #include <wallet/walletutil.h>
 
+#include <tuple>
+
 namespace wallet {
 namespace WalletTool {
+
+//! Wipes the given byte buffers when it goes out of scope, so secrets held
+//! in them are cleansed on every return and on an exception alike.
+template <typename... Buffers>
+class CleanseOnExit
+{
+public:
+    explicit CleanseOnExit(Buffers&... buffers) : m_buffers{buffers...} {}
+    ~CleanseOnExit()
+    {
+        std::apply([](auto&... buffer) { (memory_cleanse(buffer.data(), buffer.size()), ...); }, m_buffers);
+    }
+    CleanseOnExit(const CleanseOnExit&) = delete;
+    CleanseOnExit& operator=(const CleanseOnExit&) = delete;
+
+private:
+    std::tuple<Buffers&...> m_buffers;
+};
 
 // The standard wallet deleter function blocks on the validation interface
 // queue, which doesn't exist for the bitcoin-wallet. Define our own
@@ -212,6 +232,11 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         std::string seed = args.GetArg("-seed", "");
         std::string mnemonic_str = args.GetArg("-mnemonic", "");
         std::string seedphrase_extension = args.GetArg(seedphrase_extension_arg, "");
+        std::vector<unsigned char> seed_bytes;
+        std::vector<unsigned char> entropy;
+        std::string mnemonic_words;
+        std::string mnemonic_response;
+        const CleanseOnExit cleanse_secrets{seed, mnemonic_str, seedphrase_extension, seed_bytes, entropy, mnemonic_words, mnemonic_response};
 
         // Reject seed/mnemonic when BLSCT is not enabled
         if (!seed.empty() && !make_blsct) {
@@ -246,9 +271,12 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         }
         // Refused here rather than by SetupGeneration, which runs only once
         // the wallet database exists.
-        if (seed.size() == 64 + 96 && !blsct::DecodeAuditKey(ParseHex(seed))) {
-            tfm::format(std::cerr, "Invalid audit key: the view key or the spend key is not a valid key\n");
-            return false;
+        if (seed.size() == 64 + 96) {
+            seed_bytes = ParseHex(seed);
+            if (!blsct::DecodeAuditKey(seed_bytes)) {
+                tfm::format(std::cerr, "Invalid audit key: the view key or the spend key is not a valid key\n");
+                return false;
+            }
         }
 
         // Same rule as createwallet: no NFKD is applied, so a new wallet must
@@ -274,32 +302,34 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
                 tfm::format(std::cerr, "Invalid mnemonic phrase\n");
                 return false;
             }
-            if (decoded->entropy.size() != 32) {
+            // Take the entropy before the length check so a rejected shorter
+            // mnemonic's entropy is cleansed too.
+            entropy = std::move(decoded->entropy);
+            if (entropy.size() != 32) {
                 tfm::format(std::cerr, "Only 24-word mnemonics (optionally with the two-word birthday suffix) are supported\n");
                 return false;
             }
-            seed = HexStr(decoded->entropy);
+            seed = HexStr(entropy);
             mnemonic_birthday = decoded->birthday;
         }
 
         // For new BLSCT wallets (no seed or mnemonic), generate entropy here
         // so we can print the mnemonic before the wallet is potentially locked.
-        std::string mnemonic_response;
         bool is_mnemonic_derived = !mnemonic_str.empty();
         if (seed.empty() && mnemonic_str.empty() && make_blsct) {
-            std::vector<unsigned char> entropy(32);
+            entropy.resize(32);
             GetStrongRandBytes(entropy);
             seed = HexStr(entropy);
             is_mnemonic_derived = true;
             mnemonic_birthday = GetTime();
-            mnemonic_response = mnemonic::MnemonicWithBirthday(mnemonic::EntropyToMnemonic(entropy), *mnemonic_birthday);
+            mnemonic_words = mnemonic::EntropyToMnemonic(entropy);
+            mnemonic_response = mnemonic::MnemonicWithBirthday(mnemonic_words, *mnemonic_birthday);
             if (mnemonic_response.empty()) {
                 // Clock outside the encodable range (mis-set RTC): fall back
                 // to the plain 24-word phrase and drop the birthday stamp.
                 mnemonic_birthday = std::nullopt;
-                mnemonic_response = mnemonic::EntropyToMnemonic(entropy);
+                mnemonic_response = mnemonic_words;
             }
-            memory_cleanse(entropy.data(), entropy.size());
         }
 
         blsct::SeedType type = blsct::IMPORT_MASTER_KEY;
@@ -313,19 +343,15 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
             options.create_flags |= WALLET_FLAG_DISABLE_PRIVATE_KEYS;
         }
 
-        const std::shared_ptr<CWallet> wallet_instance = MakeWallet(name, path, options, ParseHex(seed), type, seedphrase_extension, mnemonic_birthday);
-        // Cleanse seed hex now that MakeWallet has consumed it
-        memory_cleanse(seed.data(), seed.size());
-        if (!wallet_instance) {
-            // The success path cleanses the generated phrase after printing it
-            memory_cleanse(mnemonic_response.data(), mnemonic_response.size());
-            return false;
-        }
+        // The audit key check above already parsed an audit key seed, which
+        // has not changed since.
+        if (seed_bytes.empty()) seed_bytes = ParseHex(seed);
+        const std::shared_ptr<CWallet> wallet_instance = MakeWallet(name, path, options, seed_bytes, type, seedphrase_extension, mnemonic_birthday);
+        if (!wallet_instance) return false;
         if (!mnemonic_response.empty()) {
             tfm::format(std::cout, "\nMnemonic: %s\n\n", mnemonic_response);
             tfm::format(std::cout, "IMPORTANT: Write down this mnemonic phrase and store it securely.\n");
             tfm::format(std::cout, "It is the only way to recover your wallet if you lose access.\n\n");
-            memory_cleanse(mnemonic_response.data(), mnemonic_response.size());
         }
         WalletShowInfo(wallet_instance.get());
         wallet_instance->Close();
