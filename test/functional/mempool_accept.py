@@ -40,6 +40,7 @@ from test_framework.util import (
     assert_equal,
     assert_greater_than,
     assert_raises_rpc_error,
+    sync_txindex,
     tx_from_hex,
 )
 from test_framework.wallet import MiniWallet
@@ -276,6 +277,7 @@ class MempoolAcceptanceTest(BitcoinTestFramework):
         block_hash = node.getbestblockhash()
         block = node.getblock(block_hash)
         coinbase_txid = block['tx'][0]  # First transaction in block is coinbase
+        sync_txindex(self, node)
         raw_tx_coinbase_spent = node.getrawtransaction(txid=coinbase_txid)
         tx = tx_from_hex(raw_tx_coinbase_spent)
         self.check_mempool_result(

@@ -19,6 +19,7 @@ import shutil
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
         assert_equal,
+        sync_txindex,
 )
 
 class ReorgsRestoreTest(BitcoinTestFramework):
@@ -51,6 +52,7 @@ class ReorgsRestoreTest(BitcoinTestFramework):
 
         # Disconnect node0 from node2 to broadcast a conflict on their respective chains
         self.disconnect_nodes(0, 2)
+        sync_txindex(self, self.nodes[0])
         nA = next(tx_out["hash"] for tx_out in self.nodes[0].getrawtransaction(txid_conflict_from, 1)["vout"] if tx_out["value"] == Decimal("10"))
         inputs = []
         inputs.append({"outid": nA})

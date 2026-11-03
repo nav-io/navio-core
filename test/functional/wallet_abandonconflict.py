@@ -17,6 +17,7 @@ from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     assert_raises_rpc_error,
+    sync_txindex,
 )
 
 
@@ -62,6 +63,7 @@ class AbandonConflictTest(BitcoinTestFramework):
         self.disconnect_nodes(0, 1)
 
         # Identify the 10btc outputs
+        sync_txindex(self, self.nodes[0])
         txHashA = next(tx_out["hash"] for tx_out in alice.getrawtransaction(txA, 1)["vout"] if tx_out["value"] == Decimal("10"))
         txHashB = next(tx_out["hash"] for tx_out in alice.getrawtransaction(txB, 1)["vout"] if tx_out["value"] == Decimal("10"))
         txHashC = next(tx_out["hash"] for tx_out in alice.getrawtransaction(txC, 1)["vout"] if tx_out["value"] == Decimal("10"))
