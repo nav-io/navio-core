@@ -43,6 +43,38 @@ from .util import (
 BITCOIND_PROC_WAIT_TIMEOUT = 60
 
 
+def write_minidump(pid, path):
+    """Write a minidump of process pid to path with the system dbghelp.dll (Windows only)."""
+    import ctypes
+    import ctypes.wintypes
+    import msvcrt
+    PROCESS_QUERY_INFORMATION = 0x0400
+    PROCESS_VM_READ = 0x0010
+    MINIDUMP_WITH_FULL_MEMORY = 0x0002
+    MINIDUMP_WITH_HANDLE_DATA = 0x0004
+    MINIDUMP_WITH_THREAD_INFO = 0x1000
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    dbghelp = ctypes.WinDLL("dbghelp", use_last_error=True)
+    kernel32.OpenProcess.argtypes = [ctypes.wintypes.DWORD, ctypes.wintypes.BOOL, ctypes.wintypes.DWORD]
+    kernel32.OpenProcess.restype = ctypes.wintypes.HANDLE
+    kernel32.CloseHandle.argtypes = [ctypes.wintypes.HANDLE]
+    dbghelp.MiniDumpWriteDump.argtypes = [ctypes.wintypes.HANDLE, ctypes.wintypes.DWORD, ctypes.wintypes.HANDLE,
+                                          ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
+    dbghelp.MiniDumpWriteDump.restype = ctypes.wintypes.BOOL
+    process = kernel32.OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid)
+    if not process:
+        raise ctypes.WinError(ctypes.get_last_error())
+    try:
+        with open(path, 'wb') as f:
+            ok = dbghelp.MiniDumpWriteDump(process, pid, msvcrt.get_osfhandle(f.fileno()),
+                                           MINIDUMP_WITH_FULL_MEMORY | MINIDUMP_WITH_HANDLE_DATA | MINIDUMP_WITH_THREAD_INFO,
+                                           None, None, None)
+            if not ok:
+                raise ctypes.WinError(ctypes.get_last_error())
+    finally:
+        kernel32.CloseHandle(process)
+
+
 class FailedToStartError(Exception):
     """Raised when a node fails to start correctly."""
 
@@ -308,7 +340,22 @@ class TestNode():
                 if "No RPC credentials" not in str(e):
                     raise
             time.sleep(1.0 / poll_per_s)
+        if platform.system() == 'Windows' and self.process.poll() is None:
+            self._write_hang_minidump()
         self._raise_assertion_error("Unable to connect to naviod after {}s".format(self.rpc_timeout))
+
+    def _write_hang_minidump(self):
+        """Write a full-memory minidump of a naviod that never answered RPC.
+
+        The dump goes to the node's datadir, so CI can upload it and the
+        stack of the hung process can be inspected. A failure is only
+        logged, so it never masks the timeout that triggered it."""
+        dump_path = self.datadir_path / f"naviod_hang_{self.process.pid}.dmp"
+        try:
+            write_minidump(self.process.pid, dump_path)
+            self.log.error(f"Wrote minidump of hung naviod to {dump_path}")
+        except Exception as e:
+            self.log.error(f"Unable to write minidump of hung naviod to {dump_path}: {e!r}")
 
     def wait_for_cookie_credentials(self):
         """Ensures auth cookie credentials can be read, e.g. for testing CLI with -rpcwait before RPC connection is up."""

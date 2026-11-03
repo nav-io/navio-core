@@ -394,6 +394,28 @@ jobs:
           --combinedlogslen=99999999
           --timeout-factor=$env:TEST_RUNNER_TIMEOUT_FACTOR
           ${{ github.event_name != 'pull_request' && '--extended' || '' }}
+
+      - name: Collect hung naviod minidumps
+        # test_node.py writes naviod_hang_<pid>.dmp into the node datadir when
+        # a naviod never answers RPC. Gather them with the matching
+        # naviod.exe; the Release build makes no PDB to go with it.
+        if: failure()
+        run: |
+          $dumps = Get-ChildItem -Path "$env:RUNNER_TEMP" -Recurse -Filter 'naviod_hang_*.dmp' -ErrorAction SilentlyContinue
+          if ($dumps) {
+            $dest = New-Item -ItemType Directory -Force -Path "$env:RUNNER_TEMP\hung-naviod"
+            $dumps | ForEach-Object { Write-Host $_.FullName; Copy-Item -LiteralPath $_.FullName -Destination $dest }
+            Copy-Item build\bin\naviod.exe $dest
+          }
+
+      - name: Upload hung naviod minidumps
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: win64-native-hung-naviod
+          path: ${{ runner.temp }}/hung-naviod
+          if-no-files-found: ignore
+          retention-days: 7
   # Autotools `linux:` matrix job removed: with arm/tsan/msan/i686-centos
   # all migrated to CMake (#250, #251, #252, #253), no autotools matrix
   # entries remain. The `previous-releases` stub was commented out and
