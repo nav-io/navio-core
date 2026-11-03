@@ -11,6 +11,7 @@
 
 #include <blsct/wallet/keyman.h>
 #include <blsct/wallet/txfactory.h>
+#include <blsct/wallet/unsigned_transaction.h>
 #include <blsct/wallet/verification.h>
 #include <coins.h>
 #include <primitives/transaction.h>
@@ -62,6 +63,36 @@ CTransactionRef BuildCandidate(blsct::KeyMan* km, CCoinsViewCache& cache,
     auto built = f.BuildCandidate();
     BOOST_REQUIRE(built.has_value());
     return MakeTransactionRef(built->tx);
+}
+
+//! The same fee-0 candidate built through blsct::UnsignedTransaction with the
+//! fee output turned off -- the path light wallets take via the C API
+//! (set_unsigned_transaction_emit_fee_output).
+CTransactionRef BuildUnsignedCandidate(blsct::KeyMan* km, CCoinsViewCache& cache,
+                                       CAmount amount, const blsct::SubAddress& dest,
+                                       CAmount fee = 0)
+{
+    auto outpoint = FundCoin(km, cache, amount);
+    Coin coin;
+    BOOST_REQUIRE(cache.GetCoin(outpoint, coin));
+    auto recovered = km->RecoverOutputs(std::vector<CTxOut>{coin.out});
+    BOOST_REQUIRE(recovered.is_completed);
+    blsct::PrivateKey sk;
+    BOOST_REQUIRE(km->GetSpendingKeyForOutput(coin.out, sk));
+
+    blsct::UnsignedTransaction utx;
+    blsct::UnsignedInput in;
+    in.in = CTxIn(outpoint);
+    in.value = recovered.amounts[0].amount;
+    in.gamma = recovered.amounts[0].gamma;
+    in.sk = sk;
+    utx.AddInput(in);
+    utx.AddOutput(blsct::CreateOutput(dest.GetKeys(), amount - fee, "candidate"));
+    utx.SetFee(fee);
+    utx.SetEmitFeeOutput(false);
+    auto signed_tx = utx.Sign();
+    if (!signed_tx) return nullptr;
+    return MakeTransactionRef(*signed_tx);
 }
 } // namespace
 
@@ -804,6 +835,83 @@ BOOST_AUTO_TEST_CASE(prefer_reward_count_mirrors_input_mix)
     BOOST_CHECK_EQUAL(PreferRewardCount(3, 1, 2), 2u);
     BOOST_CHECK_EQUAL(PreferRewardCount(1, 1, 5), 1u);
     BOOST_CHECK_EQUAL(PreferRewardCount(5, 1, 3), 2u);
+}
+
+BOOST_FIXTURE_TEST_CASE(unsigned_tx_candidate_combines_and_verifies, TestingSetup)
+{
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+    LOCK(wallet->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_REQUIRE(km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+    CCoinsViewCache cache{&base, /*deterministic=*/true};
+    cache.SetBestBlock(InsecureRand256());
+
+    blsct::SubAddress dest(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+
+    CTransactionRef c1 = BuildUnsignedCandidate(km, cache, 300 * COIN, dest);
+    CTransactionRef c2 = BuildUnsignedCandidate(km, cache, 200 * COIN, dest);
+    BOOST_REQUIRE(c1 && c2);
+
+    // Same shape as a TxFactory candidate: no fee output, so the pool takes it.
+    for (const auto& c : {c1, c2}) {
+        BOOST_CHECK_EQUAL(c->vin.size(), 1u);
+        BOOST_CHECK_EQUAL(c->vout.size(), 1u);
+        BOOST_CHECK(!c->vout[0].scriptPubKey.IsFee());
+    }
+    aggregation::CandidatePool pool;
+    BOOST_CHECK(pool.AddCandidate(c1));
+
+    const CAmount cand_extra_fee =
+        static_cast<CAmount>(blsct::GetTransactionWeight(*c1) + blsct::GetTransactionWeight(*c2)) * BLSCT_DEFAULT_FEE;
+    auto own_outpoint = FundCoin(km, cache, 1000 * COIN);
+    auto initiator = blsct::TxFactory(km);
+    BOOST_REQUIRE(initiator.AddInput(cache, own_outpoint));
+    initiator.AddOutput(dest, 900 * COIN, "spend");
+    auto own = initiator.BuildTx(BLSCT_DEFAULT_FEE, /*additionalFee=*/cand_extra_fee);
+    BOOST_REQUIRE(own.has_value());
+
+    std::vector<CTransactionRef> halves{MakeTransactionRef(own->tx), c1, c2};
+    auto combined = aggregation::CombineHalves(halves);
+    BOOST_REQUIRE(combined.has_value());
+    TxValidationState state;
+    BOOST_CHECK_MESSAGE(blsct::VerifyTx(CTransaction(*combined), cache, state), state.ToString());
+
+    // The miner-style aggregation (the C API's aggregate_transactions) of the
+    // same halves verifies too.
+    auto aggregated = blsct::AggregateTransactions(halves);
+    TxValidationState state2;
+    BOOST_CHECK_MESSAGE(blsct::VerifyTx(*aggregated, cache, state2), state2.ToString());
+
+    // Without a fee output the candidate cannot pay a fee.
+    BOOST_CHECK(BuildUnsignedCandidate(km, cache, 100 * COIN, dest, /*fee=*/1) == nullptr);
+}
+
+BOOST_AUTO_TEST_CASE(unsigned_tx_emit_fee_output_serialization)
+{
+    blsct::UnsignedTransaction utx;
+    utx.SetFee(125);
+    auto v1 = utx.Serialize();
+    BOOST_REQUIRE(!v1.empty());
+    BOOST_CHECK_EQUAL(v1[0], 1); // fee-bearing transactions keep the v1 layout
+    auto back = blsct::UnsignedTransaction::Deserialize(v1);
+    BOOST_REQUIRE(back.has_value());
+    BOOST_CHECK(back->GetEmitFeeOutput());
+    BOOST_CHECK_EQUAL(back->GetFee(), 125);
+
+    utx.SetFee(0);
+    utx.SetEmitFeeOutput(false);
+    auto v2 = utx.Serialize();
+    BOOST_CHECK_EQUAL(v2[0], 2);
+    BOOST_CHECK_EQUAL(v2.size(), v1.size() + 1);
+    back = blsct::UnsignedTransaction::Deserialize(v2);
+    BOOST_REQUIRE(back.has_value());
+    BOOST_CHECK(!back->GetEmitFeeOutput());
+
+    v2[0] = 3;
+    BOOST_CHECK(!blsct::UnsignedTransaction::Deserialize(v2).has_value());
 }
 
 BOOST_AUTO_TEST_SUITE_END()

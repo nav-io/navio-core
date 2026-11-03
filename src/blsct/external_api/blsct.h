@@ -873,6 +873,15 @@ void add_unsigned_transaction_input(void* vp_unsigned_transaction, const void* v
 void add_unsigned_transaction_output(void* vp_unsigned_transaction, const void* vp_unsigned_output);
 void set_unsigned_transaction_fee(void* vp_unsigned_transaction, uint64_t fee);
 uint64_t get_unsigned_transaction_fee(const void* vp_unsigned_transaction);
+/* Whether sign_unsigned_transaction appends the OP_RETURN fee output (and its
+ * fee signature). Default true. Set false to build a fee-0 aggregation cover
+ * candidate: a value-balanced self-spend with no fee output, which another
+ * wallet merges into an aggregate that carries only its own fee output. With
+ * the fee output off the fee must be 0 (signing fails otherwise). An unsigned
+ * transaction with the fee output off serializes in format version 2; the
+ * default keeps version 1. */
+void set_unsigned_transaction_emit_fee_output(void* vp_unsigned_transaction, bool emit_fee_output);
+bool get_unsigned_transaction_emit_fee_output(const void* vp_unsigned_transaction);
 size_t get_unsigned_transaction_inputs_size(const void* vp_unsigned_transaction);
 size_t get_unsigned_transaction_outputs_size(const void* vp_unsigned_transaction);
 void delete_unsigned_transaction(void* vp_unsigned_transaction);
