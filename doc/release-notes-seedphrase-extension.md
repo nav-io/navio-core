@@ -13,6 +13,9 @@
   `-seedphraseextension`. `-mnemonicpassphrase` is still accepted as a hidden,
   deprecated alias that prints a warning, and will be removed in a future
   release. Passing both options is an error.
+- `-noseedphraseextension` and `-nomnemonicpassphrase` are now refused. Before,
+  `-nomnemonicpassphrase` was accepted and derived the wallet with the extension
+  `0`.
 
 The rename does not change key derivation: a wallet restored with the same
 mnemonic and extension derives the same keys under either name.

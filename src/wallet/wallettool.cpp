@@ -168,7 +168,7 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
     }
     const char* const seedphrase_extension_arg = args.IsArgSet("-mnemonicpassphrase") ? "-mnemonicpassphrase" : "-seedphraseextension";
     if (args.IsArgSet(seedphrase_extension_arg) && command != "create") {
-        tfm::format(std::cerr, "The -seedphraseextension option can only be used with the 'create' command.\n");
+        tfm::format(std::cerr, "The %s option can only be used with the 'create' command.\n", seedphrase_extension_arg);
         return false;
     }
     if (args.IsArgSet("-mnemonicpassphrase")) {

@@ -568,6 +568,28 @@ class WalletMnemonicTest(BitcoinTestFramework):
         assert_equal(p_mp_no_blsct.poll(), 1)
         assert "requires -blsct" in stderr_mp_nb
 
+        self.log.info("Test CLI tool: negated -seedphraseextension is rejected")
+        # It used to be accepted and derive the wallet with the extension "0".
+        for flag in ['-noseedphraseextension', '-nomnemonicpassphrase']:
+            p_neg = subprocess.Popen(
+                [self.options.naviowallet, '-datadir={}'.format(self.nodes[0].datadir_path), '-chain={}'.format(self.chain),
+                 '-wallet=test_cli_mp_negated', flag, 'create'],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            stdout_neg, stderr_neg = p_neg.communicate()
+            assert_equal(p_neg.poll(), 1)
+            assert "Negating of {} is meaningless and therefore forbidden".format(flag.replace('-no', '-', 1)) in stderr_neg
+            assert_raises_rpc_error(-18, "Path does not exist", node.loadwallet, "test_cli_mp_negated")
+
+        self.log.info("Test CLI tool: the create-only error names the extension flag that was passed")
+        for flag in ['-seedphraseextension', '-mnemonicpassphrase']:
+            p_info = subprocess.Popen(
+                [self.options.naviowallet, '-datadir={}'.format(self.nodes[0].datadir_path), '-chain={}'.format(self.chain),
+                 '-wallet=test_cli_mp_info', '{}=x'.format(flag), 'info'],
+                stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+            stdout_info, stderr_info = p_info.communicate()
+            assert_equal(p_info.poll(), 1)
+            assert "The {} option can only be used with the 'create' command.".format(flag) in stderr_info
+
         self.log.info("Test roundtrip through CLI: CLI create -> RPC dumpmnemonic -> CLI restore")
         # Create a wallet via CLI
         cli_wallet2 = "test_cli_roundtrip"
