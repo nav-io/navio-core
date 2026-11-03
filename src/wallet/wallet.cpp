@@ -244,6 +244,29 @@ static std::condition_variable g_wallet_release_cv;
 static std::set<std::string> g_loading_wallet_set GUARDED_BY(g_loading_wallet_mutex);
 static std::set<std::string> g_unloading_wallet_set GUARDED_BY(g_wallet_release_mutex);
 
+namespace {
+/** Holds a wallet name in g_loading_wallet_set while it lives, so a concurrent
+ *  load, create or restore of the same name is refused until it is released. */
+class LoadingWalletReservation
+{
+public:
+    explicit LoadingWalletReservation(const std::string& name) EXCLUSIVE_LOCKS_REQUIRED(!g_loading_wallet_mutex)
+        : m_name{name}, m_reserved{WITH_LOCK(g_loading_wallet_mutex, return g_loading_wallet_set.insert(name).second)} {}
+    ~LoadingWalletReservation() EXCLUSIVE_LOCKS_REQUIRED(!g_loading_wallet_mutex)
+    {
+        if (m_reserved) WITH_LOCK(g_loading_wallet_mutex, g_loading_wallet_set.erase(m_name));
+    }
+    LoadingWalletReservation(const LoadingWalletReservation&) = delete;
+    LoadingWalletReservation& operator=(const LoadingWalletReservation&) = delete;
+
+    bool Reserved() const { return m_reserved; }
+
+private:
+    const std::string m_name;
+    const bool m_reserved;
+};
+} // namespace
+
 // Custom deleter for shared_ptr<CWallet>.
 static void ReleaseWallet(CWallet* wallet)
 {
@@ -385,15 +408,13 @@ private:
 
 std::shared_ptr<CWallet> LoadWallet(WalletContext& context, const std::string& name, std::optional<bool> load_on_start, const DatabaseOptions& options, DatabaseStatus& status, bilingual_str& error, std::vector<bilingual_str>& warnings)
 {
-    auto result = WITH_LOCK(g_loading_wallet_mutex, return g_loading_wallet_set.insert(name));
-    if (!result.second) {
+    const LoadingWalletReservation reservation{name};
+    if (!reservation.Reserved()) {
         error = Untranslated("Wallet already loading.");
         status = DatabaseStatus::FAILED_LOAD;
         return nullptr;
     }
-    auto wallet = LoadWalletInternal(context, name, load_on_start, options, status, error, warnings);
-    WITH_LOCK(g_loading_wallet_mutex, g_loading_wallet_set.erase(result.first));
-    return wallet;
+    return LoadWalletInternal(context, name, load_on_start, options, status, error, warnings);
 }
 
 std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string& name, const std::vector<unsigned char>& seed, const blsct::SeedType& type, std::optional<bool> load_on_start, DatabaseOptions& options, DatabaseStatus& status, bilingual_str& error, std::vector<bilingual_str>& warnings, const std::string& seedphrase_extension, const std::optional<int64_t>& creation_time)
@@ -436,6 +457,27 @@ std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string&
         return nullptr;
     }
 
+    // Hold the name until any cleanup below is done, so a concurrent load or
+    // create of it cannot open the half-built database, or have its files
+    // removed under it. Declared before the cleanup handler, it outlives it.
+    const LoadingWalletReservation reservation{name};
+    if (!reservation.Reserved()) {
+        error = Untranslated("Wallet already loading.");
+        status = DatabaseStatus::FAILED_CREATE;
+        return nullptr;
+    }
+
+    // Note what is at the wallet's path before its database is created, so a
+    // creation that fails below removes only what this call created. A path
+    // whose status cannot be read counts as existing, and is left alone.
+    const auto path_exists{[](const fs::path& path) {
+        std::error_code ec;
+        return fs::symlink_status(path, ec).type() != fs::file_type::not_found;
+    }};
+    const fs::path wallet_path{fsbridge::AbsPathJoin(GetWalletDir(), fs::PathFromString(name))};
+    const bool wallet_path_existed{path_exists(wallet_path)};
+    const bool data_file_existed{path_exists(SQLiteDataFile(wallet_path))};
+
     // Wallet::Verify will check if we're trying to create a wallet with a duplicate name.
     std::unique_ptr<WalletDatabase> database = MakeWalletDatabase(name, options, status, error);
     if (!database) {
@@ -443,24 +485,44 @@ std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string&
         status = DatabaseStatus::FAILED_VERIFY;
         return nullptr;
     }
+    const std::vector<fs::path> database_files{database->Files()};
+
+    // A wallet that fails the setup below must not leave its database behind,
+    // or retrying with the same name fails with "Database already exists".
+    // On every failure, returned or thrown, release the wallet and then
+    // remove the files and directory this call created.
+    std::shared_ptr<CWallet> wallet;
+    bool setup_done{false};
+    const auto remove_on_failure{interfaces::MakeCleanupHandler([&] {
+        if (setup_done) return;
+        if (wallet) {
+            // CWallet::Create registered the wallet for chain notifications,
+            // and that registration holds a reference to the wallet, so drop
+            // it, then wait until the wallet and its database are released.
+            wallet->m_chain_notifications_handler.reset();
+            UnloadWallet(std::move(wallet));
+        }
+        if (!data_file_existed) {
+            for (const fs::path& file : database_files) {
+                std::error_code ec;
+                fs::remove(file, ec);
+                if (ec) LogPrintf("Failed to remove %s of a wallet that failed creation: %s\n", fs::PathToString(file), ec.message());
+            }
+        }
+        // Only an empty directory is removed, so one that holds anything
+        // besides the removed database survives.
+        std::error_code ec;
+        if (!wallet_path_existed && fs::is_empty(wallet_path, ec)) fs::remove(wallet_path, ec);
+    })};
 
     // Make the wallet
     context.chain->initMessage(_("Loading wallet…").translated);
-    std::shared_ptr<CWallet> wallet = CWallet::Create(context, name, std::move(database), wallet_creation_flags, error, warnings);
+    wallet = CWallet::Create(context, name, std::move(database), wallet_creation_flags, error, warnings);
     if (!wallet) {
         error = Untranslated("Wallet creation failed.") + Untranslated(" ") + error;
         status = DatabaseStatus::FAILED_CREATE;
         return nullptr;
     }
-
-    // CWallet::Create registered the wallet for chain notifications, and that
-    // registration holds a reference to the wallet. Unless it is dropped, a
-    // wallet that fails the setup below is never released and keeps its
-    // database locked, so drop it on every failure, returned or thrown.
-    bool setup_done{false};
-    const auto release_on_failure{interfaces::MakeCleanupHandler([&] {
-        if (!setup_done) wallet->m_chain_notifications_handler.reset();
-    })};
 
     // Encrypt the wallet
     if (!passphrase.empty() && !(wallet_creation_flags & WALLET_FLAG_DISABLE_PRIVATE_KEYS)) {
@@ -563,6 +625,15 @@ std::shared_ptr<CWallet> RestoreWallet(WalletContext& context, const fs::path& b
     bool wallet_file_copied = false;
     bool created_parent_dir = false;
 
+    // Hold the name until the cleanup below is done, so a concurrent load or
+    // create of it cannot open the restored file, or have it removed under it.
+    const LoadingWalletReservation reservation{wallet_name};
+    if (!reservation.Reserved()) {
+        error = Untranslated("Wallet already loading.");
+        status = DatabaseStatus::FAILED_LOAD;
+        return nullptr;
+    }
+
     try {
         if (!fs::exists(backup_file)) {
             error = Untranslated("Backup file does not exist");
@@ -587,7 +658,7 @@ std::shared_ptr<CWallet> RestoreWallet(WalletContext& context, const fs::path& b
         fs::copy_file(backup_file, wallet_file, fs::copy_options::none);
         wallet_file_copied = true;
 
-        wallet = LoadWallet(context, wallet_name, load_on_start, options, status, error, warnings);
+        wallet = LoadWalletInternal(context, wallet_name, load_on_start, options, status, error, warnings);
     } catch (const std::exception& e) {
         assert(!wallet);
         if (!error.empty()) error += Untranslated("\n");
