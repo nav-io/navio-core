@@ -140,8 +140,36 @@ BOOST_FIXTURE_TEST_CASE(check_candidate_rejects_invalid, TestingSetup)
     };
     std::string reason;
 
-    // The honest candidate passes.
+    // The honest candidate passes, with the mempool requiring standard txs
+    // (IsStandardTx and AreInputsStandard run).
+    BOOST_CHECK(mempool.m_require_standard);
+    BOOST_CHECK(aggregation::IsCandidateShape(*good));
     BOOST_CHECK_MESSAGE(check(*good, cache, reason), reason);
+
+    // A transparent output (no range proof, plaintext value) is not a
+    // candidate: the aggregate would be held to IsStandardTx's output rules.
+    {
+        CMutableTransaction transparent{*good};
+        transparent.vout[0].blsctData = CTxOutBLSCTData{};
+        transparent.vout[0].scriptPubKey = CScript() << OP_TRUE;
+        BOOST_CHECK(!aggregation::IsCandidateShape(CTransaction{transparent}));
+        aggregation::CandidatePool pool;
+        BOOST_CHECK(!pool.WouldAccept(CTransaction{transparent}));
+        BOOST_CHECK(!pool.AddCandidate(MakeTransactionRef(transparent)));
+    }
+
+    // The input's coin is transparent (any script, plaintext value).
+    {
+        CCoinsViewCache transparent{&cache, /*deterministic=*/true};
+        const Coin coin = transparent.AccessCoin(prevout);
+        BOOST_REQUIRE(!coin.IsSpent());
+        transparent.SpendCoin(prevout);
+        CTxOut plain{coin.out.nValue, CScript() << OP_TRUE};
+        plain.tokenId = coin.out.tokenId;
+        transparent.AddCoin(prevout, Coin{plain, coin.nHeight, /*fCoinBaseIn=*/false}, /*possible_overwrite=*/false);
+        BOOST_CHECK(!check(*good, transparent, reason));
+        BOOST_CHECK_EQUAL(reason, "candidate-input-not-confidential");
+    }
 
     // IsStandardTx's per-input rules: mempool acceptance would reject an
     // aggregate containing either input, so the candidate is refused up front.
@@ -332,6 +360,8 @@ CTransactionRef FakeCandidate(const uint256& input_hash, uint32_t n = 0)
     mtx.vout.emplace_back();
     // A distinct output per input: the pool also dedupes by output.
     mtx.vout[0].scriptPubKey = CScript() << ToByteVector(input_hash) << OP_DROP << OP_TRUE;
+    // Candidates are confidential; one commitment is enough for the shape.
+    mtx.vout[0].blsctData.rangeProof.Vs.Add(BlstG1Point::Rand());
     return MakeTransactionRef(mtx);
 }
 

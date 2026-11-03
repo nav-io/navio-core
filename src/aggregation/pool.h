@@ -42,7 +42,9 @@ static constexpr size_t POOL_SHARDS = 16;
 //! The shape every pooled candidate has: a BLSCT tx (marker set) with exactly
 //! one input and one output, the output not a fee output (a candidate is fee-0
 //! and must not give the combined tx a second fee output, which consensus's
-//! one-fee-output rule rejects), within CANDIDATE_MAX_WEIGHT (an oversized
+//! one-fee-output rule rejects) and confidential (it carries a range proof:
+//! a transparent output is held to IsStandardTx's output rules in the
+//! aggregate), within CANDIDATE_MAX_WEIGHT (an oversized
 //! candidate inflates the initiator's additionalFee and memory use). Cheap: no
 //! locks, no chain lookups.
 bool IsCandidateShape(const CTransaction& tx);
@@ -50,7 +52,11 @@ bool IsCandidateShape(const CTransaction& tx);
 //! Check a cover candidate the way mempool acceptance would check it, except
 //! for the minimum-fee rule (a candidate is fee-0): the per-input standardness
 //! rules of IsStandardTx (scriptSig push-only and at most
-//! MAX_STANDARD_SCRIPTSIG_SIZE), CheckTransaction, an input that a mempool tx
+//! MAX_STANDARD_SCRIPTSIG_SIZE) always, the rest of IsStandardTx and
+//! AreInputsStandard when `mempool` requires standard txs (as mempool
+//! acceptance does, honouring -acceptnonstdtxn), an input whose coin is not
+//! confidential ("candidate-input-not-confidential"), CheckTransaction, an
+//! input that a mempool tx
 //! already spends ("txn-mempool-conflict"), an output that already exists as
 //! an unspent coin in `view` or is created by a mempool tx
 //! ("txn-duplicate-output"), Consensus::CheckTxInputs against `view` (missing

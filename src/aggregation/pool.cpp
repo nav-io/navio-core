@@ -20,6 +20,7 @@
 
 #include <algorithm>
 #include <atomic>
+#include <string>
 
 namespace aggregation {
 
@@ -58,6 +59,10 @@ bool IsCandidateShape(const CTransaction& tx)
     if (tx.vin.size() != 1) return false;
     if (tx.vout.size() != 1) return false;
     if (tx.vout[0].scriptPubKey.IsFee()) return false;
+    // Covers are confidential. A transparent output (plaintext nValue, any
+    // scriptPubKey) passes VerifyTx but is held to the output standardness
+    // rules when the aggregate reaches the mempool (scriptpubkey, dust).
+    if (!tx.vout[0].HasBLSCTRangeProof()) return false;
     if (GetTransactionWeight(tx) > CANDIDATE_MAX_WEIGHT) return false;
     return true;
 }
@@ -75,6 +80,16 @@ bool CheckCandidate(const CTransaction& tx, CCoinsViewCache& view, const CTxMemP
         }
         if (!in.scriptSig.IsPushOnly()) {
             return state.Invalid(TxValidationResult::TX_NOT_STANDARD, "scriptsig-not-pushonly");
+        }
+    }
+    // The rest of IsStandardTx, with the node's own policy, as mempool
+    // acceptance applies it to the aggregate (skipped under -acceptnonstdtxn).
+    const bool require_standard{mempool != nullptr && mempool->m_require_standard};
+    if (require_standard) {
+        std::string reason;
+        if (!IsStandardTx(tx, mempool->m_max_datacarrier_bytes, mempool->m_permit_bare_multisig,
+                          mempool->m_dust_relay_feerate, reason)) {
+            return state.Invalid(TxValidationResult::TX_NOT_STANDARD, reason);
         }
     }
     if (!CheckTransaction(tx, state)) return false;
@@ -103,6 +118,17 @@ bool CheckCandidate(const CTransaction& tx, CCoinsViewCache& view, const CTxMemP
     }
     CAmount fee{0};
     if (!Consensus::CheckTxInputs(tx, state, view, spend_height, fee)) return false;
+    // A cover spends a confidential coin. A transparent prevout's script is
+    // held to AreInputsStandard when the aggregate reaches the mempool, and
+    // its plaintext value would be public anyway.
+    for (const CTxIn& in : tx.vin) {
+        if (!view.AccessCoin(in.prevout).out.HasBLSCTRangeProof()) {
+            return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD, "candidate-input-not-confidential");
+        }
+    }
+    if (require_standard && !AreInputsStandard(tx, view)) {
+        return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD, "bad-txns-nonstandard-inputs");
+    }
     return blsct::VerifyTx(tx, view, state, /*blockReward=*/0, params.nPePoSMinStakeAmount,
                            spend_height, median_time_past, params.nBLSCTDefaultFee,
                            params.nBLSCTProofV2Height, /*threads=*/0,

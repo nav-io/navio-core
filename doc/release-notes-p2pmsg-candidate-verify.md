@@ -7,9 +7,13 @@ P2P and network changes
   that its input is a confirmed unspent coin and, if a coinbase output, a
   mature one, and that no mempool transaction already spends that input. Its
   scriptSig must also pass the standardness rules for inputs (push-only, at
-  most 1650 bytes), and its output must not already exist as an unspent coin,
-  in a mempool transaction or in another pooled candidate; a pooled candidate
-  is evicted when a mempool or block transaction later creates its output.
+  most 1650 bytes). Its output and the coin it spends must be confidential
+  (carry a range proof). When the node requires standard transactions (no
+  `-acceptnonstdtxn`), the candidate must also pass the same transaction and
+  input standardness checks mempool acceptance applies. Its output must not
+  already exist as an unspent coin, in a mempool transaction or in another
+  pooled candidate; a pooled candidate is evicted when a mempool or block
+  transaction later creates its output.
   Candidates the pool would refuse anyway (wrong shape, input already pooled,
   pool full) are dropped before any of this work. Previously a forged
   candidate was pooled and only failed when an aggregate that picked it was
