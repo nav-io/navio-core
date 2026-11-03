@@ -804,7 +804,14 @@ std::vector<StakedCommitment> GetStakedCommitments(const std::unique_ptr<BaseReq
         return std::vector<StakedCommitment> {};
     }
 
-    return UniValueArrayToStakedCommitmentsMine(result.get_array());
+    // liststakedcommitments follows the wallet's output map, whose order is
+    // arbitrary and may change between calls. Sort by commitment so the
+    // rotation in Loop() walks the same order every cycle.
+    auto ret = UniValueArrayToStakedCommitmentsMine(result.get_array());
+    std::sort(ret.begin(), ret.end(), [](const StakedCommitment& a, const StakedCommitment& b) {
+        return a.point.GetVch() < b.point.GetVch();
+    });
+    return ret;
 }
 
 //! Reward address of each of the wallet's own delegated staked commitments,
@@ -1032,11 +1039,12 @@ std::optional<std::vector<DelegatedCommitment>> GetDelegatedCommitments(const st
         }
     }
 
-    // Oldest (most confirmed) first: a just-created commitment may not be
-    // eligible for the current slot yet, so preferring seasoned commitments
-    // avoids burning the per-slot proposal attempt on fresh ones.
+    // Oldest (most confirmed) first, ties by output hash, so the order Loop()
+    // rotates through is stable across refreshes and new delegations join at
+    // the end of it.
     std::sort(ret.begin(), ret.end(), [](const DelegatedCommitment& a, const DelegatedCommitment& b) {
-        return a.confirmations > b.confirmations;
+        if (a.confirmations != b.confirmations) return a.confirmations > b.confirmations;
+        return a.outhash < b.outhash;
     });
 
     return ret;
@@ -1202,6 +1210,21 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
 }
 
 
+//! Try the candidates in turn, starting at index `first` and wrapping
+//! around, until try_one accepts one; return its index. Loop() starts the
+//! next cycle after the candidate that produced the last block, so every
+//! commitment that can stake gets its turn instead of the first one in the
+//! list producing every block.
+template <typename T, typename F>
+static std::optional<size_t> TryInTurn(const std::vector<T>& candidates, size_t first, F try_one)
+{
+    for (size_t k = 0; k < candidates.size(); ++k) {
+        const size_t i = (first + k) % candidates.size();
+        if (try_one(candidates[i])) return i;
+    }
+    return std::nullopt;
+}
+
 //! Format a duration in compact h/m/s.
 static std::string FmtUptime(std::chrono::seconds s)
 {
@@ -1256,6 +1279,10 @@ void Loop()
     SteadyClock::time_point own_delegation_retry_at{};
     std::chrono::seconds own_delegation_retry_wait{own_delegation_retry_first};
     std::optional<std::set<std::string>> own_delegation_failed_for;
+
+    // Index of the staked commitment (or delegation) to try first next cycle:
+    // the one after the commitment that produced the last proposal.
+    size_t next_first{0};
 
     // Backoff while the node cannot be reached: consecutive cycles that failed
     // to connect, the earliest time the next cycle may run, and how long the
@@ -1326,19 +1353,18 @@ void Loop()
                         }
                     }
 
-                    for (auto& it : delegations) {
+                    for (const auto& it : delegations)
                         nTotalMoney += it.staked.value.GetUint64();
 
-                        if (!got) {
-                            auto candidate = GetBlockProposal(rh, it.staked, it.rewardAddress);
-
-                            got = candidate.has_value();
-                            if (got) {
-                                proposal = candidate.value();
-                                producing = &it;
-                            }
-                        }
-                    }
+                    const auto produced = TryInTurn(delegations, next_first, [&](const DelegatedCommitment& it) {
+                        auto candidate = GetBlockProposal(rh, it.staked, it.rewardAddress);
+                        if (!candidate) return false;
+                        proposal = std::move(*candidate);
+                        producing = &it;
+                        return true;
+                    });
+                    got = produced.has_value();
+                    if (got) next_first = *produced + 1;
                 } else {
                     auto staked_commitments = GetStakedCommitments(rh);
 
@@ -1392,22 +1418,21 @@ void Loop()
                         }
                     }
 
-                    for (auto& it : staked_commitments) {
+                    for (const auto& it : staked_commitments)
                         nTotalMoney += it.value.GetUint64();
 
-                        if (!got) {
-                            const auto delegated = own_delegation_rewards.find(HexStr(it.point.GetVch()));
-                            const std::string& dest = delegated != own_delegation_rewards.end() ? delegated->second : coinbase_dest;
-                            auto candidate = GetBlockProposal(rh, it, dest);
-
-                            got = candidate.has_value();
-                            if (got) {
-                                proposal = candidate.value();
-                                staked_with = HexStr(it.point.GetVch());
-                                reward_dest = dest;
-                            }
-                        }
-                    }
+                    const auto produced = TryInTurn(staked_commitments, next_first, [&](const StakedCommitment& it) {
+                        const auto delegated = own_delegation_rewards.find(HexStr(it.point.GetVch()));
+                        const std::string& dest = delegated != own_delegation_rewards.end() ? delegated->second : coinbase_dest;
+                        auto candidate = GetBlockProposal(rh, it, dest);
+                        if (!candidate) return false;
+                        proposal = std::move(*candidate);
+                        staked_with = HexStr(it.point.GetVch());
+                        reward_dest = dest;
+                        return true;
+                    });
+                    got = produced.has_value();
+                    if (got) next_first = *produced + 1;
                 }
                 last_balance = nTotalMoney;
 

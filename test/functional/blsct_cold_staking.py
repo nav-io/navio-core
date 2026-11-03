@@ -50,6 +50,10 @@ STAKER_TIMEOUT = 120
 # generatetoblsctaddress calls mine_blocks() makes before giving up.
 MINE_ATTEMPTS = 10
 
+# Blocks a wallet-mode staker with two stakes may produce before both have
+# produced one. The staker rotates between them, so it needs only a few.
+MIXED_STAKER_MAX_BLOCKS = 10
+
 
 def backoff_waits(cap):
     """The staker's wait after each consecutive failure of a call it retries
@@ -764,39 +768,27 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
         for commitment, dest in session.staked_with:
             assert_equal(dest, expected_dest(commitment, delegated_commitment))
 
-        # The staker stakes with the first commitment liststakedcommitments
-        # returns that yields a block, and that order follows the wallet's
-        # salted output map. Restart the node until each stake comes first in
-        # turn, so both are seen staking in the mixed wallet. Each fresh
-        # staker also starts with an empty lookup and fetches it once.
-        for wanted in (plain_commitment, delegated_commitment):
-            for _ in range(60):
-                self.restart_node(0)
-                node = self.nodes[0]
-                node.loadwallet("mixedstaker")
-                wallet = node.get_wallet_rpc("mixedstaker")
-                if wallet.liststakedcommitments()[0]["commitment"] == wanted:
-                    break
-            else:
-                raise AssertionError(f"commitment {wanted} never came first")
+        # The staker rotates which commitment it tries first, starting after
+        # the one that produced the last block, so a fresh staker produces
+        # with both stakes in turn within a few blocks. Each fresh staker
+        # also starts with an empty lookup and fetches it once.
+        node.syncwithvalidationinterfacequeue()
+        paid_before = wallet.listdelegations()[0]["rewards_count"]
+        coinbase_paid_before = sum(r["count"] for r in wallet.liststakingrewards() if r["address"] == coinbase_dest)
+        both = {plain_commitment, delegated_commitment}
+        session = Session()
+        try:
+            session.read_until(lambda: both <= {c for c, _ in session.staked_with} or len(session.staked_with) >= MIXED_STAKER_MAX_BLOCKS)
+            assert_equal(session.refresh, ["1 of 2 staked commitment(s) delegated."])
+        finally:
+            session.stop()
+        assert_equal({c for c, _ in session.staked_with}, both)
+        for commitment, dest in session.staked_with:
+            assert_equal(dest, expected_dest(commitment, delegated_commitment))
 
-            node.syncwithvalidationinterfacequeue()
-            paid_before = {d["commitment"]: d["rewards_count"] for d in wallet.listdelegations()}
-            coinbase_paid_before = sum(r["count"] for r in wallet.liststakingrewards() if r["address"] == coinbase_dest)
-            session = Session()
-            try:
-                session.read_until(lambda: any(c == wanted for c, _ in session.staked_with))
-                assert_equal(session.refresh, ["1 of 2 staked commitment(s) delegated."])
-            finally:
-                session.stop()
-            for commitment, dest in session.staked_with:
-                assert_equal(dest, expected_dest(commitment, delegated_commitment))
-
-            node.syncwithvalidationinterfacequeue()
-            if wanted == delegated_commitment:
-                assert_greater_than(wallet.listdelegations()[0]["rewards_count"], paid_before[delegated_commitment])
-            else:
-                assert_greater_than(sum(r["count"] for r in wallet.liststakingrewards() if r["address"] == coinbase_dest), coinbase_paid_before)
+        node.syncwithvalidationinterfacequeue()
+        assert_greater_than(wallet.listdelegations()[0]["rewards_count"], paid_before)
+        assert_greater_than(sum(r["count"] for r in wallet.liststakingrewards() if r["address"] == coinbase_dest), coinbase_paid_before)
 
         # A staked commitment disappearing also triggers a lookup. The unlock
         # spends every staked commitment in one transaction (with the default
