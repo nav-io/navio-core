@@ -286,8 +286,20 @@ class BlsctMintConflictTest(BitcoinTestFramework):
         self.generate_blsct_blocks(node, issuer_addr, 1)
         token_id = issuer.createtoken({"name": "reorged"}, 1)["tokenId"]
         (create_block,) = self.generate_blsct_blocks(node, issuer_addr, 1)
+        # Fund the mint only with coins confirmed before the CREATE's block.
+        # Otherwise the mint could spend an output of that block, and leave
+        # the mempool as an orphan when the block is disconnected, whether or
+        # not its token predicate is checked.
+        recent = [{"outid": u["outid"]} for u in issuer.listunspent(0) if u["confirmations"] < 2]
+        issuer.lockunspent(False, recent)
         mint = self.submit(node, issuer.minttoken, token_id, issuer_addr, 1)
+        issuer.lockunspent(True, recent)
+        mint_inputs = {vin["outid"] for vin in node.getrawtransaction(mint, True)["vin"]}
         node.invalidateblock(create_block)
+        # The mint's inputs are all still unspent on the chain; only the
+        # token it mints is gone.
+        for outid in mint_inputs:
+            assert node.gettxout(outid, False) is not None, f"mint input {outid} no longer on chain"
         assert mint not in node.getrawmempool()
 
 
