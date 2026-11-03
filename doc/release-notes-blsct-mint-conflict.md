@@ -26,8 +26,11 @@ Wallet
   block that caused the eviction (`confirmations` -1), so the coins it spent
   are available again without `abandontransaction`. If that block is
   disconnected, the transaction returns to unconfirmed. When several blocks
-  connect at once, the conflict is recorded against the block that touched
-  the transaction's token.
+  connect at once, the conflict is recorded against the latest of them that
+  touched the transaction's token (or its parent's, for a wallet transaction
+  spending the evicted one). That block is never earlier than the one that
+  caused the eviction, so disconnecting the latter always returns the
+  transaction to unconfirmed.
 
 - The wallet learns about such a conflict only from the mempool eviction and
   cannot rebuild it from chain state. A wallet that misses the eviction (it
