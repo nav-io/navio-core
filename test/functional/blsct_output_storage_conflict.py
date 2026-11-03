@@ -59,9 +59,9 @@ class BlsctOutputStorageConflictTest(BitcoinTestFramework):
         return added.pop()
 
     def receives(self, wallet, txid, pending=False):
-        """The wallet's receive entries for txid (an outid for output-storage entries)."""
+        """The wallet's receive entries for txid (an outid for output-storage entries, which carry no txid)."""
         rows = wallet.listpendingtransactions("*", 1000) if pending else wallet.listtransactions("*", 1000)
-        return [r for r in rows if r["txid"] == txid and r["category"] == "receive"]
+        return [r for r in rows if txid in (r.get("txid"), r.get("outid")) and r["category"] == "receive"]
 
     def assert_not_counted(self, wallet):
         balances = wallet.getbalances()["mine"]
@@ -109,7 +109,7 @@ class BlsctOutputStorageConflictTest(BitcoinTestFramework):
         n0.syncwithvalidationinterfacequeue()
         rows = [r for r in receiver.listtransactions() if r["category"] == "receive"]
         assert_equal(len(rows), 1)
-        receive_id = rows[0]["txid"]
+        receive_id = rows[0]["outid"]
         assert_equal(rows[0]["confirmations"], 0)
         assert_equal(len(self.receives(control, control_txid)), 1)
         assert_equal(receiver.getbalances()["mine"]["untrusted_pending"], RECEIVE_AMOUNT)

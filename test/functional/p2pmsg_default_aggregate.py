@@ -124,7 +124,7 @@ class P2PMsgDefaultAggregateTest(BitcoinTestFramework):
         # effect on w1 is the genuine 1.0 payment it received -- nothing else.
         # A regression here surfaces served candidates as spontaneous
         # "send -fee / fee" entries in the producer's transaction list.
-        entries = [e for e in w1.listtransactions("*", 1000) if e["txid"] == txid]
+        entries = [e for e in w1.listtransactions("*", 1000) if e.get("txid") == txid]
         assert entries, "producer wallet does not know the aggregate tx"
         categories = [e["category"] for e in entries]
         assert "send" not in categories, \

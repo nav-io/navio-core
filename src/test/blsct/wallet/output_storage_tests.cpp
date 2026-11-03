@@ -7,6 +7,7 @@
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/rpc.h>
 #include <blsct/wallet/verification.h>
+#include <interfaces/wallet.h>
 #include <kernel/chain.h>
 #include <kernel/mempool_removal_reason.h>
 #include <key_io.h>
@@ -14,6 +15,7 @@
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <txdb.h>
+#include <wallet/coincontrol.h>
 #include <wallet/context.h>
 #include <wallet/receive.h>
 #include <wallet/spend.h>
@@ -1028,6 +1030,46 @@ BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_change_trusted, TestingSetu
     BOOST_CHECK(!CachedTxIsTrusted(*r.cover_wallet, *r.cover_wallet->GetWalletTx(r.aggregate->GetHash())));
     BOOST_CHECK_EQUAL(GetBalance(*r.cover_wallet).m_mine_trusted + GetBlsctBalance(*r.cover_wallet).m_mine_trusted, 0);
     BOOST_CHECK_EQUAL(AvailableBlsctCoins(*r.cover_wallet).Size(), 0U);
+}
+
+// Under output storage the change of a recorded send is held twice: by its
+// CWalletTx (mapWallet) and by its mapOutputs mirror. The node interface the
+// GUI reads must count it once, as getbalances does: getAvailableBalance()
+// adds AvailableCoins() and AvailableBlsctCoins(), which both list it.
+BOOST_FIXTURE_TEST_CASE(output_storage_interface_balances_count_change_once, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    WalletContext context;
+    context.chain = m_node.chain.get();
+    const std::unique_ptr<interfaces::Wallet> iwallet{interfaces::MakeWallet(context, r.wallet)};
+    BOOST_REQUIRE(iwallet);
+
+    const auto check = [&] {
+        LOCK(r.wallet->cs_wallet);
+        const Balance bal{GetBalance(*r.wallet)};
+        const Balance blsct_bal{GetBlsctBalance(*r.wallet)};
+        BOOST_CHECK_EQUAL(bal.m_mine_trusted + blsct_bal.m_mine_trusted, OwnAggregate::change_amount);
+        BOOST_CHECK_EQUAL(iwallet->getBalance(), OwnAggregate::change_amount);
+        const interfaces::WalletBalances balances{iwallet->getBalances()};
+        BOOST_CHECK_EQUAL(balances.balance, OwnAggregate::change_amount);
+        BOOST_CHECK_EQUAL(balances.unconfirmed_balance, bal.m_mine_untrusted_pending + blsct_bal.m_mine_untrusted_pending);
+        BOOST_CHECK_EQUAL(iwallet->getAvailableBalance(CCoinControl{}), OwnAggregate::change_amount);
+    };
+
+    {
+        LOCK(r.wallet->cs_wallet);
+        BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+        r.wallet->transactionAddedToMempool(r.aggregate);
+        // Both records of the change exist and both coin lists hold it.
+        BOOST_REQUIRE(r.wallet->GetWalletOutput(r.change_outpoint) != nullptr);
+        BOOST_REQUIRE(IsOutputCoveredByWalletTx(*r.wallet, r.change_outpoint));
+        const auto in_wallet_txs = AvailableCoins(*r.wallet).All();
+        BOOST_CHECK(std::any_of(in_wallet_txs.begin(), in_wallet_txs.end(), [&](const COutput& c) { return c.outpoint == r.change_outpoint; }));
+        const auto in_outputs = AvailableBlsctCoins(*r.wallet).All();
+        BOOST_CHECK(std::any_of(in_outputs.begin(), in_outputs.end(), [&](const COutput& c) { return c.outpoint == r.change_outpoint; }));
+    }
+    check();
 }
 
 // The order a chained send depends on: the send records its aggregate before

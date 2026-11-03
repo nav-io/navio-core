@@ -506,7 +506,11 @@ static void WalletOutputToJSON(const CWallet& wallet, const COutPoint& outpoint,
     } else {
         entry.pushKV("trusted", IsOutputTrusted(wallet, wout));
     }
-    entry.pushKV("txid", outpoint.hash.GetHex());
+    // No "txid": a CWalletOutput does not record its containing transaction,
+    // and the outputs whose CWalletTx the wallet knows are listed through that
+    // CWalletTx, under its txid, rather than here. Finding the txid would take
+    // a block read per row, so the entry names the output by outid alone.
+    //
     // outid is the BLSCT-specific per-output identifier, preserved even after
     // range-proof stripping (see CWalletOutput::GetOutputHash / outputHash).
     entry.pushKV("outid", wout.GetOutputHash().GetHex());
@@ -639,8 +643,10 @@ static void ListOutputTransaction(const CWallet& wallet,
 
 //! Walk wallet.mapOutputs, emitting one JSON entry per output that is not
 //! already reachable via the wtxOrdered / mapWallet walk. Local spends and
-//! their change outputs are deduped here via GetWalletTxFromOutpoint, matching
-//! the accounting path in GetBlsctBalance (src/wallet/receive.cpp).
+//! their change outputs are deduped here via GetWalletTxFromOutpoint. This is
+//! deliberately not the IsOutputCoveredByWalletTx() rule of the balance: that
+//! walk lists a CWalletTx in any state, so an output whose CWalletTx is
+//! neither confirmed nor in the mempool would otherwise be listed twice.
 //! No-op on wallets without WALLET_FLAG_BLSCT_OUTPUT_STORAGE.
 static void ListMapOutputTransactions(const CWallet& wallet,
                                       int nMinDepth, int nMaxDepth,
@@ -681,7 +687,9 @@ static void ListTransactionsOrdered(const CWallet& wallet, const CWalletTx& wtx,
 }
 
 
-static std::vector<RPCResult> TransactionDescriptionString()
+//! `txid_optional`: whether the result may hold output-storage entries, which
+//! carry no txid (see WalletOutputToJSON()).
+static std::vector<RPCResult> TransactionDescriptionString(bool txid_optional = false)
 {
     return{{RPCResult::Type::NUM, "confirmations", "The number of confirmations for the transaction. Negative confirmations means the\n"
                "transaction conflicted that many blocks ago."},
@@ -692,7 +700,9 @@ static std::vector<RPCResult> TransactionDescriptionString()
            {RPCResult::Type::NUM, "blockheight", /*optional=*/true, "The block height containing the transaction."},
            {RPCResult::Type::NUM, "blockindex", /*optional=*/true, "The index of the transaction in the block that includes it."},
            {RPCResult::Type::NUM_TIME, "blocktime", /*optional=*/true, "The block time expressed in " + UNIX_EPOCH_TIME + "."},
-           {RPCResult::Type::STR_HEX, "txid", "The transaction id."},
+           txid_optional ? RPCResult{RPCResult::Type::STR_HEX, "txid", /*optional=*/true, "The transaction id. Omitted for output-storage entries, whose containing\n"
+                                         "transaction the wallet does not record: see outid."}
+                         : RPCResult{RPCResult::Type::STR_HEX, "txid", "The transaction id."},
            {RPCResult::Type::STR_HEX, "wtxid", /*optional=*/true, "The hash of serialized transaction, including witness data. Omitted for output-storage-only entries (range proof stripped, no full tx retained)."},
            {RPCResult::Type::ARR, "walletconflicts", "Conflicting transaction ids.",
            {
@@ -744,10 +754,11 @@ RPCHelpMan listtransactions()
                                                                                                                  {RPCResult::Type::STR_AMOUNT, "fee", /*optional=*/true, "The amount of the fee in " + CURRENCY_UNIT + ". This is negative and only available for the\n"
                                                                                                                                                                                                                        "'send' category of transactions."},
                                                                                                                  {RPCResult::Type::STR, "memo", /*optional=*/true, "BLSCT output memo recovered from the range proof, if any."},
-                                                                                                                 {RPCResult::Type::STR_HEX, "outid", /*optional=*/true, "BLSCT per-output identifier (distinct from txid, preserved across range-proof stripping). Only present for output-storage entries."},
+                                                                                                                 {RPCResult::Type::STR_HEX, "outid", /*optional=*/true, "BLSCT output id: the hash naming this output, preserved across range-proof stripping. It is not a transaction id;\n"
+                                "gettxfromoutputhash or getoutputinfo find the transaction holding the output. Only present for output-storage entries."},
                                                                                                                  {RPCResult::Type::BOOL, "output_storage", /*optional=*/true, "True if the entry was synthesised from mapOutputs alone (no CWalletTx), i.e. surfaced by the BLSCT output-storage path."},
                                                                                                              },
-                                                                                                             TransactionDescriptionString()),
+                                                                                                             TransactionDescriptionString(/*txid_optional=*/true)),
                                                                                  {
                                                                                      {RPCResult::Type::BOOL, "abandoned", "'true' if the transaction has been abandoned (inputs are respendable)."},
                                                                                  })},
@@ -858,10 +869,11 @@ RPCHelpMan listpendingtransactions()
                                                                                                                  {RPCResult::Type::STR_AMOUNT, "fee", /*optional=*/true, "The amount of the fee in " + CURRENCY_UNIT + ". This is negative and only available for the\n"
                                                                                                                                                                                                                        "'send' category of transactions."},
                                                                                                                  {RPCResult::Type::STR, "memo", /*optional=*/true, "BLSCT output memo recovered from the range proof, if any."},
-                                                                                                                 {RPCResult::Type::STR_HEX, "outid", /*optional=*/true, "BLSCT per-output identifier (distinct from txid, preserved across range-proof stripping). Only present for output-storage entries."},
+                                                                                                                 {RPCResult::Type::STR_HEX, "outid", /*optional=*/true, "BLSCT output id: the hash naming this output, preserved across range-proof stripping. It is not a transaction id;\n"
+                                "gettxfromoutputhash or getoutputinfo find the transaction holding the output. Only present for output-storage entries."},
                                                                                                                  {RPCResult::Type::BOOL, "output_storage", /*optional=*/true, "True if the entry was synthesised from mapOutputs alone (no CWalletTx)."},
                                                                                                              },
-                                                                                                             TransactionDescriptionString()),
+                                                                                                             TransactionDescriptionString(/*txid_optional=*/true)),
                                                                                  {
                                                                                      {RPCResult::Type::BOOL, "abandoned", "'true' if the transaction has been abandoned (inputs are respendable)."},
                                                                                  })},
@@ -968,10 +980,11 @@ RPCHelpMan listsinceblock()
                                 {RPCResult::Type::STR_AMOUNT, "fee", /*optional=*/true, "The amount of the fee in " + CURRENCY_UNIT + ". This is negative and only available for the\n"
                                      "'send' category of transactions."},
                                 {RPCResult::Type::STR, "memo", /*optional=*/true, "BLSCT output memo recovered from the range proof, if any."},
-                                {RPCResult::Type::STR_HEX, "outid", /*optional=*/true, "BLSCT per-output identifier. Only present for output-storage entries."},
+                                {RPCResult::Type::STR_HEX, "outid", /*optional=*/true, "BLSCT output id: the hash naming this output, preserved across range-proof stripping. It is not a transaction id;\n"
+                                "gettxfromoutputhash or getoutputinfo find the transaction holding the output. Only present for output-storage entries."},
                                 {RPCResult::Type::BOOL, "output_storage", /*optional=*/true, "True if surfaced from mapOutputs without an underlying CWalletTx."},
                             },
-                            TransactionDescriptionString()),
+                            TransactionDescriptionString(/*txid_optional=*/true)),
                             {
                                 {RPCResult::Type::BOOL, "abandoned", "'true' if the transaction has been abandoned (inputs are respendable)."},
                                 {RPCResult::Type::STR, "label", /*optional=*/true, "A comment for the address/transaction, if any"},
@@ -1085,7 +1098,12 @@ RPCHelpMan listsinceblock()
                     if (wallet.GetWalletTxFromOutpoint(op) != nullptr) continue;
                     ListOutputTransaction(wallet, op, mit->second, -100000000, 100000000, out_entries, filter, filter_label);
                 }
-                for (auto& [_, e] : out_entries) removed.push_back(std::move(e));
+                // Unlike the other output-storage rows, these come from a block
+                // read, so their containing transaction is known: report it.
+                for (auto& [_, e] : out_entries) {
+                    e.pushKV("txid", tx->GetHash().GetHex());
+                    removed.push_back(std::move(e));
+                }
             }
         }
         blockId = block.hashPrevBlock;
@@ -1146,7 +1164,8 @@ RPCHelpMan gettransaction()
                                 {RPCResult::Type::STR_AMOUNT, "fee", /*optional=*/true, "The amount of the fee in " + CURRENCY_UNIT + ". This is negative and only available for the \n"
                                     "'send' category of transactions."},
                                 {RPCResult::Type::STR, "memo", /*optional=*/true, "BLSCT output memo recovered from the range proof, if any."},
-                                {RPCResult::Type::STR_HEX, "outid", /*optional=*/true, "BLSCT per-output identifier. Only present for output-storage entries."},
+                                {RPCResult::Type::STR_HEX, "outid", /*optional=*/true, "BLSCT output id: the hash naming this output, preserved across range-proof stripping. It is not a transaction id;\n"
+                                "gettxfromoutputhash or getoutputinfo find the transaction holding the output. Only present for output-storage entries."},
                                 {RPCResult::Type::BOOL, "output_storage", /*optional=*/true, "True if surfaced from mapOutputs without an underlying CWalletTx."},
                                 {RPCResult::Type::BOOL, "abandoned", "'true' if the transaction has been abandoned (inputs are respendable)."},
                                 {RPCResult::Type::ARR, "parent_descs", /*optional=*/true, "Only if 'category' is 'received'. List of parent descriptors for the scriptPubKey of this coin.", {

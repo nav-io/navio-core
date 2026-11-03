@@ -17,6 +17,7 @@
 
 #include <univalue.h>
 
+#include <set>
 
 namespace wallet {
 
@@ -109,16 +110,12 @@ static CAmount GetReceived(const CWallet& wallet, const UniValue& params, bool b
     // Under WALLET_FLAG_BLSCT_OUTPUT_STORAGE, receive-side BLSCT outputs can
     // live in mapOutputs without ever getting a matching CWalletTx (range
     // proofs stripped, recovery data cached per-output) -- see
-    // GetBlsctBalance() in wallet/receive.cpp for the same pattern. Skip an
-    // entry only when its matching CWalletTx is confirmed or in the mempool,
-    // since that means the mapWallet pass above already tallied it; an
-    // inactive CWalletTx (e.g. superseded by a staker-aggregated tx with a
-    // different txid) leaves the mapOutputs entry as the sole record of the
-    // credit.
+    // GetBlsctBalance() in wallet/receive.cpp for the same pattern. Skip the
+    // entries the mapWallet pass above already tallied (see
+    // IsOutputCoveredByWalletTx()).
     if (!blsct_destinations.empty() && wallet.IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
         for (const auto& [outpoint, wout] : wallet.mapOutputs) {
-            const CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(outpoint);
-            if (wtx != nullptr && (wtx->isConfirmed() || wtx->InMempool())) continue;
+            if (IsOutputCoveredByWalletTx(wallet, outpoint)) continue;
 
             const int depth{wallet.GetOutputDepthInMainChain(wout)};
             if (depth < min_depth
@@ -763,8 +760,9 @@ RPCHelpMan listunspent()
     blsct::KeyMan* blsct_km = pwallet->GetBLSCTKeyMan();
 
     // Emits one listunspent entry for `out`. BLSCT coins are rendered using
-    // their recovered nv1... destination and amount (AvailableBlsctCoins
-    // already substitutes the recovered amount into out.txout.nValue) and
+    // their recovered nv1... destination and amount (AvailableCoins and
+    // AvailableBlsctCoins both substitute the recovered amount into
+    // out.txout.nValue) and
     // skip the redeemScript/witnessScript/desc fields, which assume a
     // standard, unmasked scriptPubKey and have no meaning for a confidential
     // output.
@@ -858,8 +856,22 @@ RPCHelpMan listunspent()
         results.push_back(entry);
     };
 
-    for (const COutput& out : vecOutputs) add_entry(out, /*is_blsct=*/false);
-    for (const COutput& out : vecBlsctOutputs) add_entry(out, /*is_blsct=*/true);
+    // Under output storage the outputs of the wallet's own sends (their
+    // change, above all) are known twice: through their CWalletTx, in
+    // vecOutputs, and through their mapOutputs mirror, in vecBlsctOutputs.
+    // List each output once, skipping the mirror under the rule the balance
+    // RPCs use (IsOutputCoveredByWalletTx), so listunspent agrees with them.
+    // A BLSCT output is rendered as one whichever list it came from.
+    std::set<COutPoint> listed;
+    for (const COutput& out : vecOutputs) {
+        if (!listed.insert(out.outpoint).second) continue;
+        add_entry(out, /*is_blsct=*/out.txout.HasBLSCTRangeProof() || out.txout.HasBLSCTKeys());
+    }
+    for (const COutput& out : vecBlsctOutputs) {
+        if (IsOutputCoveredByWalletTx(*pwallet, out.outpoint)) continue;
+        if (!listed.insert(out.outpoint).second) continue;
+        add_entry(out, /*is_blsct=*/true);
+    }
 
     return results;
 },

@@ -157,7 +157,7 @@ class BlsctAggregatedUnconfirmedChainTest(BitcoinTestFramework):
         half's fee; the cover halves' inputs and outputs and our change add
         no rows; the only receive is the funding."""
         entries = [e for e in wallet.listtransactions("*", 100000, 0, True) if e["confirmations"] > 0]
-        self.log.info(f"history: {[(e['category'], e['amount'], e.get('fee'), e['txid'][:8]) for e in entries]}")
+        self.log.info(f"history: {[(e['category'], e['amount'], e.get('fee'), e.get('txid', e.get('outid'))[:8]) for e in entries]}")
         sends = [e for e in entries if e["category"] == "send"]
         assert_equal(sorted(e["txid"] for e in sends), sorted(chain_txids))
         for e in sends:
@@ -173,7 +173,7 @@ class BlsctAggregatedUnconfirmedChainTest(BitcoinTestFramework):
         send of everything the chain paid to others, with the chain's total
         fee, and holds the creating wallet's balances and coins."""
         entries = [e for e in imported.listtransactions("*", 100000, 0, True) if e["confirmations"] > 0]
-        self.log.info(f"imported after: history: {[(e['category'], e['amount'], e.get('fee'), e['txid'][:8]) for e in entries]}")
+        self.log.info(f"imported after: history: {[(e['category'], e['amount'], e.get('fee'), e.get('txid', e.get('outid'))[:8]) for e in entries]}")
         sends = [e for e in entries if e["category"] == "send"]
         assert_equal([e["txid"] for e in sends], [merged_txid])
         # Every hop paid SEND_AMOUNT to the producer's address; the
@@ -235,7 +235,7 @@ class BlsctAggregatedUnconfirmedChainTest(BitcoinTestFramework):
         merged block tx: one send row under the block txid, paying the whole
         chain's amount to others with the sum of the sends' fees."""
         entries = wallet.listtransactions("*", 100000, 0, True)
-        self.log.info(f"{label}: history: {[(e['category'], e['amount'], e.get('fee'), e['confirmations'], e['txid'][:8]) for e in entries]}")
+        self.log.info(f"{label}: history: {[(e['category'], e['amount'], e.get('fee'), e['confirmations'], e.get('txid', e.get('outid'))[:8]) for e in entries]}")
         assert all(e["confirmations"] > 0 for e in entries)
         sent = CHAIN_LENGTH * SEND_AMOUNT
         total_fee = sum(fees)
