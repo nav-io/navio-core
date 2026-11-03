@@ -529,6 +529,17 @@ BOOST_FIXTURE_TEST_CASE(output_storage_token_outputs, TestingSetup)
 
     const auto bal = GetBlsctBalance(*wallet, 0, token_id);
     BOOST_CHECK_EQUAL(bal.m_mine_trusted, 8 * COIN);
+
+    // TxGetCredit must credit each output under the token id it filters by.
+    // It used to call OutputGetCredit with the default (NAV) id, so a token
+    // output passed the filter and was then credited as 0.
+    auto navResult = blsct::CreateOutput(recvAddress, 2 * COIN, "nav", TokenId(), BlstScalar::Rand(), blsct::NORMAL, 0, /*fAllowZeroValueRangeProof=*/false, /*transcript_v2=*/true);
+    CMutableTransaction mixed;
+    mixed.vout.push_back(transferResult.out);
+    mixed.vout.push_back(navResult.out);
+    const CTransaction mixed_tx{mixed};
+    BOOST_CHECK_EQUAL(TxGetCredit(*wallet, mixed_tx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, token_id), 3 * COIN);
+    BOOST_CHECK_EQUAL(TxGetCredit(*wallet, mixed_tx, ISMINE_SPENDABLE | ISMINE_SPENDABLE_BLSCT, TokenId()), 2 * COIN);
 }
 
 static void CheckBalanceEqual(const Balance& got, const Balance& want)
