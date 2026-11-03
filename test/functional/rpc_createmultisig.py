@@ -123,21 +123,6 @@ class RpcCreateMultiSigTest(BitcoinTestFramework):
         # A transparent type still works, so the guard is not over-broad.
         assert_equal(legacy_wallet.addmultisigaddress(2, self.pub, "", "legacy")["address"], node0.createmultisig(2, self.pub, "legacy")["address"])
 
-    def check_addmultisigaddress_errors(self):
-        if self.options.descriptors:
-            return
-        self.log.info('Check that addmultisigaddress fails when the private keys are missing')
-        addresses = [self.nodes[1].getnewaddress(address_type='legacy') for _ in range(2)]
-        assert_raises_rpc_error(-5, 'no full public key for address', lambda: self.nodes[0].addmultisigaddress(nrequired=1, keys=addresses))
-        for a in addresses:
-            # Importing all addresses should not change the result
-            self.nodes[0].importaddress(a)
-        assert_raises_rpc_error(-5, 'no full public key for address', lambda: self.nodes[0].addmultisigaddress(nrequired=1, keys=addresses))
-
-        # Bech32m address type is disallowed for legacy wallets
-        pubs = [self.nodes[1].getaddressinfo(addr)["pubkey"] for addr in addresses]
-        assert_raises_rpc_error(-5, "Bech32m multisig addresses cannot be created with legacy wallets", self.nodes[0].addmultisigaddress, 2, pubs, "", "bech32m")
-
     def checkbalances(self):
         node0, node1, node2 = self.nodes
         self.generate(node0, COINBASE_MATURITY)

@@ -321,10 +321,7 @@ class SendallTest(BitcoinTestFramework):
             "desc": utxo["desc"],
             "timestamp": 0,
         }]
-        if self.options.descriptors:
-            watchonly.importdescriptors(import_req)
-        else:
-            watchonly.importmulti(import_req)
+        watchonly.importdescriptors(import_req)
 
         sendall_tx_receipt = watchonly.sendall(recipients=[self.remainder_target], inputs=[utxo], lock_unspents=True)
         # Only the given input is used: it is the one sendall locked

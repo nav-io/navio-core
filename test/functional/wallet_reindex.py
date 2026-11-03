@@ -49,16 +49,14 @@ class WalletReindexTest(BitcoinTestFramework):
         # Blank wallets don't have a birth time
         # assert 'birthtime' not in wallet_watch_only.getwalletinfo()
 
-        # For a descriptors wallet: Import address with timestamp=now.
-        # For legacy wallet: There is no way of importing a script/address with a custom time. The wallet always imports it with birthtime=1.
-        # In both cases, disable rescan to not detect the transaction.
+        # Import address with timestamp=now, and disable rescan to not detect the transaction.
         wallet_watch_only.importaddress(wallet_addr, rescan=False)
         assert_equal(len(wallet_watch_only.listtransactions()), 0)
 
         # Rescan the wallet to detect the missing transaction
         wallet_watch_only.rescanblockchain()
         assert_equal(wallet_watch_only.gettransaction(tx_id)['confirmations'], 50)
-        assert_equal(wallet_watch_only.getbalances()['mine' if self.options.descriptors else 'watchonly']['trusted'], 2)
+        assert_equal(wallet_watch_only.getbalances()['mine']['trusted'], 2)
 
         # Reindex and wait for it to finish
         with node.assert_debug_log(expected_msgs=["initload thread exit"]):
@@ -70,10 +68,8 @@ class WalletReindexTest(BitcoinTestFramework):
         tx_info = wallet_watch_only.gettransaction(tx_id)
         assert_equal(tx_info['confirmations'], 50)
 
-        # Depending on the wallet type, the birth time changes.
-        if self.options.descriptors:
-            # For descriptors, verify the wallet updated the birth time to the transaction time
-            assert_equal(tx_info['time'], wallet_watch_only.getwalletinfo()['birthtime'])
+        # Verify the wallet updated the birth time to the transaction time
+        assert_equal(tx_info['time'], wallet_watch_only.getwalletinfo()['birthtime'])
 
         wallet_watch_only.unloadwallet()
 
