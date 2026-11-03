@@ -33,6 +33,7 @@ from test_framework.util import (
     assert_equal,
     assert_greater_than,
     assert_raises_rpc_error,
+    sync_txindex,
     tx_from_hex,
 )
 from test_framework.wallet import (
@@ -100,6 +101,7 @@ class RawTransactionsTest(BitcoinTestFramework):
     def getrawtransaction_tests(self):
         tx = self.wallet.send_self_transfer(from_node=self.nodes[0])
         self.generate(self.nodes[0], 1)
+        sync_txindex(self, self.nodes[0])
         txId = tx['txid']
         err_msg = (
             "No such mempool transaction. Use -txindex or provide a block hash to enable"

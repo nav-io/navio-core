@@ -247,6 +247,13 @@ def satoshi_round(amount):
     return Decimal(amount).quantize(Decimal('0.00000001'), rounding=ROUND_DOWN)
 
 
+def sync_txindex(test_framework, node):
+    test_framework.log.debug("Waiting for node txindex to sync")
+    sync_start = int(time.time())
+    test_framework.wait_until(lambda: node.getindexinfo("txindex")["txindex"]["synced"])
+    test_framework.log.debug(f"Synced in {time.time() - sync_start} seconds")
+
+
 def wait_until_helper_internal(predicate, *, attempts=float('inf'), timeout=float('inf'), lock=None, timeout_factor=1.0):
     """Sleep until the predicate resolves to be True.
 

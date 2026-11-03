@@ -12,6 +12,7 @@ from decimal import Decimal
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
         assert_equal,
+        sync_txindex,
 )
 
 class TxConflicts(BitcoinTestFramework):
@@ -34,6 +35,7 @@ class TxConflicts(BitcoinTestFramework):
         txid_conflict_from_2 = self.nodes[0].sendtoaddress(self.nodes[0].getnewaddress(), Decimal("10"))
         self.generate(self.nodes[0], 1)
         self.sync_blocks()
+        sync_txindex(self, self.nodes[0])
 
         self.log.info("Disconnect nodes to broadcast conflicts on their respective chains")
         self.disconnect_nodes(0, 1)

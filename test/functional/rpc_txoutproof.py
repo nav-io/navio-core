@@ -12,6 +12,7 @@ from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
     assert_equal,
     assert_raises_rpc_error,
+    sync_txindex,
 )
 from test_framework.wallet import MiniWallet
 
@@ -51,6 +52,7 @@ class MerkleBlockTest(BitcoinTestFramework):
         txlist.append(blocktxn[2])
 
         # With -txindex, transactions are located by their txid
+        sync_txindex(self, self.nodes[1])
         assert_equal(self.nodes[1].verifytxoutproof(self.nodes[1].gettxoutproof([txid1])), [txid1])
         assert_equal(self.nodes[1].verifytxoutproof(self.nodes[1].gettxoutproof([txid1, txid2])), txlist)
         assert_equal(self.nodes[0].verifytxoutproof(self.nodes[0].gettxoutproof([txid1, txid2], blockhash)), txlist)
