@@ -2231,7 +2231,7 @@ void CWallet::transactionRemovedFromMempool(const CTransactionRef& tx, MemPoolRe
         // the eviction.
         if (mapWallet.contains(tx->GetHash())) {
             if (auto keys = TokenPredicateKeys(*tx); !keys.empty()) {
-                m_pending_predicate_conflicts.push_back({tx->GetHash(), std::move(keys), std::nullopt});
+                m_pending_predicate_conflicts.push_back({tx->GetHash(), std::move(keys)});
             }
         }
     }
@@ -2348,7 +2348,13 @@ void CWallet::MarkPendingPredicateConflicts(const interfaces::BlockInfo& block)
     // evicting block always disconnects it too and makes the tx unconflicted.
     // (At worst, disconnecting only that later block leaves the tx
     // unconfirmed, where abandontransaction can still free its inputs.) The
-    // entries are kept until the step ends, see updatedBlockTip().
+    // entries are kept until updatedBlockTip().
+    //
+    // The same goes for in-wallet descendants the recursion reaches: one
+    // marked earlier in the round, through its own entry (its own predicates
+    // may touch another token an earlier block touched) or another entry's
+    // recursion, moves to this block too, so it is never left conflicted
+    // with a block before the one that evicted its parent.
     std::set<uint256> touched;
     for (const CTransactionRef& block_tx : block.data->vtx) touched.merge(TokenPredicateKeys(*block_tx));
     if (touched.empty()) return;
@@ -2357,21 +2363,23 @@ void CWallet::MarkPendingPredicateConflicts(const interfaces::BlockInfo& block)
         if (std::none_of(entry.token_keys.begin(), entry.token_keys.end(), [&](const uint256& key) { return touched.contains(key); })) continue;
         const auto it = mapWallet.find(entry.txid);
         if (it == mapWallet.end()) continue;
-        // Only an unconfirmed tx, or one this step marked conflicted: leave a
-        // tx that confirmed after all (e.g. one this step's blocks merged) or
-        // that an input conflict marked.
-        const auto is_ours = [&](const CWalletTx& wtx) {
+        // Only an unconfirmed tx, or one this round marked conflicted with
+        // an earlier block: leave a tx that confirmed after all (e.g. one
+        // merged into a block tx) or that an input conflict marked.
+        const auto is_ours = [&](const CWalletTx& wtx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet) {
             if (wtx.isInactive()) return true;
             const auto* conflicted = wtx.state<TxStateConflicted>();
-            return conflicted && entry.marked_block && conflicted->conflicting_block_hash == *entry.marked_block;
+            if (!conflicted || conflicted->conflicting_block_hash == block.hash) return false;
+            const auto mark = m_predicate_conflict_marks.find(wtx.GetHash());
+            return mark != m_predicate_conflict_marks.end() && mark->second == conflicted->conflicting_block_hash;
         };
         if (!is_ours(it->second)) continue;
         RecursiveUpdateTxState(entry.txid, [&](CWalletTx& wtx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet) {
             if (!is_ours(wtx)) return TxUpdate::UNCHANGED;
             wtx.m_state = TxStateConflicted{block.hash, block.height};
+            m_predicate_conflict_marks[wtx.GetHash()] = block.hash;
             return TxUpdate::CHANGED;
         });
-        entry.marked_block = block.hash;
     }
 }
 
@@ -2402,6 +2410,7 @@ void CWallet::blockDisconnected(const interfaces::BlockInfo& block)
 
     // Same for pending token predicate conflicts as for the output ones below.
     m_pending_predicate_conflicts.clear();
+    m_predicate_conflict_marks.clear();
 
     // Received outputs conflicted by this block (or a later one) become
     // unconfirmed again, with our sends spending them, as the CWalletTx
@@ -2485,8 +2494,12 @@ void CWallet::blockDisconnected(const interfaces::BlockInfo& block)
 
 void CWallet::updatedBlockTip()
 {
-    // The connect step whose evictions these are is over.
-    WITH_LOCK(cs_wallet, m_pending_predicate_conflicts.clear());
+    // The ActivateBestChain round whose evictions these are is over.
+    {
+        LOCK(cs_wallet);
+        m_pending_predicate_conflicts.clear();
+        m_predicate_conflict_marks.clear();
+    }
     m_best_block_time = GetTime();
 }
 

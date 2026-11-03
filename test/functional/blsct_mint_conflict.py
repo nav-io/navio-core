@@ -152,6 +152,7 @@ class BlsctMintConflictTest(BitcoinTestFramework):
         issuer.abandontransaction(evicted)
 
         self.test_multi_block_connect(node, issuer, issuer_addr)
+        self.test_descendant_with_own_token(node, issuer_addr)
         self.test_reorg_undoes_create(node, issuer, issuer_addr)
 
     def test_multi_block_connect(self, node, issuer, issuer_addr):
@@ -207,6 +208,77 @@ class BlsctMintConflictTest(BitcoinTestFramework):
         assert_equal(issuer.gettransaction(evicted)["confirmations"], 0)
         assert evicted not in node.getrawmempool()
         issuer.abandontransaction(evicted)
+
+    def test_descendant_with_own_token(self, node, issuer_addr):
+        self.log.info("A descendant minting another token follows its parent's conflict")
+        issuer = node.get_wallet_rpc("issuer")
+        self.generate_blsct_blocks(node, issuer_addr, 1)
+        token_t = issuer.createtoken({"name": "parent"}, 1)["tokenId"]
+        self.generate_blsct_blocks(node, issuer_addr, 1)
+        token_u = issuer.createtoken({"name": "child"}, 1000)["tokenId"]
+        self.generate_blsct_blocks(node, issuer_addr, 1)
+        assert_equal(node.getrawmempool(), [])
+
+        # first: mints T, mined in B. parent: mints T, evicted by B. other:
+        # mints U, mined in A. child: mints U, spends parent's change. Lock
+        # coins so that only child spends an unconfirmed output.
+        def mint_from(token_id, allowed=lambda u: u["confirmations"] > 0):
+            locked = [{"outid": u["outid"]} for u in issuer.listunspent(0) if not allowed(u)]
+            if locked:
+                issuer.lockunspent(False, locked)
+            txid = self.submit(node, issuer.minttoken, token_id, issuer_addr, 1)
+            if locked:
+                issuer.lockunspent(True, locked)
+            return txid
+        first = mint_from(token_t)
+        parent = mint_from(token_t)
+        other = mint_from(token_u)
+        parent_outs = {out["hash"] for out in node.getrawtransaction(parent, True)["vout"]}
+        child = mint_from(token_u, lambda u: u["outid"] in parent_outs)
+        for txid in (first, parent, other):
+            assert_equal(node.getmempoolentry(txid)["depends"], [])
+        assert_equal(node.getmempoolentry(child)["depends"], [parent])
+
+        txs = [first, parent, other, child]
+        for txid in txs:
+            node.prioritisetransaction(txid=txid, fee_delta=-COIN)
+        (block_x,) = self.generate_blsct_blocks(node, issuer_addr, 1)
+        node.invalidateblock(block_x)
+        node.prioritisetransaction(txid=other, fee_delta=2 * COIN)
+        (block_a,) = self.generate_blsct_blocks(node, issuer_addr, 1)
+        assert_equal(node.gettoken(token_u)["currentSupply"], 1 * COIN)
+        node.prioritisetransaction(txid=first, fee_delta=2 * COIN)
+        (block_b,) = self.generate_blsct_blocks(node, issuer_addr, 1)
+        assert_equal(node.gettoken(token_t)["currentSupply"], 1 * COIN)
+        assert not {parent, child} & set(node.getrawmempool())
+
+        self.log.info("Reorg from X to A-B with parent and child back in the mempool")
+        node.reconsiderblock(block_x)
+        node.invalidateblock(block_a)
+        assert_equal(node.getbestblockhash(), block_x)
+        node.syncwithvalidationinterfacequeue()
+        for txid in (parent, child):
+            node.prioritisetransaction(txid=txid, fee_delta=COIN)
+            node.sendrawtransaction(issuer.gettransaction(txid)["hex"])
+        # B evicts parent, and child with it. A touched U, child's token,
+        # but child must end up conflicted with B like its parent.
+        node.reconsiderblock(block_a)
+        assert_equal(node.getbestblockhash(), block_b)
+        assert not {parent, child} & set(node.getrawmempool())
+        node.syncwithvalidationinterfacequeue()
+        assert_equal(issuer.gettransaction(parent)["confirmations"], -1)
+        assert_equal(issuer.gettransaction(child)["confirmations"], -1)
+
+        self.log.info("Dropping B but keeping A frees both")
+        node.invalidateblock(block_x)
+        node.invalidateblock(block_b)
+        assert_equal(node.getbestblockhash(), block_a)
+        self.generate_blsct_blocks(node, issuer_addr, 1)
+        node.syncwithvalidationinterfacequeue()
+        for txid in (parent, child):
+            assert_equal(issuer.gettransaction(txid)["confirmations"], 0)
+            assert txid not in node.getrawmempool()
+        issuer.abandontransaction(parent)
 
     def test_reorg_undoes_create(self, node, issuer, issuer_addr):
         self.log.info("A mint whose token's creation a reorg undid is evicted")

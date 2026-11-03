@@ -433,13 +433,18 @@ private:
         uint256 txid;
         //! Token-set keys the tx's predicates touch.
         std::set<uint256> token_keys;
-        //! The block of this connect step the tx was marked conflicted with.
-        std::optional<uint256> marked_block;
     };
-    /** Evictions of the current connect step. Kept until the step ends
-     * (updatedBlockTip()) so a later block of the step touching the same token
-     * can take the conflict over. Not persisted. */
+    /** Evictions reported since the last updatedBlockTip(), i.e. during one
+     * ActivateBestChain round, which may cover several connect steps. Kept
+     * until then so a later block of the round touching the same token can
+     * take the conflict over (which only errs towards unconflicting early).
+     * Not persisted. */
     std::vector<PendingPredicateConflict> m_pending_predicate_conflicts GUARDED_BY(cs_wallet);
+    /** The txs MarkPendingPredicateConflicts() conflicted during that round,
+     * with the block it used, entries' in-wallet descendants included. Only
+     * these may be moved to a later block: a tx conflicted otherwise (by an
+     * input conflict) is left alone. Cleared with the entries. */
+    std::map<uint256, uint256> m_predicate_conflict_marks GUARDED_BY(cs_wallet);
 
     /** Mark each m_pending_predicate_conflicts entry whose tokens the block
      * touches conflicted with the block. */
