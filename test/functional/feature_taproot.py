@@ -1532,14 +1532,22 @@ class TaprootTest(BitcoinTestFramework):
 
         self.log.info("Unit test scenario...")
 
+        def fixed_txout(value, spk):
+            """A CTxOut whose predicate is derived from its contents instead of drawn
+            from the PRNG, so that the coinbase and the transactions below stay deterministic."""
+            out = CTxOut(value, spk)
+            out.predicate = bytes.fromhex("0410") + hashlib.sha256(value.to_bytes(8, 'little') + spk).digest()[:16]
+            return out
+
         # Deterministically mine coins to OP_TRUE in block 1
         assert_equal(self.nodes[0].getblockcount(), 0)
         coinbase = CTransaction()
         coinbase.nVersion = 1
         coinbase.vin = [CTxIn(COutPoint(0), CScript([OP_1, OP_1]), SEQUENCE_FINAL)]
-        coinbase.vout = [CTxOut(5000000000, CScript([OP_1]))]
+        coinbase.vout = [fixed_txout(5000000000, CScript([OP_1]))]
         coinbase.nLockTime = 0
         coinbase.rehash()
+        assert_equal(coinbase.hash, "8076981e08184170ec6f7891d9f8827cafc95ff36fa4ddde5f1d56b1a6d4f021")
         # Mine it
         block = create_block(hashprev=int(self.nodes[0].getbestblockhash(), 16), coinbase=coinbase)
         block.rehash()
@@ -1617,13 +1625,6 @@ class TaprootTest(BitcoinTestFramework):
                 d['mode'] = 'witv0'
             old_spks.append(d['spk'])
             spend_info[d['spk']] = d
-
-        def fixed_txout(value, spk):
-            """A CTxOut whose predicate is derived from its contents instead of drawn
-            from the PRNG, so that the transactions below stay deterministic."""
-            out = CTxOut(value, spk)
-            out.predicate = bytes.fromhex("0410") + hashlib.sha256(value.to_bytes(8, 'little') + spk).digest()[:16]
-            return out
 
         # Construct a deterministic chain of transactions creating UTXOs to the test's spk's (so that they
         # come from distinct txids).
