@@ -9,6 +9,7 @@
 #ifndef LIBBLSCT
 #include <random.h>
 #endif
+#include <support/cleanse.h>
 #include <util/strencodings.h>
 
 #include <cstring>
@@ -401,6 +402,7 @@ void BlstScalar::SetVch(Span<const uint8_t> v)
     blst_scalar s{};
     blst_scalar_from_be_bytes(&s, v.data(), v.size());
     FromScalar(s);
+    memory_cleanse(&s, sizeof(s));
 }
 
 void BlstScalar::SetPow2(const uint32_t& n)
