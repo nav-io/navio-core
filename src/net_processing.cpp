@@ -4512,7 +4512,8 @@ void PeerManagerImpl::ProcessMessage(CNode& pfrom, const std::string& msg_type, 
         // consensus.finalityCheckpoints pins, then serving those headers would
         // make the peer reject them in ContextualCheckBlockHeader
         // ("finality-checkpoint-mismatch", BLOCK_CHECKPOINT) and treat us as
-        // misbehaving, which disconnects us. Requiring
+        // misbehaving, which disconnects us unless the peer gave us noban
+        // permission or connected to us manually. Requiring
         // that our chainwork exceed the minimum chain work is a protection against
         // being fed a bogus chain when we started up for the first time and
         // getting partitioned off the honest network for serving that chain to
