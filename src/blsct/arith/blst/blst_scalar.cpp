@@ -102,6 +102,7 @@ BlstScalar::BlstScalar(const std::array<uint8_t, L>& a)
 {
     std::vector<uint8_t> v(a.cbegin(), a.cend());
     SetVch(v);
+    memory_cleanse(v.data(), v.size());
 }
 template BlstScalar::BlstScalar(const std::array<uint8_t, 48ul>& v);
 
@@ -117,6 +118,7 @@ BlstScalar::BlstScalar(const uint256& n)
     blst_scalar s{};
     blst_scalar_from_be_bytes(&s, n.data(), 32);
     FromScalar(s);
+    memory_cleanse(&s, sizeof(s));
 }
 
 BlstScalar::BlstScalar(const std::string& s, int radix)
@@ -132,6 +134,8 @@ BlstScalar::BlstScalar(const std::string& s, int radix)
     blst_scalar sc{};
     blst_scalar_from_be_bytes(&sc, be.data(), be.size());
     FromScalar(sc);
+    memory_cleanse(&sc, sizeof(sc));
+    memory_cleanse(be.data(), be.size());
 }
 
 BlstScalar::BlstScalar(const std::vector<uint8_t>& msg, uint8_t index)
@@ -145,11 +149,14 @@ BlstScalar::BlstScalar(const std::vector<uint8_t>& msg, uint8_t index)
     hasher.Write(&vec[0], vec.size());
     uint8_t hash[CSHA256::OUTPUT_SIZE];
     hasher.Finalize(hash);
+    memory_cleanse(vec.data(), vec.size());
 
     // mclBnFr_setLittleEndianMod equivalent.
     blst_scalar s{};
     blst_scalar_from_le_bytes(&s, hash, CSHA256::OUTPUT_SIZE);
     FromScalar(s);
+    memory_cleanse(&s, sizeof(s));
+    memory_cleanse(hash, sizeof(hash));
 }
 
 BlstScalar BlstScalar::operator+(const BlstScalar& rhs) const
@@ -244,7 +251,9 @@ BlstScalar BlstScalar::operator>>(const uint32_t& shift) const
     BlstScalar temp(*this);
     for (uint32_t n = shift; n > 0; --n) {
         blst_scalar s = temp.ToScalar();
-        if (s.b[0] & 1) {
+        const bool odd = s.b[0] & 1;
+        memory_cleanse(&s, sizeof(s));
+        if (odd) {
             temp = temp - one;
         }
         temp = temp / two;
@@ -352,10 +361,12 @@ BlstScalar BlstScalar::Pow(const BlstScalar& n) const
 BlstScalar BlstScalar::Rand(bool exclude_zero)
 {
     BlstScalar temp;
+    // Declared outside the loop so the accepted sample can be wiped once,
+    // after the last iteration overwrote any rejected ones.
+    unsigned char buf[32];
+    blst_scalar s{};
     while (true) {
-        unsigned char buf[32];
         RandBytes(buf, sizeof(buf));
-        blst_scalar s{};
         // Rejection sampling: copy the raw 256-bit value WITHOUT reduction and
         // reject it when it is >= r. Reducing a 256-bit sample mod r leaves a
         // ~7.5% statistical distance from uniform (2^256 ≈ 2.208·r); rejecting
@@ -367,6 +378,8 @@ BlstScalar BlstScalar::Rand(bool exclude_zero)
         temp.FromScalar(s);
         if (!exclude_zero || !temp.IsZero()) break;
     }
+    memory_cleanse(buf, sizeof(buf));
+    memory_cleanse(&s, sizeof(s));
     return temp;
 }
 
@@ -385,6 +398,7 @@ std::vector<uint8_t> BlstScalar::GetVch(const bool trim_preceeding_zeros) const
     std::vector<uint8_t> vec(SERIALIZATION_SIZE);
     blst_scalar s = ToScalar();
     blst_bendian_from_scalar(vec.data(), &s);
+    memory_cleanse(&s, sizeof(s));
     if (trim_preceeding_zeros) {
         vec = blsct::Common::TrimPreceedingZeros<uint8_t>(vec);
     }
