@@ -166,7 +166,7 @@ BOOST_FIXTURE_TEST_CASE(check_candidate_rejects_invalid, TestingSetup)
         transparent.SpendCoin(prevout);
         CTxOut plain{coin.out.nValue, CScript() << OP_TRUE};
         plain.tokenId = coin.out.tokenId;
-        transparent.AddCoin(prevout, Coin{plain, coin.nHeight, /*fCoinBaseIn=*/false}, /*possible_overwrite=*/false);
+        transparent.AddCoin(prevout, Coin{plain, static_cast<int>(coin.nHeight), /*fCoinBaseIn=*/false}, /*possible_overwrite=*/false);
         BOOST_CHECK(!check(*good, transparent, reason));
         BOOST_CHECK_EQUAL(reason, "candidate-input-not-confidential");
     }
