@@ -1150,6 +1150,83 @@ BOOST_FIXTURE_TEST_CASE(FailedCreateWalletKeepsExistingDataFile, TestingSetup)
     }
 }
 
+// A failed creation of a nested name removes every directory level it created,
+// and stops at the first one that existed before.
+BOOST_FIXTURE_TEST_CASE(FailedCreateWalletRemovesNestedDirectories, TestingSetup)
+{
+    m_args.ForceSetArg("-unsafesqlitesync", "1");
+    WalletContext context;
+    context.args = &m_args;
+    context.chain = m_node.chain.get();
+    bilingual_str error;
+    std::vector<bilingual_str> warnings;
+    DatabaseStatus status;
+
+    DatabaseOptions create_options;
+    create_options.require_create = true;
+    create_options.create_flags = WALLET_FLAG_BLSCT;
+    const std::vector<unsigned char> short_seed(31, 1);
+
+    const fs::path new_parent{GetWalletDir() / "failed_create_new_parent"};
+    auto created = wallet::CreateWallet(context, "failed_create_new_parent/a/b", short_seed, blsct::IMPORT_MASTER_KEY, /*load_on_start=*/std::nullopt, create_options, status, error, warnings);
+    BOOST_CHECK(!created);
+    BOOST_CHECK_EQUAL(error.original, "Unable to generate initial blsct keys");
+    BOOST_CHECK(!fs::exists(new_parent));
+
+    const fs::path old_parent{GetWalletDir() / "failed_create_old_parent"};
+    BOOST_REQUIRE(fs::create_directories(old_parent));
+    error = {};
+    created = wallet::CreateWallet(context, "failed_create_old_parent/a/b/", short_seed, blsct::IMPORT_MASTER_KEY, /*load_on_start=*/std::nullopt, create_options, status, error, warnings);
+    BOOST_CHECK(!created);
+    BOOST_CHECK_EQUAL(error.original, "Unable to generate initial blsct keys");
+    BOOST_CHECK(fs::is_directory(old_parent));
+    BOOST_CHECK(fs::is_empty(old_parent));
+    if (created) {
+        RemoveWallet(context, created, /*load_on_start=*/std::nullopt);
+        TestUnloadWallet(std::move(created));
+    }
+}
+
+// The loading reservation is keyed by the wallet's path, so another spelling
+// of a name being created is refused rather than racing it.
+BOOST_FIXTURE_TEST_CASE(CreateWalletReservesNormalisedPath, TestingSetup)
+{
+    m_args.ForceSetArg("-unsafesqlitesync", "1");
+    WalletContext context;
+    context.args = &m_args;
+    context.chain = m_node.chain.get();
+    bilingual_str error;
+    std::vector<bilingual_str> warnings;
+    DatabaseStatus status;
+
+    DatabaseOptions create_options;
+    create_options.require_create = true;
+    create_options.create_flags = WALLET_FLAG_BLSCT;
+
+    // The load notification runs while CreateWallet still holds its reservation.
+    std::vector<std::string> nested_errors;
+    auto handler = HandleLoadWallet(context, [&](std::unique_ptr<interfaces::Wallet>) {
+        for (const std::string& other : {"./reserved_path", "reserved_path/"}) {
+            DatabaseOptions nested_options{create_options};
+            DatabaseStatus nested_status;
+            bilingual_str nested_error;
+            std::vector<bilingual_str> nested_warnings;
+            auto nested = wallet::CreateWallet(context, other, /*seed=*/{}, blsct::IMPORT_MASTER_KEY, /*load_on_start=*/std::nullopt, nested_options, nested_status, nested_error, nested_warnings);
+            BOOST_CHECK(!nested);
+            nested_errors.push_back(nested_error.original);
+        }
+    });
+    auto created = wallet::CreateWallet(context, "reserved_path", /*seed=*/{}, blsct::IMPORT_MASTER_KEY, /*load_on_start=*/std::nullopt, create_options, status, error, warnings);
+    handler.reset();
+    BOOST_REQUIRE_MESSAGE(created, error.original);
+    BOOST_CHECK_EQUAL(nested_errors.size(), 2U);
+    for (const std::string& nested_error : nested_errors) {
+        BOOST_CHECK_EQUAL(nested_error, "Wallet already loading.");
+    }
+    RemoveWallet(context, created, /*load_on_start=*/std::nullopt);
+    TestUnloadWallet(std::move(created));
+}
+
 // A BLSCT wallet with private keys disabled must hold no HD seed. If one got
 // in anyway, loading it warns as it does for a script pubkey manager holding
 // private keys. An audit-key wallet, which holds only the view key, does not.
