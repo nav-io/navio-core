@@ -129,4 +129,40 @@ bool ExecutePredicate(const VectorPredicate& vch, CCoinsViewCache& view, const b
         return true;
     }
 }
+
+bool IsTokenStatePredicate(const VectorPredicate& vch)
+{
+    if (vch.empty()) return false;
+    const auto op = static_cast<uint8_t>(vch[0]);
+    return op == CREATE_TOKEN || op == MINT || op == NFT_MINT;
+}
+
+std::optional<uint256> GetPredicateTokenKey(const VectorPredicate& vch)
+{
+    if (!IsTokenStatePredicate(vch)) return std::nullopt;
+    try {
+        return ParsePredicate(vch).GetPublicKey().GetHash();
+    } catch (const std::ios_base::failure&) {
+        return std::nullopt;
+    }
+}
+
+bool ApplyTokenPredicates(const CTransaction& tx, CCoinsViewCache& view)
+{
+    for (const auto& out : tx.vout) {
+        if (out.predicate.empty()) continue;
+        // PAY_FEE and DATA always succeed and touch no state; skip them
+        // without parsing. Anything else, including an unknown operation, is
+        // parsed and executed, so an unparsable predicate fails here as it
+        // does in ConnectBlock.
+        const auto op = static_cast<uint8_t>(out.predicate[0]);
+        if (op == PAY_FEE || op == DATA) continue;
+        try {
+            if (!ExecutePredicate(ParsePredicate(out.predicate), view)) return false;
+        } catch (const std::ios_base::failure&) {
+            return false;
+        }
+    }
+    return true;
+}
 } // namespace blsct

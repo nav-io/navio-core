@@ -424,6 +424,37 @@ private:
      */
     int m_last_block_processed_height GUARDED_BY(cs_wallet) = -1;
 
+    /** A wallet tx with token-state predicates that the mempool evicted as
+     * CONFLICT: a connected block made one of its predicates fail (e.g. a
+     * sibling mint filled the token's supply cap). No input conflict reveals
+     * it to the wallet, so blockConnected() marks it conflicted with the block
+     * that touches one of its tokens. */
+    struct PendingPredicateConflict {
+        uint256 txid;
+        //! Token-set keys the tx's predicates touch.
+        std::set<uint256> token_keys;
+    };
+    /** Evictions reported since the last updatedBlockTip(), i.e. during one
+     * ActivateBestChain round, which may cover several connect steps. Kept
+     * until then so a later block of the round touching the same token can
+     * take the conflict over (which only errs towards unconflicting early).
+     * Not persisted. */
+    std::vector<PendingPredicateConflict> m_pending_predicate_conflicts GUARDED_BY(cs_wallet);
+    /** The txs MarkPendingPredicateConflicts() conflicted during that round,
+     * with the block it used, entries' in-wallet descendants included. Only
+     * these may be moved to a later block: a tx conflicted otherwise (by an
+     * input conflict) is left alone. Cleared with the entries. */
+    std::map<uint256, uint256> m_predicate_conflict_marks GUARDED_BY(cs_wallet);
+
+    /** Mark each m_pending_predicate_conflicts entry whose tokens the block
+     * touches conflicted with the block. */
+    void MarkPendingPredicateConflicts(const interfaces::BlockInfo& block) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+
+    /** Wallet txs carrying a token-state predicate, the only ones that can be
+     * conflicted without an input conflict, so blockDisconnected() need not
+     * scan all of mapWallet for them. May hold txids no longer in mapWallet. */
+    std::set<uint256> m_token_predicate_txs GUARDED_BY(cs_wallet);
+
     std::map<OutputType, ScriptPubKeyMan*> m_external_spk_managers;
     std::map<OutputType, ScriptPubKeyMan*> m_internal_spk_managers;
     std::unique_ptr<blsct::KeyMan> m_blsct_key_manager = nullptr;
