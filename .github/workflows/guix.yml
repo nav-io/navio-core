@@ -72,8 +72,8 @@
 #   pinned XCODE_VERSION / XCODE_BUILD_ID in depends/hosts/darwin.mk
 #   and cached on the runner; SDK files themselves never end up in our
 #   outputs per contrib/macdeploy/README.md. Codesigning can be wired
-#   back via contrib/guix/guix-codesign + detached-sig-create.sh once
-#   a navio signing key is in place. -debug.tar.gz output is pending
+#   back via contrib/guix/guix-codesign once a navio signing key is in
+#   place. -debug.tar.gz output is pending
 #   setup_split_debug_script.
 
 name: Release (guix)

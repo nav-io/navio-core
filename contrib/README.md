@@ -8,11 +8,6 @@ including the `github-merge.py` script, are available in the
 [maintainer-tools](https://github.com/bitcoin-core/bitcoin-maintainer-tools)
 repository.
 
-### [Verify-Commits](/contrib/verify-commits)
-
-Tool to verify that every merge commit was signed by a developer using the
-`github-merge.py` script.
-
 ### [Linearize](/contrib/linearize)
 
 Construct a linear, no-fork, best version of the blockchain.
@@ -53,11 +48,6 @@ Utilities to generate test vectors for the data-driven Bitcoin tests.
 
 The public key that signs Navio Core release binaries, with steps for verifying
 a download.
-
-### [Verify-Binaries](/contrib/verify-binaries)
-
-This script attempts to download and verify the signature file SHA256SUMS.asc
-from bitcoin.org.
 
 Command Line Tools
 ---------------------
