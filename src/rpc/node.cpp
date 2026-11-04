@@ -12,7 +12,6 @@
 #include <interfaces/chain.h>
 #include <interfaces/echo.h>
 #include <interfaces/init.h>
-#include <interfaces/ipc.h>
 #include <kernel/cs_main.h>
 #include <logging.h>
 #include <node/context.h>
@@ -308,35 +307,17 @@ static RPCHelpMan echoipc()
 {
     return RPCHelpMan{
         "echoipc",
-        "\nEcho back the input argument, passing it through a spawned process in a multiprocess build.\n"
+        "\nEcho back the input argument, passing it through an interfaces::Echo object.\n"
         "This command is for testing.\n",
         {{"arg", RPCArg::Type::STR, RPCArg::Optional::NO, "The string to echo",}},
         RPCResult{RPCResult::Type::STR, "echo", "The echoed string."},
         RPCExamples{HelpExampleCli("echo", "\"Hello world\"") +
                     HelpExampleRpc("echo", "\"Hello world\"")},
         [&](const RPCHelpMan& self, const JSONRPCRequest& request) -> UniValue {
+            // navio has no multiprocess build, so the echo object is always
+            // local to this process.
             interfaces::Init& local_init = *EnsureAnyNodeContext(request.context).init;
-            std::unique_ptr<interfaces::Echo> echo;
-            if (interfaces::Ipc* ipc = local_init.ipc()) {
-                // Spawn a new navio-node process and call makeEcho to get a
-                // client pointer to a interfaces::Echo instance running in
-                // that process. This is just for testing. A slightly more
-                // realistic test spawning a different executable instead of
-                // the same executable would add a new navio-echo executable,
-                // and spawn navio-echo below instead of navio-node. But
-                // using navio-node avoids the need to build and install a
-                // new executable just for this one test.
-                auto init = ipc->spawnProcess("navio-node");
-                echo = init->makeEcho();
-                ipc->addCleanup(*echo, [init = init.release()] { delete init; });
-            } else {
-                // IPC support is not available because this is a naviod
-                // process not a naviod-node process, so just create a local
-                // interfaces::Echo object and return it so the `echoipc` RPC
-                // method will work, and the python test calling `echoipc`
-                // can expect the same result.
-                echo = local_init.makeEcho();
-            }
+            const std::unique_ptr<interfaces::Echo> echo{local_init.makeEcho()};
             return echo->echo(request.params[0].get_str());
         },
     };
