@@ -374,6 +374,12 @@ private:
      * and take the entry off the list. */
     void MarkPendingOutputConflicts(const interfaces::BlockInfo& block) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
+    /** The mapOutputs entries whose receive state is TxStateConflicted, so
+     * blockDisconnected() visits only those rather than every output. */
+    std::set<COutPoint> m_conflicted_outputs GUARDED_BY(cs_wallet);
+    //! Add `outpoint` to m_conflicted_outputs or drop it, as `wout`'s receive state says.
+    void UpdateConflictedOutputs(const COutPoint& outpoint, const CWalletOutput& wout) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+
     enum class TxUpdate { UNCHANGED, CHANGED, NOTIFY_CHANGED };
 
     using TryUpdatingStateFn = std::function<TxUpdate(CWalletTx& wtx)>;

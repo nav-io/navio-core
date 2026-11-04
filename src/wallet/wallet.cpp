@@ -1357,6 +1357,7 @@ CWalletOutput* CWallet::AddToWallet(const COutPoint& outpoint, CTxOutRef out, co
             fUpdated = true;
         }
     }
+    UpdateConflictedOutputs(outpoint, wout);
 
     // Skip recovery/strip when re-encountering a BLSCT output we already
     // processed: wout.out has been stripped of its range proof, so the
@@ -1667,6 +1668,7 @@ bool CWallet::LoadToWallet(const COutPoint& outpoint, const UpdateWalletOutputFn
     if (HaveChain()) {
         wout.updateState(chain());
     }
+    UpdateConflictedOutputs(outpoint, wout);
     // Update birth time when tx time is older than it.
     MaybeUpdateBirthTime(wout.GetTxTime());
 
@@ -2308,6 +2310,16 @@ void CWallet::transactionRemovedFromMempool(const CTransactionRef& tx, MemPoolRe
     }
 }
 
+void CWallet::UpdateConflictedOutputs(const COutPoint& outpoint, const CWalletOutput& wout)
+{
+    AssertLockHeld(cs_wallet);
+    if (wout.state<TxStateConflicted>()) {
+        m_conflicted_outputs.insert(outpoint);
+    } else {
+        m_conflicted_outputs.erase(outpoint);
+    }
+}
+
 void CWallet::MarkPendingOutputConflicts(const interfaces::BlockInfo& block)
 {
     AssertLockHeld(cs_wallet);
@@ -2354,6 +2366,7 @@ void CWallet::MarkPendingOutputConflicts(const interfaces::BlockInfo& block)
             // Only an output left unconfirmed by the removal is conflicted.
             if (it == mapOutputs.end() || !it->second.state<TxStateInactive>()) continue;
             it->second.m_state = TxStateConflicted{block.hash, block.height};
+            UpdateConflictedOutputs(outpoint, it->second);
             if (!batch) batch.emplace(GetDatabase(), /*_fFlushOnClose=*/false);
             if (!batch->WriteOutput(outpoint, it->second)) {
                 throw std::runtime_error(std::string(__func__) + ": Wallet db error, failed to write conflicted BLSCT output state");
@@ -2494,10 +2507,17 @@ void CWallet::blockDisconnected(const interfaces::BlockInfo& block)
 
         std::vector<uint256> spenders;
         std::optional<WalletBatch> batch;
-        for (auto& [outpoint, wout] : mapOutputs) {
+        // Copied, as restoring an output drops it from m_conflicted_outputs.
+        const std::vector<COutPoint> conflicted_outputs{m_conflicted_outputs.begin(), m_conflicted_outputs.end()};
+        for (const COutPoint& outpoint : conflicted_outputs) {
+            // A stale entry must not throw inside a validation callback.
+            const auto it = mapOutputs.find(outpoint);
+            if (!Assume(it != mapOutputs.end())) continue;
+            CWalletOutput& wout = it->second;
             const auto* conflicted = wout.state<TxStateConflicted>();
-            if (!conflicted || conflicted->conflicting_block_height < disconnect_height) continue;
+            if (!Assume(conflicted) || conflicted->conflicting_block_height < disconnect_height) continue;
             wout.m_state = TxStateInactive{};
+            UpdateConflictedOutputs(outpoint, wout);
             if (!batch) batch.emplace(GetDatabase(), /*_fFlushOnClose=*/false);
             if (!batch->WriteOutput(outpoint, wout)) {
                 throw std::runtime_error(std::string(__func__) + ": Wallet db error, failed to write unconflicted BLSCT output state");
@@ -3599,6 +3619,8 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
         // A remaining wallet transaction carrying the output still accounts
         // for it.
         if (mapOutpointHashToWalletTx.contains(outpoint.hash.ToUint256())) continue;
+        // blockDisconnected expects every indexed conflicted output to have a row.
+        m_conflicted_outputs.erase(outpoint);
         if (mapOutputs.erase(outpoint) && !output_batch.EraseOutput(outpoint)) {
             output_db_error = true;
         }

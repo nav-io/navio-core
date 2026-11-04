@@ -1988,6 +1988,99 @@ BOOST_FIXTURE_TEST_CASE(output_storage_shared_cover_aggregate_conflicted, Testin
     BOOST_CHECK(coins[0].outpoint == r.coin_outpoint);
 }
 
+// A receive the mempool evicted as a conflict is held only as its outputs. The
+// block that double-spends its input marks them conflicted, and disconnecting
+// that block makes them unconfirmed again, without a reload in between.
+BOOST_FIXTURE_TEST_CASE(output_storage_conflicted_receive_disconnected, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+    const auto other_address = std::get<blsct::DoublePublicKey>(r.cover_wallet->GetBLSCTKeyMan()->GetNewDestination(0).value());
+    const COutPoint foreign_coin{InsecureRand256()};
+
+    CMutableTransaction payment;
+    payment.nVersion |= CTransaction::BLSCT_MARKER;
+    payment.vin.emplace_back(foreign_coin);
+    payment.vout.push_back(blsct::CreateOutput(r.address, 3 * COIN, "payment").out);
+    const CTransactionRef payment_tx{MakeTransactionRef(payment)};
+    const COutPoint received(payment_tx->vout[0].GetHash());
+    r.wallet->transactionAddedToMempool(payment_tx);
+    BOOST_REQUIRE(r.wallet->GetWalletOutput(received) != nullptr);
+    BOOST_REQUIRE(r.wallet->GetWalletTx(payment_tx->GetHash()) == nullptr);
+
+    CMutableTransaction double_spend;
+    double_spend.nVersion |= CTransaction::BLSCT_MARKER;
+    double_spend.vin.emplace_back(foreign_coin);
+    double_spend.vout.push_back(blsct::CreateOutput(other_address, 3 * COIN, "double spend").out);
+
+    r.wallet->transactionRemovedFromMempool(payment_tx, MemPoolRemovalReason::CONFLICT);
+    r.wallet->SetBirthTime(0);
+    const TestBlock block{{MakeTransactionRef(double_spend)}};
+    r.wallet->blockConnected(ChainstateRole::NORMAL, block.Info());
+    const auto* conflicted = r.wallet->GetWalletOutput(received)->state<TxStateConflicted>();
+    BOOST_REQUIRE(conflicted != nullptr);
+    BOOST_CHECK(conflicted->conflicting_block_hash == block.hash);
+
+    r.wallet->blockDisconnected(block.Info());
+    BOOST_CHECK(r.wallet->GetWalletOutput(received)->state<TxStateInactive>());
+
+    // The restored output left the conflicted index, so a later disconnect
+    // does not visit it. A stale entry trips the index's Assume, which aborts
+    // in builds with ABORT_ON_FAILED_ASSUME (debug builds).
+    const TestBlock next_block{{}};
+    r.wallet->blockDisconnected(next_block.Info());
+    BOOST_CHECK(r.wallet->GetWalletOutput(received)->state<TxStateInactive>());
+}
+
+// removeprunedfunds of a transaction erases the rows of the outputs no other
+// wallet transaction carries, conflicted ones included. The erased row must
+// leave the conflicted index too, or disconnecting the conflicting block finds
+// an entry with no row, which trips the index's Assume and aborts in builds
+// with ABORT_ON_FAILED_ASSUME (debug builds).
+BOOST_FIXTURE_TEST_CASE(output_storage_zapped_conflicted_receive_disconnected, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
+    LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+    const auto other_address = std::get<blsct::DoublePublicKey>(r.cover_wallet->GetBLSCTKeyMan()->GetNewDestination(0).value());
+    const COutPoint foreign_coin{InsecureRand256()};
+
+    CMutableTransaction payment;
+    payment.nVersion |= CTransaction::BLSCT_MARKER;
+    payment.vin.emplace_back(foreign_coin);
+    payment.vout.push_back(blsct::CreateOutput(r.address, 3 * COIN, "payment").out);
+    const CTransactionRef payment_tx{MakeTransactionRef(payment)};
+    const COutPoint received(payment_tx->vout[0].GetHash());
+    r.wallet->transactionAddedToMempool(payment_tx);
+    BOOST_REQUIRE(r.wallet->GetWalletOutput(received) != nullptr);
+
+    CMutableTransaction double_spend;
+    double_spend.nVersion |= CTransaction::BLSCT_MARKER;
+    double_spend.vin.emplace_back(foreign_coin);
+    double_spend.vout.push_back(blsct::CreateOutput(other_address, 3 * COIN, "double spend").out);
+
+    r.wallet->transactionRemovedFromMempool(payment_tx, MemPoolRemovalReason::CONFLICT);
+    r.wallet->SetBirthTime(0);
+    const TestBlock block{{MakeTransactionRef(double_spend)}};
+    r.wallet->blockConnected(ChainstateRole::NORMAL, block.Info());
+    BOOST_REQUIRE(r.wallet->GetWalletOutput(received)->state<TxStateConflicted>());
+
+    // The payment is also held as a wallet transaction, as importprunedfunds
+    // records it, so removeprunedfunds can zap it. It is the only holder of
+    // the output, so zapping it erases the row.
+    BOOST_REQUIRE(r.wallet->AddToWallet(payment_tx, TxStateInactive{}));
+    BOOST_REQUIRE(r.wallet->GetWalletOutput(received)->state<TxStateConflicted>());
+    std::vector<uint256> hashes_in{payment_tx->GetHash()}, hashes_out;
+    BOOST_REQUIRE(r.wallet->ZapSelectTx(hashes_in, hashes_out) == DBErrors::LOAD_OK);
+    BOOST_REQUIRE_EQUAL(hashes_out.size(), 1U);
+    BOOST_CHECK(r.wallet->GetWalletTx(payment_tx->GetHash()) == nullptr);
+    BOOST_CHECK(r.wallet->GetWalletOutput(received) == nullptr);
+
+    r.wallet->blockDisconnected(block.Info());
+    BOOST_CHECK(r.wallet->GetWalletOutput(received) == nullptr);
+}
+
 // A block tx spending our coin under another hash with other outputs, such as
 // a send from another copy of the wallet, conflicts our unconfirmed aggregate.
 // The conflicted aggregate no longer accounts for the spend, so the block tx
