@@ -3440,7 +3440,7 @@ void CWallet::CommitTransaction(CTransactionRef tx, mapValue_t mapValue, std::ve
     }
 }
 
-bool CWallet::RecordBroadcastTransaction(CTransactionRef tx, const std::vector<CTxOut>& own_half_outputs, mapValue_t mapValue)
+bool CWallet::RecordBroadcastTransaction(CTransactionRef tx, const std::vector<CTxOut>& own_half_outputs, mapValue_t mapValue, std::optional<CAmount> own_fee)
 {
     LOCK(cs_wallet);
     WalletLogPrintf("RecordBroadcastTransaction:\n%s", tx->ToString()); // NOLINT(bitcoin-unterminated-logprintf)
@@ -3455,6 +3455,9 @@ bool CWallet::RecordBroadcastTransaction(CTransactionRef tx, const std::vector<C
         wtx.fTimeReceivedIsTxTime = true;
         wtx.fFromMe = true;
         for (const CTxOut& out : own_half_outputs) wtx.m_own_half_outputs.insert(out.GetHash());
+        // Set here rather than only on a new tx: the sync callbacks, which
+        // may have added it first, cannot know the share of the fee we paid.
+        if (own_fee) wtx.m_own_fee = own_fee;
         return true;
     });
     // The record spends the parents' outputs ahead of the sync callbacks,

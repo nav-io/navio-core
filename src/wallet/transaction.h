@@ -386,7 +386,9 @@ public:
      * tx is a block tx a staker merged this wallet's sends into, the wallet
      * replaced those sends with it, and they account for all the tx debits
      * from this wallet. The block tx carries one fee output for every merged
-     * sender. Unset for every other tx, whose whole fee is reported.
+     * sender. Also recorded for a swap this wallet took, whose fee the
+     * maker's half funds (CWallet::RecordBroadcastTransaction). Unset for
+     * every other tx, whose whole fee is reported.
      */
     std::optional<CAmount> m_own_fee;
     int64_t nOrderPos; //!< position in ordered transaction list

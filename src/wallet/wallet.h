@@ -765,8 +765,12 @@ public:
      * its outputs, but whatever was not written is lost on restart, and the
      * reloaded wallet then treats the aggregate as one it did not build: its
      * outputs stay untrusted until it confirms.
+     *
+     * own_fee is the part of the tx's fee this wallet paid (m_own_fee), for a
+     * tx whose fee other wallets' halves funded; nullopt when this wallet paid
+     * the whole fee.
      */
-    [[nodiscard]] bool RecordBroadcastTransaction(CTransactionRef tx, const std::vector<CTxOut>& own_half_outputs, mapValue_t mapValue);
+    [[nodiscard]] bool RecordBroadcastTransaction(CTransactionRef tx, const std::vector<CTxOut>& own_half_outputs, mapValue_t mapValue, std::optional<CAmount> own_fee);
 
     /** Pass this transaction to node for mempool insertion and relay to peers if flag set to true */
     bool SubmitTxMemoryPoolAndRelay(CWalletTx& wtx, std::string& err_string, bool relay) const
