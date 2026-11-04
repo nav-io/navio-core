@@ -44,6 +44,16 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
             self.generatetoblsctaddress(node, t, addr)
             r -= t
 
+    def check_taker_swap(self, taker, txid, sell_cost):
+        tx = taker.gettransaction(txid)
+        assert_equal(tx["fee"], 0)
+        assert_equal(tx["amount"], -sell_cost)
+        assert "fee_may_include_other_senders" not in tx
+        sends = [d for d in tx["details"] if d["category"] == "send"]
+        assert_equal(len(sends), 1)
+        assert_equal(sends[0]["fee"], 0)
+        assert_equal(sends[0]["amount"], -sell_cost)
+
     def run_test(self):
         taker_n, maker_n = self.nodes[0], self.nodes[1]
         self.connect_nodes(0, 1)
@@ -143,6 +153,16 @@ class P2PMsgSwapE2ETest(BitcoinTestFramework):
         fill = Decimal(quote["fill"]) / one
         assert_raises_rpc_error(-6, "Not enough funds available", taker.sendtokentoblsctaddress,
                                 tid, taker.getnewaddress(label="", address_type="blsct"), fill)
+
+        # The maker's half funds the whole swap fee, so the taker reports no
+        # fee and the full sell cost as sent. Taking the maker's fee as its own
+        # moved that fee out of the amount. What the taker paid survives a
+        # wallet reload.
+        sell_cost = Decimal(quote["sell_cost"]) / one
+        self.check_taker_swap(taker, txid, sell_cost)
+        taker.unloadwallet()
+        taker_n.loadwallet("taker")
+        self.check_taker_swap(taker, txid, sell_cost)
 
         # A chained NAV send of the whole trusted balance needs the swap's
         # change: the other coins alone fall short of it.

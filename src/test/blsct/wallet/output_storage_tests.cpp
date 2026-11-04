@@ -1030,7 +1030,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_change_trusted, TestingSetu
 
     // Recorded by the send that built it, the change is trusted and is the
     // one spendable coin.
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     CheckChangeIsTheSpendableCoin(r);
 
     // The cover wallet only saw the aggregate spend its coin; it did not
@@ -1070,7 +1070,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_interface_balances_count_change_once, Tes
 
     {
         LOCK(r.wallet->cs_wallet);
-        BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+        BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
         r.wallet->transactionAddedToMempool(r.aggregate);
         // Both records of the change exist and both coin lists hold it.
         BOOST_REQUIRE(r.wallet->GetWalletOutput(r.change_outpoint) != nullptr);
@@ -1092,7 +1092,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_recorded_before_scan, Testi
     const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
     LOCK(r.wallet->cs_wallet);
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     BOOST_CHECK(r.wallet->GetWalletOutput(r.change_outpoint) != nullptr);
     CheckChangeIsTheSpendableCoin(r);
 
@@ -1111,7 +1111,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_chain_recorded_before_scan,
     const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
     LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     r.wallet->transactionAddedToMempool(r.aggregate);
     // Also caches the change as the aggregate's available credit.
     CheckChangeIsTheSpendableCoin(r);
@@ -1127,7 +1127,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_chain_recorded_before_scan,
     child.vout.push_back(blsct::CreateOutput(cover_address, OwnAggregate::cover_amount, "child cover").out);
     const CTransactionRef child_tx{MakeTransactionRef(child)};
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(child_tx, {child_tx->vout[0]}, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(child_tx, {child_tx->vout[0]}, {}, std::nullopt));
     BOOST_CHECK(r.wallet->IsSpent(r.change_outpoint));
     BOOST_CHECK_EQUAL(GetBalance(*r.wallet).m_mine_trusted + GetBlsctBalance(*r.wallet).m_mine_trusted, child_change);
 
@@ -1145,7 +1145,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_commit_drops_parent_credit_cache, Testing
     const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
     LOCK(r.wallet->cs_wallet);
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     // Also caches the change as the aggregate's available credit.
     CheckChangeIsTheSpendableCoin(r);
 
@@ -1176,7 +1176,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_recorded_after_confirm, Tes
     BOOST_REQUIRE(r.wallet->AddToWallet(r.coin_outpoint, nullptr, confirmed, nullptr, true, false, confirmed, false, r.aggregate->GetHash()));
     BOOST_REQUIRE(r.wallet->GetWalletOutput(r.coin_outpoint)->state_spent<TxStateConfirmed>());
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     BOOST_CHECK(r.wallet->GetWalletTx(r.aggregate->GetHash())->isConfirmed());
     BOOST_CHECK(r.wallet->GetWalletTx(r.aggregate->GetHash())->fFromMe);
     BOOST_CHECK(r.wallet->GetWalletOutput(r.coin_outpoint)->state_spent<TxStateConfirmed>());
@@ -1193,7 +1193,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_cover_output_untrusted, Tes
     const OwnAggregate r = MakeOwnAggregate(m_node.chain.get(), /*cover_pays_wallet=*/true);
     LOCK(r.wallet->cs_wallet);
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     const CWalletTx* wtx = r.wallet->GetWalletTx(r.aggregate->GetHash());
     BOOST_REQUIRE(wtx != nullptr);
     BOOST_REQUIRE(r.wallet->GetWalletOutput(r.cover_outpoint) != nullptr);
@@ -1243,7 +1243,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_cover_output_address_balanc
 {
     SeedInsecureRand(SeedRand::ZEROS);
     const OwnAggregate r = MakeOwnAggregate(m_node.chain.get(), /*cover_pays_wallet=*/true);
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
 
     WalletContext context;
     context.args = &m_args;
@@ -1272,7 +1272,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_record_failure, TestingSetu
 
     GetMockableDatabase(*r.wallet).m_pass = false;
     bool recorded{true};
-    BOOST_CHECK_NO_THROW(recorded = r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_CHECK_NO_THROW(recorded = r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     BOOST_CHECK(!recorded);
     GetMockableDatabase(*r.wallet).m_pass = true;
 
@@ -1306,7 +1306,7 @@ BOOST_FIXTURE_TEST_CASE(full_tx_own_aggregate_record_failure, TestingSetup)
 
     GetMockableDatabase(*r.wallet).m_pass = false;
     bool recorded{true};
-    BOOST_CHECK_NO_THROW(recorded = r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_CHECK_NO_THROW(recorded = r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     BOOST_CHECK(!recorded);
     GetMockableDatabase(*r.wallet).m_pass = true;
 
@@ -1341,7 +1341,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_record_failure_marks_all_inputs, TestingS
     btcsignals::scoped_connection fail_later_writes{r.wallet->NotifyTransactionChanged.connect([&](const uint256&, ChangeType) {
         GetMockableDatabase(*r.wallet).m_pass = false;
     })};
-    BOOST_CHECK(!r.wallet->RecordBroadcastTransaction(tx, r.own_half_outputs, {}));
+    BOOST_CHECK(!r.wallet->RecordBroadcastTransaction(tx, r.own_half_outputs, {}, std::nullopt));
     fail_later_writes.disconnect();
     GetMockableDatabase(*r.wallet).m_pass = true;
 
@@ -1364,7 +1364,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_own_half_persists, TestingS
     const OwnAggregate r = MakeOwnAggregate(m_node.chain.get(), /*cover_pays_wallet=*/true);
     LOCK(r.wallet->cs_wallet);
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     const CWalletTx* wtx = r.wallet->GetWalletTx(r.aggregate->GetHash());
     BOOST_REQUIRE(wtx != nullptr);
 
@@ -1385,7 +1385,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_own_aggregate_unlocated_parent_output, Te
     const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
     LOCK(r.wallet->cs_wallet);
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     const CWalletTx* wtx = r.wallet->GetWalletTx(r.aggregate->GetHash());
     BOOST_REQUIRE(wtx != nullptr);
     BOOST_REQUIRE(CachedTxIsTrusted(*r.wallet, *wtx));
@@ -1420,7 +1420,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_removed_tx_can_be_abandoned, TestingSetup
             LOCK(r.wallet->cs_wallet);
             const uint256 txid{r.aggregate->GetHash()};
 
-            BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+            BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
             r.wallet->transactionAddedToMempool(r.aggregate);
             CheckChangeIsTheSpendableCoin(r);
 
@@ -1463,7 +1463,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_block_removal_keeps_confirmed, TestingSet
     LOCK(r.wallet->cs_wallet);
     const uint256 txid{r.aggregate->GetHash()};
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     r.wallet->transactionAddedToMempool(r.aggregate);
 
     r.wallet->SetBirthTime(0);
@@ -1546,10 +1546,10 @@ BOOST_FIXTURE_TEST_CASE(output_storage_block_conflict_frees_inputs, TestingSetup
     LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
     const uint256 txid{r.aggregate->GetHash()};
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     r.wallet->transactionAddedToMempool(r.aggregate);
     const CTransactionRef child{MakeChainedSend(r)};
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(child, {child->vout[0]}, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(child, {child->vout[0]}, {}, std::nullopt));
     r.wallet->transactionAddedToMempool(child);
 
     // As the node signals it: the mempool drops the aggregate and its
@@ -1645,7 +1645,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_merged_aggregate_not_conflicted, TestingS
             AddFeeOutput(r);
             const uint256 txid{r.aggregate->GetHash()};
 
-            BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+            BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
             r.wallet->transactionAddedToMempool(r.aggregate);
             if (removed_as_conflict) {
                 r.wallet->transactionRemovedFromMempool(r.aggregate, MemPoolRemovalReason::CONFLICT);
@@ -1680,9 +1680,9 @@ BOOST_FIXTURE_TEST_CASE(output_storage_merged_aggregate_shared_output_holder, Te
     AddFeeOutput(r);
     const uint256 txid{r.aggregate->GetHash()};
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     const CTransactionRef other{MakeMergedBlockTx(r, COIN)};
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(other, {other->vout[0]}, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(other, {other->vout[0]}, {}, std::nullopt));
     BOOST_REQUIRE(r.wallet->GetWalletTxFromOutpoint(r.change_outpoint) == r.wallet->GetWalletTx(other->GetHash()));
 
     r.wallet->SetBirthTime(0);
@@ -1712,7 +1712,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_merged_aggregate_disconnected, TestingSet
     AddFeeOutput(r);
     const uint256 txid{r.aggregate->GetHash()};
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     r.wallet->transactionAddedToMempool(r.aggregate);
     const CWalletTx* wtx = r.wallet->GetWalletTx(txid);
     BOOST_REQUIRE(wtx != nullptr);
@@ -1785,10 +1785,10 @@ BOOST_FIXTURE_TEST_CASE(output_storage_merged_chain_disconnected, TestingSetup)
     const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
     LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     r.wallet->transactionAddedToMempool(r.aggregate);
     const CTransactionRef child{MakeChainedSend(r)};
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(child, {child->vout[0]}, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(child, {child->vout[0]}, {}, std::nullopt));
     r.wallet->transactionAddedToMempool(child);
 
     CMutableTransaction merged;
@@ -1843,7 +1843,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_merged_aggregate_back_in_mempool, Testing
             AddFeeOutput(r);
             const uint256 txid{r.aggregate->GetHash()};
 
-            BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+            BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
             r.wallet->transactionAddedToMempool(r.aggregate);
             r.wallet->transactionRemovedFromMempool(r.aggregate, MemPoolRemovalReason::BLOCK);
             r.wallet->SetBirthTime(0);
@@ -1894,10 +1894,10 @@ BOOST_FIXTURE_TEST_CASE(output_storage_merged_chain_back_in_mempool, TestingSetu
     const OwnAggregate r = MakeOwnAggregate(m_node.chain.get());
     LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     r.wallet->transactionAddedToMempool(r.aggregate);
     const CTransactionRef child{MakeChainedSend(r)};
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(child, {child->vout[0]}, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(child, {child->vout[0]}, {}, std::nullopt));
     r.wallet->transactionAddedToMempool(child);
 
     CMutableTransaction merged;
@@ -1957,7 +1957,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_shared_cover_aggregate_conflicted, Testin
     LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
     const uint256 txid{r.aggregate->GetHash()};
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     r.wallet->transactionAddedToMempool(r.aggregate);
 
     // The other sender's aggregate: C (the cover coin -> the cover output)
@@ -1999,7 +1999,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_block_spend_of_conflicted_send_tracked, T
     LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
     const uint256 txid{r.aggregate->GetHash()};
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     r.wallet->transactionAddedToMempool(r.aggregate);
 
     const auto other_address = std::get<blsct::DoublePublicKey>(r.cover_wallet->GetBLSCTKeyMan()->GetNewDestination(0).value());
@@ -2042,7 +2042,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_same_inputs_other_outputs_conflicted, Tes
             LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
             const uint256 txid{r.aggregate->GetHash()};
 
-            BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+            BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
             r.wallet->transactionAddedToMempool(r.aggregate);
 
             const auto other_address = std::get<blsct::DoublePublicKey>(r.cover_wallet->GetBLSCTKeyMan()->GetNewDestination(0).value());
@@ -2093,7 +2093,7 @@ BOOST_FIXTURE_TEST_CASE(output_storage_fee_only_send_not_merged, TestingSetup)
     burn.vin.emplace_back(r.coin_outpoint);
     burn.vout.push_back(fee);
     const CTransactionRef burn_tx{MakeTransactionRef(burn)};
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(burn_tx, {}, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(burn_tx, {}, {}, std::nullopt));
     r.wallet->transactionAddedToMempool(burn_tx);
 
     const auto other_address = std::get<blsct::DoublePublicKey>(r.cover_wallet->GetBLSCTKeyMan()->GetNewDestination(0).value());
@@ -2136,7 +2136,7 @@ BOOST_FIXTURE_TEST_CASE(full_tx_merged_block_reports_own_fee, TestingSetup)
     AddFeeOutput(r);
     const CAmount own_fee{r.aggregate->GetBLSCTFee()};
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     r.wallet->transactionAddedToMempool(r.aggregate);
     const auto amounts = [&](const CWalletTx& wtx) EXCLUSIVE_LOCKS_REQUIRED(r.wallet->cs_wallet) {
         std::list<COutputEntry> received, sent;
@@ -2202,7 +2202,7 @@ BOOST_FIXTURE_TEST_CASE(full_tx_merged_block_unrecorded_own_input, TestingSetup)
     BOOST_REQUIRE(r.wallet->AddToWallet(MakeTransactionRef(funding), TxStateConfirmed{InsecureRand256(), 1, 0}));
     const COutPoint second_coin{funding.vout[0].GetHash()};
 
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     r.wallet->transactionAddedToMempool(r.aggregate);
 
     CMutableTransaction merged{*MakeMergedBlockTx(r, COIN)};
@@ -2245,7 +2245,7 @@ static std::pair<CTransactionRef, CTransactionRef> RecordOwnSendChain(const OwnA
     second.vout.push_back(MakeFeeOutput(3 * COIN / 100));
     const std::pair<CTransactionRef, CTransactionRef> sends{MakeTransactionRef(first), MakeTransactionRef(second)};
     for (const CTransactionRef& send : {sends.first, sends.second}) {
-        BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(send, {}, {}));
+        BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(send, {}, {}, std::nullopt));
         r.wallet->transactionAddedToMempool(send);
     }
     return sends;
@@ -2348,7 +2348,7 @@ BOOST_FIXTURE_TEST_CASE(full_tx_merged_block_counts_nested_send_once, TestingSet
     OwnAggregate r = MakeOwnAggregate(m_node.chain.get(), /*cover_pays_wallet=*/false, /*output_storage=*/false);
     LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
     AddFeeOutput(r);
-    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}));
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, std::nullopt));
     r.wallet->transactionAddedToMempool(r.aggregate);
     const CTransactionRef outer{MakeMergedBlockTx(r, COIN)};
     r.wallet->transactionAddedToMempool(outer);
@@ -2370,6 +2370,43 @@ BOOST_FIXTURE_TEST_CASE(full_tx_merged_block_counts_nested_send_once, TestingSet
     CAmount fee;
     CachedTxGetAmounts(*r.wallet, *wtx, received, sent, fee, ISMINE_ALL, /*include_change=*/false);
     BOOST_CHECK_EQUAL(fee, outer->GetBLSCTFee());
+}
+
+// A swap taker records the swap with an own fee of zero, as the maker's half
+// funds the whole fee, also once the sync callback has added the swap first.
+// A block tx merging the swap then reports none of its fee as ours either,
+// rather than the swap's whole fee.
+BOOST_FIXTURE_TEST_CASE(full_tx_merged_block_keeps_zero_own_fee, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    OwnAggregate r = MakeOwnAggregate(m_node.chain.get(), /*cover_pays_wallet=*/false, /*output_storage=*/false);
+    LOCK2(r.wallet->cs_wallet, r.cover_wallet->cs_wallet);
+    AddFeeOutput(r);
+    BOOST_REQUIRE(r.aggregate->GetBLSCTFee() > 0);
+    const auto fee_of = [&](const CWalletTx& wtx) EXCLUSIVE_LOCKS_REQUIRED(r.wallet->cs_wallet) {
+        std::list<COutputEntry> received, sent;
+        CAmount fee;
+        CachedTxGetAmounts(*r.wallet, wtx, received, sent, fee, ISMINE_ALL, /*include_change=*/false);
+        return fee;
+    };
+
+    r.wallet->transactionAddedToMempool(r.aggregate);
+    BOOST_REQUIRE(r.wallet->RecordBroadcastTransaction(r.aggregate, r.own_half_outputs, {}, /*own_fee=*/0));
+    const CWalletTx* swap_wtx = r.wallet->GetWalletTx(r.aggregate->GetHash());
+    BOOST_REQUIRE(swap_wtx != nullptr);
+    BOOST_CHECK(swap_wtx->m_own_fee == CAmount{0});
+    BOOST_CHECK_EQUAL(fee_of(*swap_wtx), 0);
+
+    r.wallet->SetBirthTime(0);
+    const TestBlock block{{MakeMergedBlockTx(r, COIN)}};
+    const CTransactionRef& block_tx{block.block.vtx[0]};
+    r.wallet->blockConnected(ChainstateRole::NORMAL, block.Info());
+
+    BOOST_CHECK(r.wallet->GetWalletTx(r.aggregate->GetHash()) == nullptr);
+    const CWalletTx* wtx = r.wallet->GetWalletTx(block_tx->GetHash());
+    BOOST_REQUIRE(wtx != nullptr);
+    BOOST_CHECK(wtx->m_own_fee == CAmount{0});
+    BOOST_CHECK_EQUAL(fee_of(*wtx), 0);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

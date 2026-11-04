@@ -325,7 +325,7 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
             // and the change missing to a chained send that fires first.
             // The record of the own half is also what lets its outputs be
             // trusted although the cover halves' inputs are not ours.
-            if (!wallet.RecordBroadcastTransaction(agg_tx, res->tx.vout, std::move(mapValue))) {
+            if (!wallet.RecordBroadcastTransaction(agg_tx, res->tx.vout, std::move(mapValue), std::nullopt)) {
                 // The aggregate is broadcast, so the send succeeded; failing
                 // the RPC now would invite a resend of a tx already out.
                 LogPrintf("sendtoblsctaddress: aggregate %s broadcast but not fully recorded by the wallet\n", agg_tx->GetHash().ToString());
@@ -695,7 +695,7 @@ static RPCHelpMan aggregatesend()
             // path does: otherwise a chained send can reselect the spent
             // inputs before the mempool sync callback marks them, and the
             // change stays untrusted until it confirms.
-            if (!pwallet->RecordBroadcastTransaction(tx, own->tx.vout, {})) {
+            if (!pwallet->RecordBroadcastTransaction(tx, own->tx.vout, {}, std::nullopt)) {
                 // The aggregate is broadcast, so the send succeeded; failing
                 // the RPC now would invite a resend of a tx already out.
                 LogPrintf("aggregatesend: aggregate %s broadcast but not fully recorded by the wallet\n", tx->GetHash().ToString());
@@ -894,7 +894,8 @@ static RPCHelpMan acceptquotewallet()
             // sync callback. The received output is funded only by the
             // maker's inputs, so it stays out of the own-half set and
             // untrusted until the swap confirms (see
-            // doc/release-notes-aggregated-send-trust.md).
+            // doc/release-notes-aggregated-send-trust.md). The maker's half
+            // funds the whole fee, so none of it is ours.
             const CTxDestination recv_dest{taker_recv.GetKeys()};
             std::vector<CTxOut> own_outputs;
             for (const CTxOut& out : taker_half->vout) {
@@ -905,7 +906,7 @@ static RPCHelpMan acceptquotewallet()
                 // trust it; leave the swap to the sync callback instead,
                 // which records it untrusted as a whole.
                 LogPrintf("acceptquotewallet: swap %s broadcast but not recorded: received output not identified\n", tx->GetHash().ToString());
-            } else if (!pwallet->RecordBroadcastTransaction(tx, own_outputs, {})) {
+            } else if (!pwallet->RecordBroadcastTransaction(tx, own_outputs, {}, /*own_fee=*/0)) {
                 // The swap is broadcast; failing the RPC now would lose the
                 // id of a tx already out.
                 LogPrintf("acceptquotewallet: swap %s broadcast but not fully recorded by the wallet\n", tx->GetHash().ToString());
@@ -3084,7 +3085,7 @@ RPCHelpMan consolidate()
                             // the inputs spent, reselect them and build a
                             // conflicting double-spend, and the merged output
                             // stays untrusted until it confirms.
-                            if (!pwallet->RecordBroadcastTransaction(agg_tx, own->vout, {})) {
+                            if (!pwallet->RecordBroadcastTransaction(agg_tx, own->vout, {}, std::nullopt)) {
                                 // The aggregate is broadcast, so the
                                 // consolidation succeeded; failing the RPC now
                                 // would lose the id of a tx already out.
