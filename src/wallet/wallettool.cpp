@@ -33,7 +33,9 @@ public:
     explicit CleanseOnExit(Buffers&... buffers) : m_buffers{buffers...} {}
     ~CleanseOnExit()
     {
-        std::apply([](auto&... buffer) { (memory_cleanse(buffer.data(), buffer.size()), ...); }, m_buffers);
+        // An empty buffer may have a null data(), and memory_cleanse would
+        // then hand memset a null pointer, which is undefined even for 0.
+        std::apply([](auto&... buffer) { ((buffer.empty() ? void() : memory_cleanse(buffer.data(), buffer.size())), ...); }, m_buffers);
     }
     CleanseOnExit(const CleanseOnExit&) = delete;
     CleanseOnExit& operator=(const CleanseOnExit&) = delete;
@@ -248,7 +250,7 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
             return false;
         }
         if (!seedphrase_extension.empty() && !make_blsct) {
-            tfm::format(std::cerr, "The -seedphraseextension option requires -blsct\n");
+            tfm::format(std::cerr, "The %s option requires -blsct\n", seedphrase_extension_arg);
             return false;
         }
 
@@ -258,7 +260,7 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
             return false;
         }
         if (!seed.empty() && !seedphrase_extension.empty()) {
-            tfm::format(std::cerr, "Cannot specify both -seed and -seedphraseextension\n");
+            tfm::format(std::cerr, "Cannot specify both -seed and %s\n", seedphrase_extension_arg);
             return false;
         }
 
@@ -284,12 +286,13 @@ bool ExecuteWalletToolFunc(const ArgsManager& args, const std::string& command)
         // accept one -- such a wallet is only recoverable from those bytes.
         if (!mnemonic::IsAsciiPassphrase(seedphrase_extension)) {
             if (mnemonic_str.empty()) {
-                tfm::format(std::cerr, "The -seedphraseextension must be ASCII when creating a new wallet\n");
+                tfm::format(std::cerr, "The %s must be ASCII when creating a new wallet\n", seedphrase_extension_arg);
                 return false;
             }
-            tfm::format(std::cerr, "Warning: -seedphraseextension contains non-ASCII characters. It is used as raw UTF-8 "
+            tfm::format(std::cerr, "Warning: %s contains non-ASCII characters. It is used as raw UTF-8 "
                                    "without BIP-39 normalization, so this restore only matches a wallet created from "
-                                   "the exact same bytes, and may not match other BIP-39 wallets.\n");
+                                   "the exact same bytes, and may not match other BIP-39 wallets.\n",
+                        seedphrase_extension_arg);
         }
 
         // Parse mnemonic if provided. Accepts plain 24-word BIP-39 or the

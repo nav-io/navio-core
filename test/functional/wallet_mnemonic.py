@@ -590,6 +590,28 @@ class WalletMnemonicTest(BitcoinTestFramework):
             assert_equal(p_info.poll(), 1)
             assert "The {} option can only be used with the 'create' command.".format(flag) in stderr_info
 
+        self.log.info("Test CLI tool: create errors name the deprecated -mnemonicpassphrase when it was passed")
+        rc_al, _, stderr_al = self.navio_wallet_create(
+            "test_cli_alias_seed", seed="00" * 32, mnemonic_passphrase="pass")
+        assert_equal(rc_al, 1)
+        assert "Cannot specify both -seed and -mnemonicpassphrase" in stderr_al
+        rc_al, stdout_al, stderr_al = self.navio_wallet_create(
+            "test_cli_alias_nonascii_new", mnemonic_passphrase="hünter2")
+        assert_equal(rc_al, 1)
+        assert "The -mnemonicpassphrase must be ASCII when creating a new wallet" in stderr_al
+        assert "Mnemonic:" not in stdout_al
+        rc_al, _, stderr_al = self.navio_wallet_create(
+            "test_cli_alias_nonascii_restore", mnemonic=mnemonic_mp, mnemonic_passphrase="hünter2")
+        assert_equal(rc_al, 0)
+        assert "Warning: -mnemonicpassphrase contains non-ASCII characters" in stderr_al
+        p_al = subprocess.Popen(
+            [self.options.naviowallet, '-datadir={}'.format(self.nodes[0].datadir_path), '-chain={}'.format(self.chain),
+             '-wallet=test_cli_alias_no_blsct', '-descriptors', '-mnemonicpassphrase=pass', 'create'],
+            stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
+        _, stderr_al = p_al.communicate()
+        assert_equal(p_al.poll(), 1)
+        assert "The -mnemonicpassphrase option requires -blsct" in stderr_al
+
         self.log.info("Test roundtrip through CLI: CLI create -> RPC dumpmnemonic -> CLI restore")
         # Create a wallet via CLI
         cli_wallet2 = "test_cli_roundtrip"
