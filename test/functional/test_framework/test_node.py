@@ -48,6 +48,7 @@ def write_minidump(pid, path):
     import ctypes
     import ctypes.wintypes
     import msvcrt
+    PROCESS_DUP_HANDLE = 0x0040
     PROCESS_QUERY_INFORMATION = 0x0400
     PROCESS_VM_READ = 0x0010
     MINIDUMP_WITH_FULL_MEMORY = 0x0002
@@ -61,7 +62,8 @@ def write_minidump(pid, path):
     dbghelp.MiniDumpWriteDump.argtypes = [ctypes.wintypes.HANDLE, ctypes.wintypes.DWORD, ctypes.wintypes.HANDLE,
                                           ctypes.c_int, ctypes.c_void_p, ctypes.c_void_p, ctypes.c_void_p]
     dbghelp.MiniDumpWriteDump.restype = ctypes.wintypes.BOOL
-    process = kernel32.OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid)
+    # MiniDumpWithHandleData needs PROCESS_DUP_HANDLE to record the handles.
+    process = kernel32.OpenProcess(PROCESS_DUP_HANDLE | PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, False, pid)
     if not process:
         raise ctypes.WinError(ctypes.get_last_error())
     try:
@@ -340,16 +342,19 @@ class TestNode():
                 if "No RPC credentials" not in str(e):
                     raise
             time.sleep(1.0 / poll_per_s)
-        if platform.system() == 'Windows' and self.process.poll() is None:
+        # Only the GitHub workflow collects the dump; a local run would just
+        # leave a full-memory dump behind in the datadir.
+        if platform.system() == 'Windows' and os.environ.get('GITHUB_ACTIONS') == 'true' and self.process.poll() is None:
             self._write_hang_minidump()
         self._raise_assertion_error("Unable to connect to naviod after {}s".format(self.rpc_timeout))
 
     def _write_hang_minidump(self):
         """Write a full-memory minidump of a naviod that never answered RPC.
 
-        The dump goes to the node's datadir, so CI can upload it and the
-        stack of the hung process can be inspected. A failure is only
-        logged, so it never masks the timeout that triggered it."""
+        Only called on GitHub Actions. The dump goes to the node's datadir,
+        so CI can upload it and the stack of the hung process can be
+        inspected. A failure is only logged, so it never masks the timeout
+        that triggered it."""
         dump_path = self.datadir_path / f"naviod_hang_{self.process.pid}.dmp"
         try:
             write_minidump(self.process.pid, dump_path)
