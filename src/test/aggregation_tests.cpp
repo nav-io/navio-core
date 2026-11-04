@@ -13,6 +13,7 @@
 #include <blsct/wallet/txfactory.h>
 #include <blsct/wallet/verification.h>
 #include <coins.h>
+#include <consensus/tx_verify.h>
 #include <kernel/chain.h>
 #include <policy/policy.h>
 #include <primitives/block.h>
@@ -183,6 +184,18 @@ BOOST_FIXTURE_TEST_CASE(check_candidate_rejects_invalid, TestingSetup)
         big.vin[0].scriptSig = CScript() << std::vector<unsigned char>(MAX_STANDARD_SCRIPTSIG_SIZE, 0x01);
         BOOST_CHECK(!check(CTransaction{big}, cache, reason));
         BOOST_CHECK_EQUAL(reason, "scriptsig-size");
+    }
+
+    // Sigops in the confidential output's scriptPubKey: the creator signs its
+    // own output, so it can choose any script, and mempool acceptance counts
+    // the sigops of every candidate an aggregate picks. Refused before the
+    // signature is checked, so the (now stale) txSig doesn't matter here.
+    {
+        BOOST_CHECK_EQUAL(GetTransactionSigOpCost(*good, cache, STANDARD_SCRIPT_VERIFY_FLAGS), 0);
+        CMutableTransaction sigops{*good};
+        sigops.vout[0].scriptPubKey << OP_CHECKSIG;
+        BOOST_CHECK(!check(CTransaction{sigops}, cache, reason));
+        BOOST_CHECK_EQUAL(reason, "candidate-sigops");
     }
 
     // A forged txSig: same tx, signature taken from another candidate.

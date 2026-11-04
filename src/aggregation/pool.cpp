@@ -129,6 +129,16 @@ bool CheckCandidate(const CTransaction& tx, CCoinsViewCache& view, const CTxMemP
     if (require_standard && !AreInputsStandard(tx, view)) {
         return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD, "bad-txns-nonstandard-inputs");
     }
+    // Mempool acceptance caps the aggregate's sigop cost whatever
+    // m_require_standard says (bad-txns-too-many-sigops), and the output's
+    // scriptPubKey is otherwise unconstrained for a confidential output.
+    // Honest covers carry none (an OP_TRUE or staked-commitment output, a
+    // confidential prevout), so any sigops could only push an aggregate that
+    // picks this candidate towards that limit. Checked before VerifyTx, as it
+    // is cheap.
+    if (GetTransactionSigOpCost(tx, view, STANDARD_SCRIPT_VERIFY_FLAGS) != 0) {
+        return state.Invalid(TxValidationResult::TX_NOT_STANDARD, "candidate-sigops");
+    }
     return blsct::VerifyTx(tx, view, state, /*blockReward=*/0, params.nPePoSMinStakeAmount,
                            spend_height, median_time_past, params.nBLSCTDefaultFee,
                            params.nBLSCTProofV2Height, /*threads=*/0,
