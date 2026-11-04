@@ -232,7 +232,6 @@ $(host_prefix)/toolchain.cmake : toolchain.cmake.in $(host_prefix)/.stamp_$(fina
 	    -e 's|@zmq_packages@|$(zmq_packages_)|' \
 	    -e 's|@wallet_packages@|$(wallet_packages_)|' \
 	    -e 's|@usdt_packages@|$(usdt_packages_)|' \
-	    -e 's|@multiprocess_packages@|$(multiprocess_packages_)|' \
 	    $< > $@
 	touch $@
 

@@ -72,7 +72,7 @@ class RpcMiscTest(BitcoinTestFramework):
         logging_help = self.nodes[0].help('logging')
         assert f"valid logging categories are: {categories}" in logging_help
 
-        self.log.info("test echoipc (testing spawned process in multiprocess build)")
+        self.log.info("test echoipc")
         assert_equal(node.echoipc("hello"), "hello")
 
         self.log.info("test getindexinfo")
