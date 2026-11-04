@@ -258,16 +258,35 @@ static std::set<std::string> g_loading_wallet_set GUARDED_BY(g_loading_wallet_mu
 static std::set<std::string> g_unloading_wallet_set GUARDED_BY(g_wallet_release_mutex);
 
 namespace {
-/** Holds a wallet name in g_loading_wallet_set while it lives, so a concurrent
- *  load, create or restore of the same name is refused until it is released. */
+/** The absolute path a wallet name resolves to, without "." or ".." elements
+ *  or a trailing separator, so names that differ only in spelling compare
+ *  equal. Symlinks and the case folding of a case-insensitive filesystem are
+ *  not resolved. */
+fs::path NormalWalletPath(const std::string& name)
+{
+    fs::path path{fsbridge::AbsPathJoin(GetWalletDir(), fs::PathFromString(name)).lexically_normal()};
+    while (path.filename().empty() && path.has_parent_path() && path != path.root_path()) {
+        path = path.parent_path();
+    }
+    return path;
+}
+
+/** Holds a wallet in g_loading_wallet_set while it lives, so a concurrent
+ *  load, create or restore of the same wallet is refused until it is released.
+ *  It is keyed by NormalWalletPath, so "w" and "./w" reserve the same wallet.
+ *
+ *  The constructor and destructor take g_loading_wallet_mutex but are not
+ *  annotated with the negative capability: their callers are the public
+ *  LoadWallet, CreateWallet and RestoreWallet, whose declarations cannot name
+ *  this file's mutex, so the requirement could not be passed on to them. */
 class LoadingWalletReservation
 {
 public:
-    explicit LoadingWalletReservation(const std::string& name) EXCLUSIVE_LOCKS_REQUIRED(!g_loading_wallet_mutex)
-        : m_name{name}, m_reserved{WITH_LOCK(g_loading_wallet_mutex, return g_loading_wallet_set.insert(name).second)} {}
-    ~LoadingWalletReservation() EXCLUSIVE_LOCKS_REQUIRED(!g_loading_wallet_mutex)
+    explicit LoadingWalletReservation(const std::string& name)
+        : m_key{fs::PathToString(NormalWalletPath(name))}, m_reserved{WITH_LOCK(g_loading_wallet_mutex, return g_loading_wallet_set.insert(m_key).second)} {}
+    ~LoadingWalletReservation()
     {
-        if (m_reserved) WITH_LOCK(g_loading_wallet_mutex, g_loading_wallet_set.erase(m_name));
+        if (m_reserved) WITH_LOCK(g_loading_wallet_mutex, g_loading_wallet_set.erase(m_key));
     }
     LoadingWalletReservation(const LoadingWalletReservation&) = delete;
     LoadingWalletReservation& operator=(const LoadingWalletReservation&) = delete;
@@ -275,7 +294,7 @@ public:
     bool Reserved() const { return m_reserved; }
 
 private:
-    const std::string m_name;
+    const std::string m_key;
     const bool m_reserved;
 };
 } // namespace
@@ -488,8 +507,15 @@ std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string&
         return fs::symlink_status(path, ec).type() != fs::file_type::not_found;
     }};
     const fs::path wallet_path{fsbridge::AbsPathJoin(GetWalletDir(), fs::PathFromString(name))};
-    const bool wallet_path_existed{path_exists(wallet_path)};
     const bool data_file_existed{path_exists(SQLiteDataFile(wallet_path))};
+    // A nested name such as "a/b" creates every missing level of its path, so
+    // each of them, deepest first, is this call's to remove. The path is
+    // walked without ".." elements, which could step back up into a directory
+    // that existed before.
+    std::vector<fs::path> created_dirs;
+    for (fs::path dir{NormalWalletPath(name)}; !path_exists(dir) && dir != dir.parent_path(); dir = dir.parent_path()) {
+        created_dirs.push_back(dir);
+    }
 
     // Wallet::Verify will check if we're trying to create a wallet with a duplicate name.
     std::unique_ptr<WalletDatabase> database = MakeWalletDatabase(name, options, status, error);
@@ -523,9 +549,12 @@ std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string&
             }
         }
         // Only an empty directory is removed, so one that holds anything
-        // besides the removed database survives.
-        std::error_code ec;
-        if (!wallet_path_existed && fs::is_empty(wallet_path, ec)) fs::remove(wallet_path, ec);
+        // besides the removed database survives, and so do its parents.
+        for (const fs::path& dir : created_dirs) {
+            std::error_code ec;
+            if (!fs::is_empty(dir, ec)) break;
+            fs::remove(dir, ec);
+        }
     })};
 
     // Make the wallet
