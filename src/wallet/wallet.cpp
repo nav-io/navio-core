@@ -680,7 +680,7 @@ std::shared_ptr<CWallet> RestoreWallet(WalletContext& context, const fs::path& b
     auto wallet_file = wallet_path / "wallet.dat";
     std::shared_ptr<CWallet> wallet;
     bool wallet_file_copied = false;
-    bool created_parent_dir = false;
+    std::vector<fs::path> created_dirs;
 
     // Hold the name until the cleanup below is done, so a concurrent load or
     // create of it cannot open the restored file, or have it removed under it.
@@ -703,13 +703,14 @@ std::shared_ptr<CWallet> RestoreWallet(WalletContext& context, const fs::path& b
             status = DatabaseStatus::FAILED_ALREADY_EXISTS;
             return nullptr;
         } else {
-            // The directory doesn't exist, create it
+            // The directory doesn't exist, create it, noting every level of
+            // it this call creates
+            created_dirs = MissingWalletDirs(wallet_name);
             if (!TryCreateDirectories(wallet_path)) {
                 error = Untranslated(strprintf("Failed to restore database path '%s'.", fs::PathToString(wallet_path)));
                 status = DatabaseStatus::FAILED_ALREADY_EXISTS;
                 return nullptr;
             }
-            created_parent_dir = true;
         }
 
         fs::copy_file(backup_file, wallet_file, fs::copy_options::none);
@@ -725,12 +726,9 @@ std::shared_ptr<CWallet> RestoreWallet(WalletContext& context, const fs::path& b
     // Remove created wallet path only when loading fails
     if (!wallet) {
         if (wallet_file_copied) fs::remove(wallet_file);
-        // Clean up the parent directory if we created it during restoration.
-        // As we have created it, it must be empty after deleting the wallet file.
-        if (created_parent_dir) {
-            Assume(fs::is_empty(wallet_path));
-            fs::remove(wallet_path);
-        }
+        // Clean up the directories this restoration created, including the
+        // missing parents of a nested name.
+        RemoveCreatedWalletDirs(created_dirs);
     }
 
     return wallet;
