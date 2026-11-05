@@ -23,10 +23,9 @@
 - Generally each library should have a corresponding source directory and
   namespace. Source code organization is a work in progress, so it is true that
   some namespaces are applied inconsistently, and if you look at
-  [`libbitcoin_*_SOURCES`](../../src/Makefile.am) lists you can see that many
+  [`add_library(navio_*)`](../../src/CMakeLists.txt) calls you can see that many
   libraries pull in files from outside their source directory. But when working
   with libraries, it is good to follow a consistent pattern like:
-
   - _libbitcoin_node_ code lives in `src/node/` in the `node::` namespace
   - _libbitcoin_wallet_ code lives in `src/wallet/` in the `wallet::` namespace
   - _libbitcoin_util_ code lives in `src/util/` in the `util::` namespace
