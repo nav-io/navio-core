@@ -267,31 +267,33 @@ class AvoidReuseTest(BitcoinTestFramework):
             else:
                 new_fundaddr = fundaddr
                 assert_equal(second_addr_type, "legacy")
+        else:
+            new_fundaddr = fundaddr
 
-            self.nodes[0].sendtoaddress(new_fundaddr, 10)
-            self.generate(self.nodes[0], 1)
+        self.nodes[0].sendtoaddress(new_fundaddr, 10)
+        self.generate(self.nodes[0], 1)
 
-            # listunspent should show 2 total outputs (5, 10 btc), one unused (5), one reused (10)
-            assert_unspent(self.nodes[1], total_count=2, total_sum=15, reused_count=1, reused_sum=10)
-            # getbalances should show 10 used, 5 btc trusted
-            assert_balances(self.nodes[1], mine={"used": 10, "trusted": 5})
+        # listunspent should show 2 total outputs (5, 10 btc), one unused (5), one reused (10)
+        assert_unspent(self.nodes[1], total_count=2, total_sum=15, reused_count=1, reused_sum=10)
+        # getbalances should show 10 used, 5 btc trusted
+        assert_balances(self.nodes[1], mine={"used": 10, "trusted": 5})
 
-            # node 1 should now have a balance of 5 (no dirty) or 15 (including dirty)
-            assert_approx(self.nodes[1].getbalance(), 5, 0.001)
-            assert_approx(self.nodes[1].getbalance(avoid_reuse=False), 15, 0.001)
+        # node 1 should now have a balance of 5 (no dirty) or 15 (including dirty)
+        assert_approx(self.nodes[1].getbalance(), 5, 0.001)
+        assert_approx(self.nodes[1].getbalance(avoid_reuse=False), 15, 0.001)
 
-            assert_raises_rpc_error(-6, "Insufficient funds", self.nodes[1].sendtoaddress, retaddr, 10)
+        assert_raises_rpc_error(-6, "Insufficient funds", self.nodes[1].sendtoaddress, retaddr, 10)
 
-            self.nodes[1].sendtoaddress(retaddr, 4)
+        self.nodes[1].sendtoaddress(retaddr, 4)
 
-            # listunspent should show 2 total outputs (1, 10 btc), one unused (1), one reused (10)
-            assert_unspent(self.nodes[1], total_count=2, total_sum=11, reused_count=1, reused_sum=10)
-            # getbalances should show 10 used, 1 btc trusted
-            assert_balances(self.nodes[1], mine={"used": 10, "trusted": 1})
+        # listunspent should show 2 total outputs (1, 10 btc), one unused (1), one reused (10)
+        assert_unspent(self.nodes[1], total_count=2, total_sum=11, reused_count=1, reused_sum=10)
+        # getbalances should show 10 used, 1 btc trusted
+        assert_balances(self.nodes[1], mine={"used": 10, "trusted": 1})
 
-            # node 1 should now have about 1 btc left (no dirty) and 11 (including dirty)
-            assert_approx(self.nodes[1].getbalance(), 1, 0.001)
-            assert_approx(self.nodes[1].getbalance(avoid_reuse=False), 11, 0.001)
+        # node 1 should now have about 1 btc left (no dirty) and 11 (including dirty)
+        assert_approx(self.nodes[1].getbalance(), 1, 0.001)
+        assert_approx(self.nodes[1].getbalance(avoid_reuse=False), 11, 0.001)
 
     def test_getbalances_used(self):
         '''
