@@ -876,7 +876,8 @@ static RPCHelpMan acceptquotewallet()
                 /*nBLSCTDefaultFee=*/0, /*additionalFee=*/0, &pastSearchBound);
             if (!taker_half) throw JSONRPCError(RPC_WALLET_ERROR, "failed to build taker half");
 
-            std::vector<CTransactionRef> halves{MakeTransactionRef(taker_half.value()), quote.half_tx};
+            const CTransactionRef taker_tx{MakeTransactionRef(taker_half.value())};
+            std::vector<CTransactionRef> halves{taker_tx, quote.half_tx};
             auto combined = aggregation::CombineHalves(halves);
             if (!combined) throw JSONRPCError(RPC_VERIFY_ERROR, "combine failed");
 
@@ -894,8 +895,9 @@ static RPCHelpMan acceptquotewallet()
             // sync callback. The received output is funded only by the
             // maker's inputs, so it stays out of the own-half set and
             // untrusted until the swap confirms (see
-            // doc/release-notes-aggregated-send-trust.md). The maker's half
-            // funds the whole fee, so none of it is ours.
+            // doc/release-notes-aggregated-send-trust.md). Our own fee is
+            // what our half's fee outputs carry: nothing today, since the
+            // maker's half funds the whole fee.
             const CTxDestination recv_dest{taker_recv.GetKeys()};
             std::vector<CTxOut> own_outputs;
             for (const CTxOut& out : taker_half->vout) {
@@ -906,7 +908,7 @@ static RPCHelpMan acceptquotewallet()
                 // trust it; leave the swap to the sync callback instead,
                 // which records it untrusted as a whole.
                 LogPrintf("acceptquotewallet: swap %s broadcast but not recorded: received output not identified\n", tx->GetHash().ToString());
-            } else if (!pwallet->RecordBroadcastTransaction(tx, own_outputs, {}, /*own_fee=*/0)) {
+            } else if (!pwallet->RecordBroadcastTransaction(tx, own_outputs, {}, /*own_fee=*/taker_tx->GetBLSCTFee())) {
                 // The swap is broadcast; failing the RPC now would lose the
                 // id of a tx already out.
                 LogPrintf("acceptquotewallet: swap %s broadcast but not fully recorded by the wallet\n", tx->GetHash().ToString());
