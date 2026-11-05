@@ -4,6 +4,7 @@
 
 #include <blst.h>
 #include <blsct/private_key.h>
+#include <support/cleanse.h>
 
 namespace blsct {
 
@@ -12,6 +13,7 @@ PrivateKey::PrivateKey(Scalar k_)
     k.resize(PrivateKey::SIZE);
     std::vector<unsigned char> v = k_.GetVch();
     memcpy(k.data(), &v.front(), k.size());
+    memory_cleanse(v.data(), v.size());
 }
 
 bool PrivateKey::operator==(const PrivateKey& rhs) const
@@ -61,6 +63,7 @@ Signature PrivateKey::CoreSign(const Message& msg) const
                     reinterpret_cast<const byte*>(BLS_SIG_G2_DST), BLS_SIG_G2_DST_LEN, nullptr, 0);
     Signature sig;
     blst_sign_pk_in_g1(&sig.m_data, &hash, &sk);
+    memory_cleanse(&sk, sizeof(sk));
     return sig;
 }
 
