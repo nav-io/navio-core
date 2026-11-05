@@ -271,6 +271,39 @@ fs::path NormalWalletPath(const std::string& name)
     return path;
 }
 
+/** Whether anything is at `path`. A path whose status cannot be read counts as
+ *  existing, so the cleanup below leaves it alone. */
+bool PathExists(const fs::path& path)
+{
+    std::error_code ec;
+    return fs::symlink_status(path, ec).type() != fs::file_type::not_found;
+}
+
+/** The levels of a wallet's directory that do not exist yet, deepest first: a
+ *  nested name such as "a/b" creates every missing level of its path, so each
+ *  of them is the creating call's to remove. The path is walked without ".."
+ *  elements, which could step back up into a directory that existed before. */
+std::vector<fs::path> MissingWalletDirs(const std::string& name)
+{
+    std::vector<fs::path> missing;
+    for (fs::path dir{NormalWalletPath(name)}; !PathExists(dir) && dir != dir.parent_path(); dir = dir.parent_path()) {
+        missing.push_back(dir);
+    }
+    return missing;
+}
+
+/** Remove the directories a failed create or restore made, deepest first. Only
+ *  an empty directory is removed, so one that holds anything else survives,
+ *  and so do its parents. */
+void RemoveCreatedWalletDirs(const std::vector<fs::path>& created_dirs)
+{
+    for (const fs::path& dir : created_dirs) {
+        std::error_code ec;
+        if (!fs::is_empty(dir, ec)) break;
+        fs::remove(dir, ec);
+    }
+}
+
 /** Holds a wallet in g_loading_wallet_set while it lives, so a concurrent
  *  load, create or restore of the same wallet is refused until it is released.
  *  It is keyed by NormalWalletPath, so "w" and "./w" reserve the same wallet.
@@ -500,22 +533,10 @@ std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string&
     }
 
     // Note what is at the wallet's path before its database is created, so a
-    // creation that fails below removes only what this call created. A path
-    // whose status cannot be read counts as existing, and is left alone.
-    const auto path_exists{[](const fs::path& path) {
-        std::error_code ec;
-        return fs::symlink_status(path, ec).type() != fs::file_type::not_found;
-    }};
+    // creation that fails below removes only what this call created.
     const fs::path wallet_path{fsbridge::AbsPathJoin(GetWalletDir(), fs::PathFromString(name))};
-    const bool data_file_existed{path_exists(SQLiteDataFile(wallet_path))};
-    // A nested name such as "a/b" creates every missing level of its path, so
-    // each of them, deepest first, is this call's to remove. The path is
-    // walked without ".." elements, which could step back up into a directory
-    // that existed before.
-    std::vector<fs::path> created_dirs;
-    for (fs::path dir{NormalWalletPath(name)}; !path_exists(dir) && dir != dir.parent_path(); dir = dir.parent_path()) {
-        created_dirs.push_back(dir);
-    }
+    const bool data_file_existed{PathExists(SQLiteDataFile(wallet_path))};
+    const std::vector<fs::path> created_dirs{MissingWalletDirs(name)};
 
     // Wallet::Verify will check if we're trying to create a wallet with a duplicate name.
     std::unique_ptr<WalletDatabase> database = MakeWalletDatabase(name, options, status, error);
@@ -548,13 +569,7 @@ std::shared_ptr<CWallet> CreateWallet(WalletContext& context, const std::string&
                 if (ec) LogPrintf("Failed to remove %s of a wallet that failed creation: %s\n", fs::PathToString(file), ec.message());
             }
         }
-        // Only an empty directory is removed, so one that holds anything
-        // besides the removed database survives, and so do its parents.
-        for (const fs::path& dir : created_dirs) {
-            std::error_code ec;
-            if (!fs::is_empty(dir, ec)) break;
-            fs::remove(dir, ec);
-        }
+        RemoveCreatedWalletDirs(created_dirs);
     })};
 
     // Make the wallet
@@ -665,7 +680,7 @@ std::shared_ptr<CWallet> RestoreWallet(WalletContext& context, const fs::path& b
     auto wallet_file = wallet_path / "wallet.dat";
     std::shared_ptr<CWallet> wallet;
     bool wallet_file_copied = false;
-    bool created_parent_dir = false;
+    std::vector<fs::path> created_dirs;
 
     // Hold the name until the cleanup below is done, so a concurrent load or
     // create of it cannot open the restored file, or have it removed under it.
@@ -688,13 +703,14 @@ std::shared_ptr<CWallet> RestoreWallet(WalletContext& context, const fs::path& b
             status = DatabaseStatus::FAILED_ALREADY_EXISTS;
             return nullptr;
         } else {
-            // The directory doesn't exist, create it
+            // The directory doesn't exist, create it, noting every level of
+            // it this call creates
+            created_dirs = MissingWalletDirs(wallet_name);
             if (!TryCreateDirectories(wallet_path)) {
                 error = Untranslated(strprintf("Failed to restore database path '%s'.", fs::PathToString(wallet_path)));
                 status = DatabaseStatus::FAILED_ALREADY_EXISTS;
                 return nullptr;
             }
-            created_parent_dir = true;
         }
 
         fs::copy_file(backup_file, wallet_file, fs::copy_options::none);
@@ -710,12 +726,9 @@ std::shared_ptr<CWallet> RestoreWallet(WalletContext& context, const fs::path& b
     // Remove created wallet path only when loading fails
     if (!wallet) {
         if (wallet_file_copied) fs::remove(wallet_file);
-        // Clean up the parent directory if we created it during restoration.
-        // As we have created it, it must be empty after deleting the wallet file.
-        if (created_parent_dir) {
-            Assume(fs::is_empty(wallet_path));
-            fs::remove(wallet_path);
-        }
+        // Clean up the directories this restoration created, including the
+        // missing parents of a nested name.
+        RemoveCreatedWalletDirs(created_dirs);
     }
 
     return wallet;

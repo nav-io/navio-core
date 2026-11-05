@@ -1187,6 +1187,36 @@ BOOST_FIXTURE_TEST_CASE(FailedCreateWalletRemovesNestedDirectories, TestingSetup
     }
 }
 
+// A failed restore under a nested name removes every directory level it
+// created, and stops at the first one that existed before.
+BOOST_FIXTURE_TEST_CASE(FailedRestoreWalletRemovesNestedDirectories, TestingSetup)
+{
+    m_args.ForceSetArg("-unsafesqlitesync", "1");
+    WalletContext context;
+    context.args = &m_args;
+    context.chain = m_node.chain.get();
+    bilingual_str error;
+    std::vector<bilingual_str> warnings;
+    DatabaseStatus status;
+
+    // Not a wallet database, so loading the restored copy fails.
+    const fs::path backup_file{m_args.GetDataDirNet() / "not_a_wallet.bak"};
+    std::ofstream{backup_file} << "not a wallet";
+
+    const fs::path new_parent{GetWalletDir() / "failed_restore_new_parent"};
+    auto restored = RestoreWallet(context, backup_file, "failed_restore_new_parent/a/b", /*load_on_start=*/std::nullopt, status, error, warnings);
+    BOOST_CHECK(!restored);
+    BOOST_CHECK(!fs::exists(new_parent));
+
+    const fs::path old_parent{GetWalletDir() / "failed_restore_old_parent"};
+    BOOST_REQUIRE(fs::create_directories(old_parent));
+    error = {};
+    restored = RestoreWallet(context, backup_file, "failed_restore_old_parent/a/b", /*load_on_start=*/std::nullopt, status, error, warnings);
+    BOOST_CHECK(!restored);
+    BOOST_CHECK(fs::is_directory(old_parent));
+    BOOST_CHECK(fs::is_empty(old_parent));
+}
+
 // The loading reservation is keyed by the wallet's path, so another spelling
 // of a name being created is refused rather than racing it.
 BOOST_FIXTURE_TEST_CASE(CreateWalletReservesNormalisedPath, TestingSetup)
