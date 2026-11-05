@@ -407,6 +407,28 @@ class NavioBlsctColdStakingTest(BitcoinTestFramework):
             staker.kill()
             staker.wait()
 
+        # A write that fails (here the copy is a full device) is not renamed
+        # into place: the last complete stats file stays, and the copy is
+        # removed. /dev/full is Linux-only, so elsewhere this case is skipped.
+        if os.path.exists("/dev/full"):
+            with open(self.statsfile, encoding="utf8") as f:
+                last_good = f.read()
+            stats_tmp = self.statsfile + ".tmp"
+            os.symlink("/dev/full", stats_tmp)
+            staker = self.spawn_staker([f"-delegationkeyfile={keyfile}", f"-statsfile={self.statsfile}"])
+            try:
+                found = self.wait_for_staker_line(staker, ["Could not write", "Could not rename"])
+                assert_equal(found, "Could not write")
+                self.wait_until(lambda: not os.path.lexists(stats_tmp))
+            finally:
+                staker.kill()
+                staker.wait()
+            assert not os.path.islink(self.statsfile)
+            with open(self.statsfile, encoding="utf8") as f:
+                assert_equal(f.read(), last_good)
+        else:
+            self.log.info("Skipping the failed stats write case: no /dev/full on this platform")
+
         # Both key sources must not be combined.
         proc = subprocess.run([self.staker_path(), f"-datadir={self.nodes[0].datadir_path}",
                                "-delegated", "-delegationkey=00", f"-delegationkeyfile={keyfile}"],
