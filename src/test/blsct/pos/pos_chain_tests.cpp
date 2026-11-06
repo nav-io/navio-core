@@ -8,7 +8,6 @@
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
 #include <core_io.h>
-#include <policy/fees.h>
 #include <test/util/random.h>
 #include <validation.h>
 #include <wallet/coincontrol.h>

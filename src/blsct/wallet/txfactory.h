@@ -9,7 +9,6 @@
 #include <blsct/wallet/keyman.h>
 #include <blsct/wallet/txfactory_base.h>
 #include <blsct/wallet/txfactory_global.h>
-#include <policy/fees.h>
 #include <rpc/protocol.h>
 #include <univalue.h>
 #include <util/rbf.h>
