@@ -98,6 +98,51 @@ struct CompressedHeader {
  * sync (temporary, per-peer storage).
  */
 
+/** Policy limit on how fast a proof-of-stake header chain may claim chain
+ * work, relative to the time its timestamps span.
+ *
+ * A proof-of-stake header carries no proof of work: its stake proof is in the
+ * block body, so anyone can make headers for free. Packing their timestamps
+ * together makes every proof-of-stake retarget raise the difficulty by the
+ * full 4x step, so a free chain can claim any amount of work within a few
+ * hundred headers, which defeats the work thresholds that bound how many
+ * headers a peer can make us store. Stake does not appear from nowhere, so an
+ * honest chain claims work at about the rate ours does: refuse a chain that
+ * claims more than MAX_RATE_FACTOR times our recent rate over its timespan,
+ * plus one retarget timespan of slack for short bursts of blocks.
+ */
+class HeadersWorkRateLimit
+{
+public:
+    //! How many times our own rate a chain may claim work at. A node on a
+    //! minority fork can still follow a heavier one as long as it holds at
+    //! least 1/MAX_RATE_FACTOR of the stake.
+    static constexpr uint32_t MAX_RATE_FACTOR{4};
+    //! Our rate is measured over this many proof-of-stake retarget intervals.
+    static constexpr int REFERENCE_INTERVALS{10};
+
+    //! No limit.
+    HeadersWorkRateLimit() = default;
+    //! The limit measured on the chain ending at `tip`. No limit unless the
+    //! chain is a BLSCT one with REFERENCE_INTERVALS proof-of-stake retarget
+    //! intervals past nLastPOWHeight.
+    HeadersWorkRateLimit(const CBlockIndex* tip, const Consensus::Params& params);
+
+    //! Whether headers built on `start` may claim `work`, the last of them
+    //! timestamped `last_time`, at adjusted time `now`. Headers built on a
+    //! block at or below nLastPOWHeight are not limited.
+    bool Allows(const CBlockIndex& start, const arith_uint256& work, int64_t last_time, int64_t now) const;
+
+    bool IsActive() const { return m_active; }
+
+private:
+    bool m_active{false};
+    //! MAX_RATE_FACTOR times our measured work per second.
+    arith_uint256 m_max_work_per_second;
+    int64_t m_slack_seconds{0};
+    int m_last_pow_height{0};
+};
+
 class HeadersSyncState {
 public:
     ~HeadersSyncState() = default;
@@ -134,9 +179,12 @@ public:
      * consensus_params: parameters needed for difficulty adjustment validation
      * chain_start: best known fork point that the peer's headers branch from
      * minimum_required_work: amount of chain work required to accept the chain
+     * work_rate_limit: how fast the peer's chain may claim work (presync aborts
+     *  at the first header that exceeds it)
      */
     HeadersSyncState(NodeId id, const Consensus::Params& consensus_params,
-            const CBlockIndex* chain_start, const arith_uint256& minimum_required_work);
+            const CBlockIndex* chain_start, const arith_uint256& minimum_required_work,
+            const HeadersWorkRateLimit& work_rate_limit = {});
 
     /** Result data structure for ProcessNextHeaders. */
     struct ProcessingResult {
@@ -219,6 +267,9 @@ private:
 
     /** Minimum work that we're looking for on this chain. */
     const arith_uint256 m_minimum_required_work;
+
+    /** How fast the peer's chain may claim work. */
+    const HeadersWorkRateLimit m_work_rate_limit;
 
     /** Work that we've seen so far on the peer's chain */
     arith_uint256 m_current_chain_work;
