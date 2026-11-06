@@ -9,20 +9,57 @@
 #include <mnemonic/mnemonic.h>
 #include <mnemonic/wordlist.h>
 #include <random.h>
+#include <support/allocators/secure.h>
 #include <support/cleanse.h>
 #include <util/strencodings.h>
 
 #include <algorithm>
-#include <sstream>
 
 // FIXME: Audit the usage of strings for the mnemonic value: Should maybe use
 // the secured bytes or secure string variants for passing it around internally
 
 namespace mnemonic {
 
+namespace {
+// Secret intermediates live in secure_allocator buffers, which wipe their
+// memory when they free it, reallocations included.
+using SecureBytes = std::vector<unsigned char, secure_allocator<unsigned char>>;
+using SecureIndices = std::vector<uint16_t, secure_allocator<uint16_t>>;
+
+//! The whitespace-separated words of `s`, as views into it, so splitting a
+//! mnemonic copies none of it.
+std::vector<std::string_view> SplitWords(std::string_view s)
+{
+    std::vector<std::string_view> words;
+    size_t i{0};
+    while (i < s.size()) {
+        while (i < s.size() && IsSpace(s[i])) ++i;
+        const size_t start{i};
+        while (i < s.size() && !IsSpace(s[i])) ++i;
+        if (i > start) words.push_back(s.substr(start, i - start));
+    }
+    return words;
+}
+
+//! `words` joined by single spaces, built in one allocation so that no
+//! partial copy of the sentence is freed along the way.
+std::string JoinWords(Span<const std::string_view> words)
+{
+    size_t size{0};
+    for (const auto& w : words) size += w.size() + 1;
+    std::string sentence;
+    sentence.reserve(size);
+    for (const auto& w : words) {
+        if (!sentence.empty()) sentence += ' ';
+        sentence += w;
+    }
+    return sentence;
+}
+} // namespace
+
 std::string Generate()
 {
-    std::vector<unsigned char> entropy(32);
+    SecureBytes entropy(32);
     GetStrongRandBytes(entropy);
     return EntropyToMnemonic(entropy);
 }
@@ -37,15 +74,17 @@ std::string EntropyToMnemonic(Span<const unsigned char> entropy)
     unsigned char hash[CSHA256::OUTPUT_SIZE];
     CSHA256().Write(entropy.data(), ent_bytes).Finalize(hash);
 
-    std::vector<unsigned char> bits(entropy.begin(), entropy.end());
+    SecureBytes bits(entropy.begin(), entropy.end());
     bits.push_back(hash[0]);
+    memory_cleanse(hash, sizeof(hash));
 
     size_t ent_bits = ent_bytes * 8;
     size_t cs_bits = ent_bits / 32;
     size_t total_bits = ent_bits + cs_bits;
     size_t num_words = total_bits / 11;
 
-    std::string result;
+    std::vector<std::string_view> words;
+    words.reserve(num_words);
     for (size_t i = 0; i < num_words; i++) {
         size_t bit_offset = i * 11;
         size_t byte_idx = bit_offset / 8;
@@ -60,11 +99,10 @@ std::string EntropyToMnemonic(Span<const unsigned char> entropy)
 
         uint32_t index = (val >> (24 - bit_idx - 11)) & 0x7FF;
 
-        if (i > 0) result += " ";
-        result += wordlist_en[index];
+        words.emplace_back(wordlist_en[index]);
     }
 
-    return result;
+    return JoinWords(words);
 }
 
 namespace {
@@ -79,21 +117,16 @@ std::optional<uint16_t> WordIndex(std::string_view w)
 }
 } // namespace
 
-std::optional<std::vector<unsigned char>> MnemonicToEntropy(const std::string& words_str)
+namespace {
+std::optional<std::vector<unsigned char>> EntropyFromWords(Span<const std::string_view> words)
 {
-    std::vector<std::string> words;
-    std::istringstream iss(words_str);
-    std::string word;
-    while (iss >> word) {
-        words.push_back(word);
-    }
-
     if (words.size() != 12 && words.size() != 15 && words.size() != 18 &&
         words.size() != 21 && words.size() != 24) {
         return std::nullopt;
     }
 
-    std::vector<uint16_t> indices;
+    SecureIndices indices;
+    indices.reserve(words.size());
     for (const auto& w : words) {
         const auto index = WordIndex(w);
         if (!index) return std::nullopt;
@@ -105,7 +138,7 @@ std::optional<std::vector<unsigned char>> MnemonicToEntropy(const std::string& w
     size_t ent_bits = total_bits - cs_bits;
     size_t ent_bytes = ent_bits / 8;
 
-    std::vector<unsigned char> buf((total_bits + 7) / 8, 0);
+    SecureBytes buf((total_bits + 7) / 8, 0);
     for (size_t i = 0; i < indices.size(); i++) {
         size_t bit_offset = i * 11;
         for (int b = 0; b < 11; b++) {
@@ -121,14 +154,21 @@ std::optional<std::vector<unsigned char>> MnemonicToEntropy(const std::string& w
     unsigned char hash[CSHA256::OUTPUT_SIZE];
     CSHA256().Write(entropy.data(), entropy.size()).Finalize(hash);
 
-    unsigned char actual_cs = buf[ent_bytes];
-    unsigned char expected_cs = hash[0];
-    unsigned char mask = static_cast<unsigned char>(0xFF << (8 - cs_bits));
-    if ((actual_cs & mask) != (expected_cs & mask)) {
+    const unsigned char mask = static_cast<unsigned char>(0xFF << (8 - cs_bits));
+    const bool checksum_ok{(buf[ent_bytes] & mask) == (hash[0] & mask)};
+    memory_cleanse(hash, sizeof(hash));
+    if (!checksum_ok) {
+        memory_cleanse(entropy.data(), entropy.size());
         return std::nullopt;
     }
 
     return entropy;
+}
+} // namespace
+
+std::optional<std::vector<unsigned char>> MnemonicToEntropy(const std::string& words_str)
+{
+    return EntropyFromWords(SplitWords(words_str));
 }
 
 bool IsAsciiPassphrase(const std::string& passphrase)
@@ -188,8 +228,6 @@ uint16_t BirthdayCheckIndex(Span<const unsigned char> entropy, uint16_t week)
 
 std::string MnemonicWithBirthday(const std::string& words24, int64_t time)
 {
-    auto entropy = MnemonicToEntropy(words24);
-    if (!entropy || entropy->size() != 32) return "";
     // Range-check the difference BEFORE dividing: C++ integer division
     // truncates toward zero, so a pre-epoch time with |delta| < 1 week would
     // otherwise produce week 0 instead of being rejected. (This is also the
@@ -197,20 +235,17 @@ std::string MnemonicWithBirthday(const std::string& words24, int64_t time)
     const int64_t d = time - BIRTHDAY_MNEMONIC_EPOCH;
     if (d < 0 || d >= 2048 * BIRTHDAY_MNEMONIC_WEEK) return "";
     const auto week = static_cast<uint16_t>(d / BIRTHDAY_MNEMONIC_WEEK);
-    const uint16_t check = BirthdayCheckIndex(*entropy, week);
-    std::string sentence;
-    // normalize base whitespace
-    std::istringstream iss(words24);
-    std::string word;
-    while (iss >> word) {
-        if (!sentence.empty()) sentence += ' ';
-        sentence += word;
-    }
-    sentence += ' ';
-    sentence += wordlist_en[week];
-    sentence += ' ';
-    sentence += wordlist_en[check];
-    return sentence;
+    auto words = SplitWords(words24);
+    auto entropy = EntropyFromWords(words);
+    if (!entropy) return "";
+    const bool is_24_words{entropy->size() == 32};
+    const uint16_t check = is_24_words ? BirthdayCheckIndex(*entropy, week) : 0;
+    memory_cleanse(entropy->data(), entropy->size());
+    if (!is_24_words) return "";
+    // JoinWords normalizes the base words' whitespace.
+    words.emplace_back(wordlist_en[week]);
+    words.emplace_back(wordlist_en[check]);
+    return JoinWords(words);
 }
 
 std::string GenerateWithBirthday(int64_t time)
@@ -220,28 +255,20 @@ std::string GenerateWithBirthday(int64_t time)
 
 std::optional<DecodedMnemonic> DecodeMnemonic(const std::string& words_str)
 {
-    std::vector<std::string> words;
-    std::istringstream iss(words_str);
-    std::string word;
-    while (iss >> word) {
-        words.push_back(word);
-    }
+    const auto words = SplitWords(words_str);
     if (words.size() == 26) {
-        std::string base;
-        for (size_t i = 0; i < 24; i++) {
-            if (!base.empty()) base += ' ';
-            base += words[i];
+        auto entropy = EntropyFromWords(Span{words}.first(24));
+        if (!entropy) return std::nullopt;
+        const auto week = WordIndex(words[24]);
+        const auto check = WordIndex(words[25]);
+        if (entropy->size() != 32 || !week || !check || *check != BirthdayCheckIndex(*entropy, *week)) {
+            memory_cleanse(entropy->data(), entropy->size());
+            return std::nullopt;
         }
-        auto entropy = MnemonicToEntropy(base);
-        if (!entropy || entropy->size() != 32) return std::nullopt;
-        auto week = WordIndex(words[24]);
-        auto check = WordIndex(words[25]);
-        if (!week || !check) return std::nullopt;
-        if (*check != BirthdayCheckIndex(*entropy, *week)) return std::nullopt;
         return DecodedMnemonic{std::move(*entropy),
                                BIRTHDAY_MNEMONIC_EPOCH + static_cast<int64_t>(*week) * BIRTHDAY_MNEMONIC_WEEK};
     }
-    auto entropy = MnemonicToEntropy(words_str);
+    auto entropy = EntropyFromWords(words);
     if (!entropy) return std::nullopt;
     return DecodedMnemonic{std::move(*entropy), std::nullopt};
 }
