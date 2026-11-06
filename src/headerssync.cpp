@@ -49,6 +49,13 @@ bool HeadersWorkRateLimit::Allows(const CBlockIndex& start, const arith_uint256&
     return work <= m_max_work_per_second * arith_uint256{static_cast<uint64_t>(seconds)};
 }
 
+bool IsDeepProofOfStakeFork(const CChain& active, const CBlockIndex& start, const Consensus::Params& params, int depth)
+{
+    if (!params.fBLSCT || active.Tip() == nullptr) return false;
+    const CBlockIndex* fork{active.FindFork(&start)};
+    return fork != nullptr && fork->nHeight > params.nLastPOWHeight && fork->nHeight + depth < active.Height();
+}
+
 HeadersSyncState::HeadersSyncState(NodeId id, const Consensus::Params& consensus_params,
         const CBlockIndex* chain_start, const arith_uint256& minimum_required_work,
         const HeadersWorkRateLimit& work_rate_limit) :

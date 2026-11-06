@@ -320,6 +320,27 @@ BOOST_AUTO_TEST_CASE(headers_sync_work_rate)
     BOOST_CHECK(!sync(HeadersWorkRateLimit{tip, consensus}));
 }
 
+// Only forks from more than the given depth below the tip, in the
+// proof-of-stake part of a BLSCT chain, are deep.
+BOOST_AUTO_TEST_CASE(deep_proof_of_stake_fork)
+{
+    const auto consensus = CreateChainParams(*m_node.args, ChainType::MAIN)->GetConsensus();
+    std::vector<std::unique_ptr<CBlockIndex>> store;
+    CBlockIndex* tip{BuildMainnetLikeChain(store, consensus, 400)};
+    CChain active;
+    active.SetTip(*tip);
+    const auto branch_from = [&](CBlockIndex* fork) { return AddIndex(store, fork, fork->nTime + 1, fork->nBits); };
+
+    BOOST_CHECK(!IsDeepProofOfStakeFork(active, *tip, consensus, 144));
+    BOOST_CHECK(!IsDeepProofOfStakeFork(active, *branch_from(tip->GetAncestor(tip->nHeight - 144)), consensus, 144));
+    BOOST_CHECK(IsDeepProofOfStakeFork(active, *branch_from(tip->GetAncestor(tip->nHeight - 145)), consensus, 144));
+    // A fork in the proof-of-work part, or on a chain without BLSCT, is not.
+    BOOST_CHECK(!IsDeepProofOfStakeFork(active, *branch_from(tip->GetAncestor(consensus.nLastPOWHeight)), consensus, 144));
+    auto no_blsct{consensus};
+    no_blsct.fBLSCT = false;
+    BOOST_CHECK(!IsDeepProofOfStakeFork(active, *branch_from(tip->GetAncestor(tip->nHeight - 145)), no_blsct, 144));
+}
+
 // What free proof-of-stake headers can do to a mainnet node, with and without
 // the rate limit: run with --log_level=message to print the figures. Checks
 // that a packed chain is refused before it overtakes the tip or, from a deep

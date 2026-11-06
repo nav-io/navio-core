@@ -143,6 +143,11 @@ private:
     int m_last_pow_height{0};
 };
 
+/** Whether headers built on `start` fork from `active` more than `depth`
+ * blocks below its tip, in the proof-of-stake part of a BLSCT chain. Such
+ * headers are free to make, so only a peer we chose may lead us there. */
+bool IsDeepProofOfStakeFork(const CChain& active, const CBlockIndex& start, const Consensus::Params& params, int depth);
+
 class HeadersSyncState {
 public:
     ~HeadersSyncState() = default;
