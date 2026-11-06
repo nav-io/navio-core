@@ -5,10 +5,13 @@
 #ifndef NAVIO_BLSCT_ARITH_BLST_BLST_STRCONV_H
 #define NAVIO_BLSCT_ARITH_BLST_BLST_STRCONV_H
 
+#include <support/cleanse.h>
+
 #include <cstddef>
 #include <cstdint>
 #include <stdexcept>
 #include <string>
+#include <utility>
 #include <vector>
 
 // Small big-endian byte-string <-> radix-string helpers for the blst arith
@@ -19,6 +22,7 @@ namespace blst_arith {
 
 // Render an unsigned big-endian integer in `radix` (2, 10 or 16), no prefix,
 // leading zeros stripped, "0" for zero — matching mcl's getStr formatting.
+// The input can be a secret scalar, so the working copies are wiped.
 inline std::string BytesToRadixString(const uint8_t* be, size_t n, int radix)
 {
     static const char* digits = "0123456789abcdef";
@@ -27,6 +31,9 @@ inline std::string BytesToRadixString(const uint8_t* be, size_t n, int radix)
     }
     std::vector<uint8_t> v(be, be + n);
     std::string out;
+    // Binary is the longest rendering; reserving it up front means no
+    // reallocation leaves a partial copy behind in freed memory.
+    out.reserve(n * 8);
     if (radix == 16 || radix == 2) {
         const int bits = radix == 16 ? 4 : 1;
         for (uint8_t b : v) {
@@ -49,23 +56,27 @@ inline std::string BytesToRadixString(const uint8_t* be, size_t n, int radix)
             out.push_back(digits[rem]);
         }
         std::string rev(out.rbegin(), out.rend());
-        out = rev;
+        std::swap(out, rev);
+        memory_cleanse(rev.data(), rev.size());
     }
-    size_t first = out.find_first_not_of('0');
-    if (first == std::string::npos) return "0";
-    return out.substr(first);
+    memory_cleanse(v.data(), v.size());
+    const size_t first = out.find_first_not_of('0');
+    std::string ret = first == std::string::npos ? "0" : out.substr(first);
+    memory_cleanse(out.data(), out.size());
+    return ret;
 }
 
 // Parse a radix-`radix` (2/10/16) digit string into a big-endian byte vector
 // of exactly `out_len` bytes (left-padded with zeros). Values that do not fit
-// are rejected. An optional "0x" prefix is accepted for radix 16.
+// are rejected. An optional "0x" prefix is accepted for radix 16. The working
+// copy of the digits is wiped on success.
 inline std::vector<uint8_t> RadixStringToBytes(const std::string& s_in, int radix, size_t out_len)
 {
     if (radix != 2 && radix != 10 && radix != 16) {
         throw std::runtime_error("RadixStringToBytes: unsupported radix");
     }
     std::string s = s_in;
-    if (radix == 16 && s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s = s.substr(2);
+    if (radix == 16 && s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s.erase(0, 2);
     if (s.empty()) throw std::runtime_error("RadixStringToBytes: empty string");
 
     std::vector<uint8_t> acc(out_len, 0);
@@ -85,6 +96,7 @@ inline std::vector<uint8_t> RadixStringToBytes(const std::string& s_in, int radi
         }
         if (carry) throw std::runtime_error("RadixStringToBytes: overflow");
     }
+    memory_cleanse(s.data(), s.size());
     return acc;
 }
 

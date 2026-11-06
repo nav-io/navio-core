@@ -135,7 +135,7 @@ static std::vector<TestCase> BuildTestCases()
         invalid_inputs.Add(upper_bound << 1);
 
         // test single valid value
-        for (auto value : valid_inputs.m_vec) {
+        for (const auto& value : valid_inputs.m_vec) {
             Scalars values;
             values.Add(value);
 
@@ -152,7 +152,7 @@ static std::vector<TestCase> BuildTestCases()
         }
 
         // test single invalid value
-        for (auto value : invalid_inputs.m_vec) {
+        for (const auto& value : invalid_inputs.m_vec) {
             Scalars values;
             values.Add(value);
 
@@ -299,7 +299,7 @@ static void RunTestCase(
         bulletproofs_plus::RangeProofWithSeed<T> p{proof, token_id, test_case.min_value};
         proofs.emplace_back(p);
     } else {
-        for (auto value : test_case.values.m_vec) {
+        for (const auto& value : test_case.values.m_vec) {
             Scalars single_value_vec;
             single_value_vec.Add(value);
 

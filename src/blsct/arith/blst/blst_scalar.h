@@ -13,6 +13,7 @@
 #include <serialize.h>
 #include <span.h>
 #include <streams.h>
+#include <support/cleanse.h>
 #include <uint256.h>
 
 #include <array>
@@ -43,6 +44,15 @@ public:
     BlstScalar(const uint256& n);
     BlstScalar(const std::string& s, int radix);
     BlstScalar(const std::vector<uint8_t>& msg, uint8_t index);
+
+    BlstScalar(const BlstScalar&) = default;
+    BlstScalar(BlstScalar&&) = default;
+    BlstScalar& operator=(const BlstScalar&) = default;
+    BlstScalar& operator=(BlstScalar&&) = default;
+    // A scalar can be a secret (a key, a blinding factor, a nonce), and the
+    // proof code makes many temporaries of them, so every one is wiped when
+    // it goes away rather than left in freed stack or heap memory.
+    ~BlstScalar() { memory_cleanse(&m_scalar, sizeof(m_scalar)); }
 
     BlstScalar ApplyBitwiseOp(const BlstScalar& a, const BlstScalar& b,
                               std::function<uint8_t(uint8_t, uint8_t)> op) const;
@@ -99,6 +109,7 @@ public:
     {
         auto vec = GetVch();
         s.write(MakeByteSpan(vec));
+        memory_cleanse(vec.data(), vec.size());
     }
 
     template <typename Stream>
@@ -113,7 +124,14 @@ public:
         // The legacy-decode scope (baked consensus parameters whose encoding
         // predates the canonical serializer) keeps the lenient behaviour.
         // Note GetVch() here must be the untrimmed 32-byte form.
-        if (!BlstLegacyPointDecodeActive() && GetVch() != vec) {
+        bool canonical{true};
+        if (!BlstLegacyPointDecodeActive()) {
+            auto reencoded = GetVch();
+            canonical = reencoded == vec;
+            memory_cleanse(reencoded.data(), reencoded.size());
+        }
+        memory_cleanse(vec.data(), vec.size());
+        if (!canonical) {
             throw std::ios_base::failure("BlstScalar: non-canonical encoding");
         }
     }

@@ -79,11 +79,11 @@ LazyPoints<T> LazyPoints<T>::operator+(const LazyPoints<T>& rhs) const {
     Elements<typename T::Point> bases;
     Elements<typename T::Scalar> exps;
 
-    for (auto p: m_points) {
+    for (const auto& p: m_points) {
         bases.Add(p.m_base);
         exps.Add(p.m_exp);
     }
-    for (auto p: rhs.m_points) {
+    for (const auto& p: rhs.m_points) {
         bases.Add(p.m_base);
         exps.Add(p.m_exp);
     }
@@ -97,7 +97,7 @@ LazyPoints<T> LazyPoints<T>::operator+(const LazyPoint<T>& rhs) const {
     Elements<typename T::Point> bases;
     Elements<typename T::Scalar> exps;
 
-    for (auto p: m_points) {
+    for (const auto& p: m_points) {
         bases.Add(p.m_base);
         exps.Add(p.m_exp);
     }
