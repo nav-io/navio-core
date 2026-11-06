@@ -71,6 +71,47 @@ unsigned int CalculateNextWorkRequired(const CBlockIndex* pindexLast, int64_t nF
     return bnNew.GetCompact();
 }
 
+namespace {
+// Whether new_nbits is a retarget of old_nbits by at most a factor of four
+// either way, with both bounds capped at limit.
+bool WithinRetargetBounds(uint32_t old_nbits, uint32_t new_nbits, const arith_uint256& limit)
+{
+    arith_uint256 observed_new_target;
+    observed_new_target.SetCompact(new_nbits);
+
+    // Calculate the largest difficulty value possible:
+    arith_uint256 largest_difficulty_target;
+    largest_difficulty_target.SetCompact(old_nbits);
+    largest_difficulty_target *= 4;
+
+    if (largest_difficulty_target > limit) {
+        largest_difficulty_target = limit;
+    }
+
+    // Round and then compare this new calculated value to what is
+    // observed.
+    arith_uint256 maximum_new_target;
+    maximum_new_target.SetCompact(largest_difficulty_target.GetCompact());
+    if (maximum_new_target < observed_new_target) return false;
+
+    // Calculate the smallest difficulty value possible:
+    arith_uint256 smallest_difficulty_target;
+    smallest_difficulty_target.SetCompact(old_nbits);
+    smallest_difficulty_target /= 4;
+
+    if (smallest_difficulty_target > limit) {
+        smallest_difficulty_target = limit;
+    }
+
+    // Round and then compare this new calculated value to what is
+    // observed.
+    arith_uint256 minimum_new_target;
+    minimum_new_target.SetCompact(smallest_difficulty_target.GetCompact());
+    if (minimum_new_target > observed_new_target) return false;
+    return true;
+}
+} // namespace
+
 // Check that on difficulty adjustments, the new difficulty does not increase
 // or decrease beyond the permitted limits.
 bool PermittedDifficultyTransition(const Consensus::Params& params, int64_t height, uint32_t old_nbits, uint32_t new_nbits)
@@ -88,43 +129,9 @@ bool PermittedDifficultyTransition(const Consensus::Params& params, int64_t heig
     }
 
     if (height % params.DifficultyAdjustmentInterval() == 0) {
-        const arith_uint256 pow_limit = UintToArith256(params.powLimit);
-        arith_uint256 observed_new_target;
-        observed_new_target.SetCompact(new_nbits);
-
-        // Calculate the largest difficulty value possible:
-        arith_uint256 largest_difficulty_target;
-        largest_difficulty_target.SetCompact(old_nbits);
-        largest_difficulty_target *= 4;
-
-        if (largest_difficulty_target > pow_limit) {
-            largest_difficulty_target = pow_limit;
-        }
-
-        // Round and then compare this new calculated value to what is
-        // observed.
-        arith_uint256 maximum_new_target;
-        maximum_new_target.SetCompact(largest_difficulty_target.GetCompact());
-        if (maximum_new_target < observed_new_target) return false;
-
-        // Calculate the smallest difficulty value possible:
-        arith_uint256 smallest_difficulty_target;
-        smallest_difficulty_target.SetCompact(old_nbits);
-        smallest_difficulty_target /= 4;
-
-        if (smallest_difficulty_target > pow_limit) {
-            smallest_difficulty_target = pow_limit;
-        }
-
-        // Round and then compare this new calculated value to what is
-        // observed.
-        arith_uint256 minimum_new_target;
-        minimum_new_target.SetCompact(smallest_difficulty_target.GetCompact());
-        if (minimum_new_target > observed_new_target) return false;
-    } else if (old_nbits != new_nbits) {
-        return false;
+        return WithinRetargetBounds(old_nbits, new_nbits, pow_limit);
     }
-    return true;
+    return old_nbits == new_nbits;
 }
 
 bool CheckProofOfWork(uint256 hash, unsigned int nBits, const Consensus::Params& params)
