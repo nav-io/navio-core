@@ -591,4 +591,27 @@ BOOST_AUTO_TEST_CASE(test_rand_uniform_below_order)
     BOOST_CHECK(share < 0.245);
 }
 
+BOOST_AUTO_TEST_CASE(test_destructor_wipes_value)
+{
+#if defined(__has_feature)
+#if __has_feature(memory_sanitizer)
+    // MemorySanitizer poisons an object's storage once its destructor has
+    // run, so reading it back below would be reported. Other builds check it.
+    BOOST_TEST_MESSAGE("test_destructor_wipes_value skipped under MemorySanitizer");
+    return;
+#endif
+#endif
+    alignas(Scalar) unsigned char storage[sizeof(Scalar)];
+    auto* scalar = new (storage) Scalar(Scalar::Rand());
+    BOOST_REQUIRE(!scalar->IsZero());
+    scalar->~Scalar();
+
+    // Read through volatile so the compiler cannot assume the storage is
+    // unchanged by, or dead after, the destructor.
+    const volatile unsigned char* bytes{storage};
+    bool wiped{true};
+    for (size_t i = 0; i < sizeof(storage); ++i) wiped &= bytes[i] == 0;
+    BOOST_CHECK(wiped);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
