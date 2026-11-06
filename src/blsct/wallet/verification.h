@@ -75,6 +75,11 @@ struct VerifyTxOptions {
     // calls. On by default: VerifyTx is the mempool/relay entry point. Block
     // validation passes it off explicitly, so consensus is unchanged.
     bool enforce_script_pair_limit{true};
+    // Skip only the minimum-fee rule (nFee >= weight * nBLSCTDefaultFee);
+    // balance, signatures, range proofs and scripts are still checked. Set
+    // only by the p2pmsg cover-candidate ingress: candidates are fee-0 halves
+    // whose aggregate pays the fee. Never set on a mempool or block path.
+    bool skip_fee_rule{false};
 };
 
 // NOTE: nSpendHeight = 0 / nMedianTimePast = 0 silently reject any input whose

@@ -6,13 +6,21 @@
 
 #include <logging.h>
 
+#include <blsct/wallet/verification.h>
+#include <coins.h>
+#include <consensus/params.h>
+#include <consensus/tx_check.h>
+#include <consensus/tx_verify.h>
 #include <consensus/validation.h>
 #include <kernel/mempool_entry.h>
+#include <policy/policy.h>
 #include <primitives/block.h>
 #include <random.h>
+#include <txmempool.h>
 
 #include <algorithm>
 #include <atomic>
+#include <string>
 
 namespace aggregation {
 
@@ -45,25 +53,116 @@ bool CandidatePool::Contains(const COutPoint& input) const
     return m_shards[s].contains(input);
 }
 
+bool IsCandidateShape(const CTransaction& tx)
+{
+    if ((tx.nVersion & CTransaction::BLSCT_MARKER) == 0) return false;
+    if (tx.vin.size() != 1) return false;
+    if (tx.vout.size() != 1) return false;
+    if (tx.vout[0].scriptPubKey.IsFee()) return false;
+    // Covers are confidential. A transparent output (plaintext nValue, any
+    // scriptPubKey) passes VerifyTx but is held to the output standardness
+    // rules when the aggregate reaches the mempool (scriptpubkey, dust).
+    if (!tx.vout[0].HasBLSCTRangeProof()) return false;
+    if (GetTransactionWeight(tx) > CANDIDATE_MAX_WEIGHT) return false;
+    return true;
+}
+
+bool CheckCandidate(const CTransaction& tx, CCoinsViewCache& view, const CTxMemPool* mempool,
+                    int spend_height, int64_t median_time_past, const Consensus::Params& params,
+                    TxValidationState& state)
+{
+    // IsStandardTx's per-input rules, which mempool acceptance applies to the
+    // aggregate. Checked first: they are cheap, and a push-only scriptSig
+    // keeps the script work VerifyTx does below down to the prevout's script.
+    for (const CTxIn& in : tx.vin) {
+        if (in.scriptSig.size() > MAX_STANDARD_SCRIPTSIG_SIZE) {
+            return state.Invalid(TxValidationResult::TX_NOT_STANDARD, "scriptsig-size");
+        }
+        if (!in.scriptSig.IsPushOnly()) {
+            return state.Invalid(TxValidationResult::TX_NOT_STANDARD, "scriptsig-not-pushonly");
+        }
+    }
+    // The rest of IsStandardTx, with the node's own policy, as mempool
+    // acceptance applies it to the aggregate (skipped under -acceptnonstdtxn).
+    const bool require_standard{mempool != nullptr && mempool->m_require_standard};
+    if (require_standard) {
+        std::string reason;
+        if (!IsStandardTx(tx, mempool->m_max_datacarrier_bytes, mempool->m_permit_bare_multisig,
+                          mempool->m_dust_relay_feerate, reason)) {
+            return state.Invalid(TxValidationResult::TX_NOT_STANDARD, reason);
+        }
+    }
+    if (!CheckTransaction(tx, state)) return false;
+    if (mempool != nullptr) {
+        for (const CTxIn& in : tx.vin) {
+            if (mempool->isSpent(in.prevout)) {
+                return state.Invalid(TxValidationResult::TX_CONFLICT, "txn-mempool-conflict");
+            }
+        }
+    }
+    // Every spendable output must be new, as mempool acceptance requires of
+    // the aggregate: not an unspent coin, not created by a mempool tx.
+    // (Duplicates within the tx are ruled out by the 1-output shape, and
+    // against other pooled candidates by CandidatePool::AddCandidate.)
+    for (size_t i = 0; i < tx.vout.size(); ++i) {
+        if (tx.vout[i].scriptPubKey.IsUnspendable()) continue;
+        const uint256 outid = tx.GetOutputId(i).ToUint256();
+        bool created_in_mempool{false};
+        if (mempool != nullptr) {
+            LOCK(mempool->cs);
+            created_in_mempool = mempool->mapOutputToTx.contains(outid);
+        }
+        if (created_in_mempool || view.HaveCoin(COutPoint{outid})) {
+            return state.Invalid(TxValidationResult::TX_CONFLICT, "txn-duplicate-output");
+        }
+    }
+    CAmount fee{0};
+    if (!Consensus::CheckTxInputs(tx, state, view, spend_height, fee)) return false;
+    // A cover spends a confidential coin. A transparent prevout's script is
+    // held to AreInputsStandard when the aggregate reaches the mempool, and
+    // its plaintext value would be public anyway.
+    for (const CTxIn& in : tx.vin) {
+        if (!view.AccessCoin(in.prevout).out.HasBLSCTRangeProof()) {
+            return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD, "candidate-input-not-confidential");
+        }
+    }
+    if (require_standard && !AreInputsStandard(tx, view)) {
+        return state.Invalid(TxValidationResult::TX_INPUTS_NOT_STANDARD, "bad-txns-nonstandard-inputs");
+    }
+    // Mempool acceptance caps the aggregate's sigop cost whatever
+    // m_require_standard says (bad-txns-too-many-sigops), and the output's
+    // scriptPubKey is otherwise unconstrained for a confidential output.
+    // Honest covers carry none (an OP_TRUE or staked-commitment output, a
+    // confidential prevout), so any sigops could only push an aggregate that
+    // picks this candidate towards that limit. Checked before VerifyTx, as it
+    // is cheap.
+    if (GetTransactionSigOpCost(tx, view, STANDARD_SCRIPT_VERIFY_FLAGS) != 0) {
+        return state.Invalid(TxValidationResult::TX_NOT_STANDARD, "candidate-sigops");
+    }
+    return blsct::VerifyTx(tx, view, state, /*blockReward=*/0, params.nPePoSMinStakeAmount,
+                           spend_height, median_time_past, params.nBLSCTDefaultFee,
+                           params.nBLSCTProofV2Height, /*threads=*/0,
+                           blsct::VerifyTxOptions{.skip_fee_rule = true});
+}
+
+bool CandidatePool::WouldAccept(const CTransaction& candidate) const
+{
+    return IsCandidateShape(candidate) && !Contains(candidate.vin[0].prevout) && Size() < POOL_MAX_TOTAL;
+}
+
+std::optional<uint256> CandidatePool::SpendableOutputId(const CTransaction& tx)
+{
+    if (tx.vout.empty() || tx.vout[0].scriptPubKey.IsUnspendable()) return std::nullopt;
+    return tx.GetOutputId(0).ToUint256();
+}
+
 bool CandidatePool::AddCandidate(const CTransactionRef& candidate, bool reward_input)
 {
-    if (candidate == nullptr) return false;
-    // Structural validation. Candidates arrive unauthenticated from the network
-    // and are combined WITHOUT a per-candidate signature/UTXO recheck, so a
-    // malformed one would only fail when the whole aggregate is built --
-    // wasting the initiator's attempt. Reject the obviously-invalid shapes here:
-    //  - a BLSCT tx (marker set),
-    //  - exactly one input and one output (a 1-in/1-out self-spend),
-    //  - NOT a fee output (candidates must be fee-0 and fee-output-free; a fee
-    //    output would give the combined tx a second fee output and fail
-    //    consensus's one-fee-output rule),
-    //  - within a sane weight bound (oversized candidates inflate the
-    //    initiator's additionalFee and memory use).
-    if ((candidate->nVersion & CTransaction::BLSCT_MARKER) == 0) return false;
-    if (candidate->vin.size() != 1) return false;
-    if (candidate->vout.size() != 1) return false;
-    if (candidate->vout[0].scriptPubKey.IsFee()) return false;
-    if (GetTransactionWeight(*candidate) > CANDIDATE_MAX_WEIGHT) return false;
+    // Candidates arrive unauthenticated from the network. Network ingress runs
+    // CheckCandidate (signature, UTXO, maturity, mempool conflict) before this;
+    // the shape is checked again here because the debug RPC
+    // addaggregationcandidate inserts directly.
+    if (candidate == nullptr || !IsCandidateShape(*candidate)) return false;
     const COutPoint& input = candidate->vin[0].prevout;
 
     // Total cap only (best-effort; Size() is a snapshot). There is deliberately
@@ -75,12 +174,19 @@ bool CandidatePool::AddCandidate(const CTransactionRef& candidate, bool reward_i
     // input-outpoint dedupe, and evict-on-failure at aggregate time.
     if (Size() >= POOL_MAX_TOTAL) return false;
 
+    // Two pooled candidates creating the same output would make any aggregate
+    // that picks both fail with txn-duplicate-output.
+    const std::optional<uint256> output = SpendableOutputId(*candidate);
+    LOCK(m_output_mutex);
+    if (output && m_by_output.contains(*output)) return false;
+
     const size_t s = ShardFor(input);
     bool inserted = false;
     {
         LOCK(m_shard_mutex[s]);
         inserted = m_shards[s].emplace(input, Entry{candidate, reward_input}).second;
     }
+    if (inserted && output) m_by_output.emplace(*output, input);
     return inserted;
 }
 
@@ -150,38 +256,68 @@ std::vector<CTransactionRef> CandidatePool::PickForAggregate(size_t max_n, size_
     return out;
 }
 
-void CandidatePool::MarkRewardInput(const COutPoint& input)
-{
-    const size_t s = ShardFor(input);
-    LOCK(m_shard_mutex[s]);
-    auto it = m_shards[s].find(input);
-    if (it != m_shards[s].end()) it->second.reward_input = true;
-}
-
 bool CandidatePool::EvictByInput(const COutPoint& input)
 {
-    const size_t s = ShardFor(input);
-    LOCK(m_shard_mutex[s]);
-    return m_shards[s].erase(input) > 0;
+    return EvictEntry(input, /*expected_output=*/nullptr);
 }
 
-void CandidatePool::EvictSpentBy(const CTransaction& tx)
+bool CandidatePool::EvictEntry(const COutPoint& input, const uint256* expected_output)
+{
+    std::optional<uint256> output;
+    {
+        const size_t s = ShardFor(input);
+        LOCK(m_shard_mutex[s]);
+        const auto it = m_shards[s].find(input);
+        if (it == m_shards[s].end()) return false;
+        output = SpendableOutputId(*it->second.tx);
+        if (expected_output && output != *expected_output) return false;
+        m_shards[s].erase(it);
+    }
+    if (output) {
+        LOCK(m_output_mutex);
+        const auto it = m_by_output.find(*output);
+        if (it != m_by_output.end() && it->second == input) m_by_output.erase(it);
+    }
+    return true;
+}
+
+bool CandidatePool::EvictByOutput(const uint256& output)
+{
+    COutPoint input;
+    {
+        LOCK(m_output_mutex);
+        const auto it = m_by_output.find(output);
+        if (it == m_by_output.end()) return false;
+        input = it->second;
+    }
+    // The index lock is released before the shard lock is taken (lock order),
+    // so the candidate found above may have been replaced by one with the
+    // same input and a different output in between. Only evict it if it
+    // still creates `output`.
+    return EvictEntry(input, &output);
+}
+
+void CandidatePool::EvictConflictingWith(const CTransaction& tx)
 {
     for (const CTxIn& in : tx.vin) {
         EvictByInput(in.prevout);
+    }
+    for (size_t i = 0; i < tx.vout.size(); ++i) {
+        if (tx.vout[i].scriptPubKey.IsUnspendable()) continue;
+        EvictByOutput(tx.GetOutputId(i).ToUint256());
     }
 }
 
 void CandidatePool::TransactionAddedToMempool(const NewMempoolTransactionInfo& tx, uint64_t)
 {
-    if (tx.info.m_tx) EvictSpentBy(*tx.info.m_tx);
+    if (tx.info.m_tx) EvictConflictingWith(*tx.info.m_tx);
 }
 
 void CandidatePool::BlockConnected(ChainstateRole, const std::shared_ptr<const CBlock>& block, const CBlockIndex*)
 {
     if (!block) return;
     for (const CTransactionRef& tx : block->vtx) {
-        if (tx) EvictSpentBy(*tx);
+        if (tx) EvictConflictingWith(*tx);
     }
 }
 

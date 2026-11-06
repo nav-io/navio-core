@@ -14,13 +14,20 @@
 #include <blsct/wallet/unsigned_transaction.h>
 #include <blsct/wallet/verification.h>
 #include <coins.h>
+#include <consensus/tx_verify.h>
+#include <kernel/chain.h>
+#include <policy/policy.h>
+#include <primitives/block.h>
 #include <primitives/transaction.h>
+#include <script/script.h>
 #include <serialize.h>
 #include <set>
 #include <streams.h>
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
+#include <test/util/txmempool.h>
 #include <txdb.h>
+#include <txmempool.h>
 #include <wallet/test/util.h>
 #include <wallet/wallet.h>
 
@@ -95,6 +102,201 @@ CTransactionRef BuildUnsignedCandidate(blsct::KeyMan* km, CCoinsViewCache& cache
     return MakeTransactionRef(*signed_tx);
 }
 } // namespace
+
+// Cover candidates are deliberately fee-0: the initiator's half pays the
+// aggregate fee. Mempool-style verification must therefore be able to skip
+// exactly the minimum-fee rule while still checking balance, signature and
+// range proofs, which is what candidate ingress uses to reject poison halves.
+BOOST_FIXTURE_TEST_CASE(candidate_verifies_with_fee_rule_skipped, TestingSetup)
+{
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+    LOCK(wallet->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_REQUIRE(km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+    CCoinsViewCache cache{&base, /*deterministic=*/true};
+    cache.SetBestBlock(InsecureRand256());
+
+    blsct::SubAddress dest(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+    CTransactionRef candidate = BuildCandidate(km, cache, 100 * COIN, dest);
+
+    TxValidationState fee_state;
+    BOOST_CHECK(!blsct::VerifyTx(*candidate, cache, fee_state));
+    BOOST_CHECK_EQUAL(fee_state.GetRejectReason(), "blsct-fee-below-min");
+
+    TxValidationState candidate_state;
+    const bool ok = blsct::VerifyTx(*candidate, cache, candidate_state,
+                                    /*blockReward=*/0, /*minStake=*/0,
+                                    /*nSpendHeight=*/0, /*nMedianTimePast=*/0,
+                                    BLSCT_DEFAULT_FEE, std::numeric_limits<int>::max(),
+                                    /*threads=*/0, blsct::VerifyTxOptions{.skip_fee_rule = true});
+    if (!ok) BOOST_TEST_MESSAGE("candidate reject: " << candidate_state.GetRejectReason());
+    BOOST_CHECK(ok);
+}
+
+// Network ingress runs aggregation::CheckCandidate before pooling. Skipping
+// the fee rule must not skip anything else: a non-standard scriptSig, a forged
+// signature, a missing input, an immature coinbase input, an output that
+// already exists in the UTXO set or the mempool, and an input a mempool tx
+// already spends are each rejected.
+BOOST_FIXTURE_TEST_CASE(check_candidate_rejects_invalid, TestingSetup)
+{
+    auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
+    wallet->InitWalletFlags(wallet::WALLET_FLAG_BLSCT);
+    LOCK(wallet->cs_wallet);
+    auto km = wallet->GetOrCreateBLSCTKeyMan();
+    BOOST_REQUIRE(km->SetupGeneration({}, blsct::IMPORT_MASTER_KEY, true));
+
+    CCoinsViewDB base{{.path = "test", .cache_bytes = 1 << 23, .memory_only = true}, {}};
+    CCoinsViewCache cache{&base, /*deterministic=*/true};
+    cache.SetBestBlock(InsecureRand256());
+
+    // BuildCandidate makes v1 proofs; keep the v2 gate out of reach.
+    Consensus::Params params = Params().GetConsensus();
+    params.nBLSCTProofV2Height = std::numeric_limits<int>::max();
+    const int spend_height = 1000;
+    CTxMemPool& mempool = *Assert(m_node.mempool);
+
+    blsct::SubAddress dest(std::get<blsct::DoublePublicKey>(km->GetNewDestination(0).value()));
+    const CTransactionRef good = BuildCandidate(km, cache, 100 * COIN, dest);
+    const COutPoint prevout = good->vin[0].prevout;
+
+    const auto check = [&](const CTransaction& tx, CCoinsViewCache& view, std::string& reason) {
+        LOCK(cs_main);
+        TxValidationState st;
+        const bool ok = aggregation::CheckCandidate(tx, view, &mempool, spend_height, /*median_time_past=*/0, params, st);
+        reason = st.GetRejectReason();
+        return ok;
+    };
+    std::string reason;
+
+    // The honest candidate passes, with the mempool requiring standard txs
+    // (IsStandardTx and AreInputsStandard run).
+    BOOST_CHECK(mempool.m_require_standard);
+    BOOST_CHECK(aggregation::IsCandidateShape(*good));
+    BOOST_CHECK_MESSAGE(check(*good, cache, reason), reason);
+
+    // A transparent output (no range proof, plaintext value) is not a
+    // candidate: the aggregate would be held to IsStandardTx's output rules.
+    {
+        CMutableTransaction transparent{*good};
+        transparent.vout[0].blsctData = CTxOutBLSCTData{};
+        transparent.vout[0].scriptPubKey = CScript() << OP_TRUE;
+        BOOST_CHECK(!aggregation::IsCandidateShape(CTransaction{transparent}));
+        aggregation::CandidatePool pool;
+        BOOST_CHECK(!pool.WouldAccept(CTransaction{transparent}));
+        BOOST_CHECK(!pool.AddCandidate(MakeTransactionRef(transparent)));
+    }
+
+    // The input's coin is transparent (any script, plaintext value).
+    {
+        CCoinsViewCache transparent{&cache, /*deterministic=*/true};
+        const Coin coin = transparent.AccessCoin(prevout);
+        BOOST_REQUIRE(!coin.IsSpent());
+        transparent.SpendCoin(prevout);
+        CTxOut plain{coin.out.nValue, CScript() << OP_TRUE};
+        plain.tokenId = coin.out.tokenId;
+        transparent.AddCoin(prevout, Coin{plain, static_cast<int>(coin.nHeight), /*fCoinBaseIn=*/false}, /*possible_overwrite=*/false);
+        BOOST_CHECK(!check(*good, transparent, reason));
+        BOOST_CHECK_EQUAL(reason, "candidate-input-not-confidential");
+    }
+
+    // IsStandardTx's per-input rules: mempool acceptance would reject an
+    // aggregate containing either input, so the candidate is refused up front.
+    {
+        CMutableTransaction nop{*good};
+        nop.vin[0].scriptSig = CScript() << OP_NOP;
+        BOOST_CHECK(!check(CTransaction{nop}, cache, reason));
+        BOOST_CHECK_EQUAL(reason, "scriptsig-not-pushonly");
+
+        CMutableTransaction big{*good};
+        big.vin[0].scriptSig = CScript() << std::vector<unsigned char>(MAX_STANDARD_SCRIPTSIG_SIZE, 0x01);
+        BOOST_CHECK(!check(CTransaction{big}, cache, reason));
+        BOOST_CHECK_EQUAL(reason, "scriptsig-size");
+    }
+
+    // Sigops in the confidential output's scriptPubKey: the creator signs its
+    // own output, so it can choose any script, and mempool acceptance counts
+    // the sigops of every candidate an aggregate picks. Refused before the
+    // signature is checked, so the (now stale) txSig doesn't matter here.
+    {
+        BOOST_CHECK_EQUAL(GetTransactionSigOpCost(*good, cache, STANDARD_SCRIPT_VERIFY_FLAGS), 0);
+        CMutableTransaction sigops{*good};
+        sigops.vout[0].scriptPubKey << OP_CHECKSIG;
+        BOOST_CHECK(!check(CTransaction{sigops}, cache, reason));
+        BOOST_CHECK_EQUAL(reason, "candidate-sigops");
+    }
+
+    // A forged txSig: same tx, signature taken from another candidate.
+    {
+        const CTransactionRef other = BuildCandidate(km, cache, 50 * COIN, dest);
+        CMutableTransaction forged{*good};
+        forged.txSig = other->txSig;
+        BOOST_CHECK(!check(CTransaction{forged}, cache, reason));
+        BOOST_CHECK_EQUAL(reason, "failed-signature-check");
+    }
+
+    // The input does not exist in the view.
+    {
+        CCoinsViewCache empty{&base, /*deterministic=*/true};
+        BOOST_CHECK(!check(*good, empty, reason));
+        BOOST_CHECK_EQUAL(reason, "bad-txns-inputs-missingorspent");
+    }
+
+    // The input is a coinbase output that is not mature at spend_height.
+    {
+        CCoinsViewCache immature{&cache, /*deterministic=*/true};
+        Coin coin = immature.AccessCoin(prevout);
+        BOOST_REQUIRE(!coin.IsSpent());
+        immature.SpendCoin(prevout);
+        immature.AddCoin(prevout, Coin{coin.out, spend_height - 1, /*fCoinBaseIn=*/true}, /*possible_overwrite=*/false);
+        BOOST_CHECK(!check(*good, immature, reason));
+        BOOST_CHECK_EQUAL(reason, "bad-txns-premature-spend-of-coinbase");
+    }
+
+    // The candidate's output is already an unspent coin.
+    {
+        CCoinsViewCache dup{&cache, /*deterministic=*/true};
+        dup.AddCoin(COutPoint{good->GetOutputId(0)}, Coin{good->vout[0], 1, /*fCoinBaseIn=*/false}, /*possible_overwrite=*/false);
+        BOOST_CHECK(!check(*good, dup, reason));
+        BOOST_CHECK_EQUAL(reason, "txn-duplicate-output");
+    }
+
+    // A mempool tx already creates the candidate's output.
+    {
+        CMutableTransaction creator;
+        creator.vin.emplace_back(COutPoint{Txid::FromUint256(InsecureRand256())});
+        creator.vout.push_back(good->vout[0]);
+        const CTransactionRef creator_tx = MakeTransactionRef(creator);
+        {
+            LOCK2(cs_main, mempool.cs);
+            mempool.addUnchecked(TestMemPoolEntryHelper{}.FromTx(creator_tx));
+        }
+        BOOST_CHECK(!check(*good, cache, reason));
+        BOOST_CHECK_EQUAL(reason, "txn-duplicate-output");
+        {
+            LOCK2(cs_main, mempool.cs);
+            mempool.removeRecursive(*creator_tx, MemPoolRemovalReason::REPLACED);
+        }
+        BOOST_CHECK_MESSAGE(check(*good, cache, reason), reason);
+    }
+
+    // A mempool tx already spends the input. The candidate itself is valid
+    // against the chain view, so only the mempool check can catch it.
+    {
+        CMutableTransaction spend;
+        spend.vin.emplace_back(prevout);
+        spend.vout.emplace_back(1, CScript() << OP_TRUE);
+        {
+            LOCK2(cs_main, mempool.cs);
+            mempool.addUnchecked(TestMemPoolEntryHelper{}.FromTx(spend));
+        }
+        BOOST_CHECK(!check(*good, cache, reason));
+        BOOST_CHECK_EQUAL(reason, "txn-mempool-conflict");
+    }
+}
 
 BOOST_FIXTURE_TEST_CASE(combine_empty_returns_nullopt, TestingSetup)
 {
@@ -200,9 +402,38 @@ CTransactionRef FakeCandidate(const uint256& input_hash, uint32_t n = 0)
     mtx.nVersion = CTransaction::BLSCT_MARKER;
     mtx.vin.emplace_back(COutPoint(input_hash));
     mtx.vout.emplace_back();
+    // A distinct output per input: the pool also dedupes by output.
+    mtx.vout[0].scriptPubKey = CScript() << ToByteVector(input_hash) << OP_DROP << OP_TRUE;
+    // Candidates are confidential; one commitment is enough for the shape.
+    mtx.vout[0].blsctData.rangeProof.Vs.Add(BlstG1Point::Rand());
+    return MakeTransactionRef(mtx);
+}
+
+//! A candidate with the given input and the output of `like`.
+CTransactionRef FakeCandidateWithOutput(const uint256& input_hash, const CTransaction& like)
+{
+    CMutableTransaction mtx{*FakeCandidate(input_hash)};
+    mtx.vout[0] = like.vout[0];
     return MakeTransactionRef(mtx);
 }
 } // namespace
+
+// The cheap ingress gate shares IsCandidateShape with AddCandidate and also
+// refuses an input that is already pooled.
+BOOST_FIXTURE_TEST_CASE(pool_would_accept_matches_add, BasicTestingSetup)
+{
+    aggregation::CandidatePool pool;
+    const CTransactionRef c = FakeCandidate(InsecureRand256());
+    BOOST_CHECK(aggregation::IsCandidateShape(*c));
+    BOOST_CHECK(pool.WouldAccept(*c));
+    BOOST_REQUIRE(pool.AddCandidate(c));
+    BOOST_CHECK(!pool.WouldAccept(*c));
+
+    CMutableTransaction two_out{*c};
+    two_out.vout.push_back(two_out.vout[0]);
+    BOOST_CHECK(!aggregation::IsCandidateShape(CTransaction{two_out}));
+    BOOST_CHECK(!pool.WouldAccept(CTransaction{two_out}));
+}
 
 BOOST_FIXTURE_TEST_CASE(pool_add_dedupe_evict, BasicTestingSetup)
 {
@@ -229,6 +460,46 @@ BOOST_FIXTURE_TEST_CASE(pool_add_dedupe_evict, BasicTestingSetup)
     BOOST_CHECK(!pool.Contains(COutPoint(h1)));
     // Evicting a missing input is a no-op false.
     BOOST_CHECK(!pool.EvictByInput(COutPoint(h1)));
+}
+
+// Two pooled candidates creating the same output would fail any aggregate
+// that picks both (txn-duplicate-output), and a candidate whose output a
+// mempool tx or a block creates can no longer be combined. The pool dedupes
+// by output and evicts on output creation, as it does for inputs.
+BOOST_FIXTURE_TEST_CASE(pool_dedupe_evict_by_output, BasicTestingSetup)
+{
+    aggregation::CandidatePool pool;
+    const CTransactionRef a = FakeCandidate(InsecureRand256());
+    BOOST_REQUIRE(pool.AddCandidate(a));
+
+    // Different input, same output: refused.
+    const CTransactionRef b = FakeCandidateWithOutput(InsecureRand256(), *a);
+    BOOST_CHECK(!pool.AddCandidate(b));
+    BOOST_CHECK_EQUAL(pool.Size(), 1u);
+
+    // Once `a` is gone (here: its input spent), the output is free again.
+    BOOST_REQUIRE(pool.EvictByInput(a->vin[0].prevout));
+    BOOST_CHECK(pool.AddCandidate(b));
+    BOOST_CHECK_EQUAL(pool.Size(), 1u);
+
+    // A connected block that creates `b`'s output, without touching its
+    // input, evicts it.
+    CMutableTransaction creator;
+    creator.vin.emplace_back(COutPoint{Txid::FromUint256(InsecureRand256())});
+    creator.vout.push_back(b->vout[0]);
+    auto block = std::make_shared<CBlock>();
+    block->vtx.push_back(MakeTransactionRef(creator));
+    pool.BlockConnected(ChainstateRole::NORMAL, block, nullptr);
+    BOOST_CHECK(!pool.Contains(b->vin[0].prevout));
+    BOOST_CHECK_EQUAL(pool.Size(), 0u);
+    BOOST_CHECK(!pool.EvictByOutput(b->GetOutputId(0).ToUint256()));
+
+    // Unspendable outputs may repeat, as in mempool acceptance.
+    CMutableTransaction op_return{*FakeCandidate(InsecureRand256())};
+    op_return.vout[0].scriptPubKey = CScript() << OP_RETURN << std::vector<unsigned char>{0x01};
+    BOOST_CHECK(pool.AddCandidate(MakeTransactionRef(op_return)));
+    BOOST_CHECK(pool.AddCandidate(FakeCandidateWithOutput(InsecureRand256(), CTransaction{op_return})));
+    BOOST_CHECK_EQUAL(pool.Size(), 2u);
 }
 
 BOOST_FIXTURE_TEST_CASE(pool_type_aware_pick, BasicTestingSetup)
@@ -301,32 +572,6 @@ BOOST_FIXTURE_TEST_CASE(pool_type_aware_pick, BasicTestingSetup)
     auto [r5, o5] = count_types(topped);
     BOOST_CHECK_EQUAL(r5, 4u); // 2 preferred + 2 topped up
     BOOST_CHECK_EQUAL(o5, 6u);
-}
-
-BOOST_FIXTURE_TEST_CASE(pool_mark_reward_input, BasicTestingSetup)
-{
-    aggregation::CandidatePool pool;
-    const uint256 marked = InsecureRand256();
-    const uint256 unmarked = InsecureRand256();
-    BOOST_REQUIRE(pool.AddCandidate(FakeCandidate(marked)));
-    BOOST_REQUIRE(pool.AddCandidate(FakeCandidate(unmarked)));
-    pool.MarkRewardInput(COutPoint(marked));
-
-    // Admitted as transfers; only the marked one now fills a reward quota,
-    // and only the unmarked one a transfer quota. Repeat, since each type
-    // class is shuffled.
-    for (int i = 0; i < 16; ++i) {
-        const auto reward_pick = pool.PickForAggregate(1, 1);
-        BOOST_REQUIRE_EQUAL(reward_pick.size(), 1u);
-        BOOST_CHECK(reward_pick[0]->vin[0].prevout.hash == marked);
-        const auto other_pick = pool.PickForAggregate(1, 0);
-        BOOST_REQUIRE_EQUAL(other_pick.size(), 1u);
-        BOOST_CHECK(other_pick[0]->vin[0].prevout.hash == unmarked);
-    }
-
-    // Marking an input that is not pooled is a no-op.
-    pool.MarkRewardInput(COutPoint(InsecureRand256()));
-    BOOST_CHECK_EQUAL(pool.Size(), 2u);
 }
 
 BOOST_FIXTURE_TEST_CASE(pool_rejects_multi_input, BasicTestingSetup)
