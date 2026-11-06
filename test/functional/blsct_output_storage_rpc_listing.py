@@ -91,6 +91,26 @@ class BlsctOutputStorageRpcListingTest(BitcoinTestFramework):
         biggest = max(to_dec(u["amount"]) for u in unspent)
         assert_equal(sorted(u["outid"] for u in wallet.listunspent(0, 9999999, [], True, {"minimumAmount": biggest})),
                      sorted(u["outid"] for u in unspent if to_dec(u["amount"]) >= biggest))
+
+        # maximumCount and minimumSumAmount limit the whole listing, not each
+        # of the coin lists (wallet txs, output storage) it is merged from.
+        for count in sorted({1, 2, len(unspent) - 1, len(unspent), len(unspent) + 1} - {0}):
+            limited = wallet.listunspent(0, 9999999, [], True, {"maximumCount": count})
+            assert_equal(len(limited), min(count, len(unspent)))
+            assert set(u["outid"] for u in limited) <= set(outids)
+        smallest = min(to_dec(u["amount"]) for u in unspent)
+        for target in (smallest, (expected / 2).quantize(Decimal("0.00000001"))):
+            limited = wallet.listunspent(0, 9999999, [], True, {"minimumSumAmount": target})
+            limited_sum = sum(to_dec(u["amount"]) for u in limited)
+            # Listing stops at the first coin that brings the sum to the
+            # target: for the smallest coin's amount, that is the first coin.
+            assert limited_sum >= target, f"[{label}] minimumSumAmount {target}: listed only {limited_sum}"
+            assert limited_sum - to_dec(limited[-1]["amount"]) < target, f"[{label}] minimumSumAmount {target}: listed {limited_sum} in {len(limited)} coins"
+
+        # An unconfirmed coin's mempool ancestry is found from its outid.
+        for u in unspent:
+            if u["confirmations"] == 0:
+                assert_greater_than(u.get("ancestorcount", 0), 0)
         return unspent
 
     def check_txids(self, wallet, rows, label):
