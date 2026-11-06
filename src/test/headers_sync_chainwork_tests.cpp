@@ -143,4 +143,37 @@ BOOST_AUTO_TEST_CASE(headers_sync_state)
     BOOST_CHECK(result.success);
 }
 
+// A low-work mainnet headers chain crossing a proof-of-stake retarget stays in
+// presync: the retarget is a permitted difficulty transition.
+BOOST_AUTO_TEST_CASE(headers_sync_pos_retarget)
+{
+    const auto consensus = CreateChainParams(*m_node.args, ChainType::MAIN)->GetConsensus();
+    const int retarget_height{150};
+    BOOST_REQUIRE(retarget_height > consensus.nLastPOWHeight);
+    BOOST_REQUIRE_EQUAL(retarget_height % consensus.DifficultyAdjustmentIntervalPos(), 0);
+
+    // Mainnet's nBits before and at that retarget.
+    CBlockHeader start_header;
+    start_header.nTime = 1700000000;
+    start_header.nBits = 0x1f00ffff;
+    CBlockIndex chain_start{start_header};
+    chain_start.nHeight = retarget_height - 1;
+    const uint256 start_hash{chain_start.GetBlockHeader().GetHash()};
+    chain_start.phashBlock = &start_hash;
+
+    std::vector<CBlockHeader> headers(2);
+    headers[0].hashPrevBlock = start_hash;
+    headers[0].nTime = start_header.nTime + 1;
+    headers[0].nBits = 0x1e3fffc0;
+    headers[1].hashPrevBlock = headers[0].GetHash();
+    headers[1].nTime = headers[0].nTime + 1;
+    headers[1].nBits = headers[0].nBits;
+
+    HeadersSyncState hss{0, consensus, &chain_start, /*minimum_required_work=*/~arith_uint256{0}};
+    const auto result{hss.ProcessNextHeaders(headers, /*full_headers_message=*/true)};
+    BOOST_CHECK(result.success);
+    BOOST_CHECK(result.request_more);
+    BOOST_CHECK(hss.GetState() == HeadersSyncState::State::PRESYNC);
+}
+
 BOOST_AUTO_TEST_SUITE_END()

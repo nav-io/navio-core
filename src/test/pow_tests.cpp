@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/pos/pos.h>
 #include <chain.h>
 #include <chainparams.h>
 #include <pow.h>
@@ -230,5 +231,59 @@ BOOST_AUTO_TEST_CASE(ChainParams_MAIN_sanity)
 // {
 //     sanity_check_chainparams(*m_node.args, ChainType::SIGNET);
 // }
+
+/* Past nLastPOWHeight a BLSCT chain's targets follow the proof-of-stake
+ * retarget, which header presync must accept. */
+BOOST_AUTO_TEST_CASE(permitted_pos_difficulty_transition)
+{
+    const auto consensus = CreateChainParams(*m_node.args, ChainType::MAIN)->GetConsensus();
+    BOOST_REQUIRE(consensus.fBLSCT && !consensus.fPowAllowMinDifficultyBlocks);
+    const int interval{static_cast<int>(consensus.DifficultyAdjustmentIntervalPos())};
+    const int first_pos_retarget{(consensus.nLastPOWHeight / interval + 1) * interval};
+
+    // Consecutive mainnet headers at proof-of-stake retargets: {height,
+    // nBits of the block before, nBits of the block}.
+    const struct {
+        int height;
+        uint32_t old_nbits;
+        uint32_t new_nbits;
+    } mainnet[]{
+        {120, 0x207fffff, 0x1f00ffff},
+        {150, 0x1f00ffff, 0x1e3fffc0},
+        {570, 0x1b0ffff0, 0x1b0b06c8},
+        {630, 0x1b0a7104, 0x1b0d4437},
+        {1230, 0x1b04c8f0, 0x1b01323c},
+        {30030, 0x1a306225, 0x1a2563bc},
+        {60000, 0x1a11bdae, 0x1a124af9},
+        {85770, 0x1a1a1c79, 0x1a0d5882},
+    };
+    for (const auto& h : mainnet) {
+        BOOST_CHECK_MESSAGE(PermittedDifficultyTransition(consensus, h.height, h.old_nbits, h.new_nbits), h.height);
+    }
+
+    // Between retargets the target must not change.
+    BOOST_CHECK(PermittedDifficultyTransition(consensus, first_pos_retarget + 1, 0x1b0b06c8, 0x1b0b06c8));
+    BOOST_CHECK(!PermittedDifficultyTransition(consensus, first_pos_retarget + 1, 0x1b0b06c8, 0x1b0b06c7));
+
+    // At a retarget the result of the PoS rule's 4x clamp in either direction
+    // is permitted, and one step beyond it is not.
+    CBlockIndex last;
+    last.nHeight = first_pos_retarget + interval - 1;
+    last.nTime = 1700000000;
+    last.nBits = 0x1b0b06c8;
+    const uint32_t hardest{blsct::CalculateNextTargetRequired(&last, last.nTime, consensus)};
+    const uint32_t easiest{blsct::CalculateNextTargetRequired(&last, last.nTime - 100 * consensus.nPosTargetTimespan, consensus)};
+    BOOST_CHECK(PermittedDifficultyTransition(consensus, last.nHeight + 1, last.nBits, hardest));
+    BOOST_CHECK(!PermittedDifficultyTransition(consensus, last.nHeight + 1, last.nBits, hardest - 1));
+    BOOST_CHECK(PermittedDifficultyTransition(consensus, last.nHeight + 1, last.nBits, easiest));
+    BOOST_CHECK(!PermittedDifficultyTransition(consensus, last.nHeight + 1, last.nBits, easiest + 1));
+
+    // The target is capped at posLimit: from close to it, any retarget up to
+    // the cap is permitted, but not beyond it.
+    const arith_uint256 pos_limit{UintToArith256(consensus.posLimit)};
+    last.nBits = arith_uint256{pos_limit / 2}.GetCompact();
+    BOOST_CHECK(PermittedDifficultyTransition(consensus, last.nHeight + 1, last.nBits, pos_limit.GetCompact()));
+    BOOST_CHECK(!PermittedDifficultyTransition(consensus, last.nHeight + 1, last.nBits, arith_uint256{pos_limit * 2}.GetCompact()));
+}
 
 BOOST_AUTO_TEST_SUITE_END()

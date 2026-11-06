@@ -128,6 +128,18 @@ bool PermittedDifficultyTransition(const Consensus::Params& params, int64_t heig
         return true;
     }
 
+    // Past nLastPOWHeight a BLSCT chain has only proof-of-stake blocks
+    // (ContextualCheckBlockHeader rejects late proof of work), whose target
+    // follows blsct::GetNextTargetRequired: it changes only every
+    // DifficultyAdjustmentIntervalPos() blocks, within the same factor of
+    // four, capped at posLimit.
+    if (params.fBLSCT && height > params.nLastPOWHeight) {
+        if (height % params.DifficultyAdjustmentIntervalPos() == 0) {
+            return WithinRetargetBounds(old_nbits, new_nbits, UintToArith256(params.posLimit));
+        }
+        return old_nbits == new_nbits;
+    }
+
     if (height % params.DifficultyAdjustmentInterval() == 0) {
         return WithinRetargetBounds(old_nbits, new_nbits, pow_limit);
     }
