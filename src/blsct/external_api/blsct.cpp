@@ -1822,8 +1822,18 @@ BlsctRetVal* build_range_proof(
     const void* vp_uint64_vec,
     const BlsctPoint* blsct_nonce,
     const char* blsct_msg,
+    const size_t msg_len,
     const BlsctTokenId* blsct_token_id)
 {
+    if (blsct_msg == nullptr && msg_len != 0) {
+        return blsct_err(BLSCT_FAILURE);
+    }
+    // The message is recovered as a C string (get_amount_recovery_result_msg),
+    // so an embedded NUL would silently truncate it. Reject it instead.
+    if (msg_len != 0 && std::memchr(blsct_msg, '\0', msg_len) != nullptr) {
+        return blsct_err(BLSCT_FAILURE);
+    }
+
     try {
         auto uint64_vec = static_cast<const std::vector<uint64_t>*>(vp_uint64_vec);
         // uint64_t to Scalar
@@ -1844,8 +1854,8 @@ BlsctRetVal* build_range_proof(
         nonce.SetVch(ser_point);
 
         // blsct_message to message
-        std::string msg(blsct_msg);
-        std::vector<uint8_t> msg_vec(msg.begin(), msg.end());
+        const auto* msg_u8 = reinterpret_cast<const uint8_t*>(blsct_msg);
+        std::vector<uint8_t> msg_vec(msg_u8, msg_u8 + msg_len);
 
         // blsct_token_id to token_id
         TokenId token_id;
@@ -2153,15 +2163,18 @@ BlsctRetVal* deserialize_signature(const char* hex)
 // signature
 const BlsctSignature* sign_message(
     const BlsctScalar* blsct_priv_key,
-    const char* blsct_msg)
+    const char* blsct_msg,
+    const size_t msg_len)
 {
+    if (blsct_msg == nullptr && msg_len != 0) return nullptr;
+
     Scalar scalar_priv_key;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(
         blsct_priv_key, SCALAR_SIZE, scalar_priv_key);
     auto priv_key = blsct::PrivateKey(scalar_priv_key);
 
-    std::string msg_str(blsct_msg);
-    blsct::Message msg(msg_str.begin(), msg_str.end());
+    const auto* msg_u8 = reinterpret_cast<const uint8_t*>(blsct_msg);
+    blsct::Message msg(msg_u8, msg_u8 + msg_len);
     blsct::Signature sig = priv_key.Sign(msg);
 
     BlsctSignature* blsct_sig = static_cast<BlsctSignature*>(
@@ -2174,13 +2187,16 @@ const BlsctSignature* sign_message(
 bool verify_msg_sig(
     const BlsctPubKey* blsct_pub_key,
     const char* blsct_msg,
+    const size_t msg_len,
     const BlsctSignature* blsct_signature)
 {
+    if (blsct_msg == nullptr && msg_len != 0) return false;
+
     blsct::PublicKey pub_key;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_pub_key, PUBLIC_KEY_SIZE, pub_key);
 
-    std::string msg_str(blsct_msg);
-    blsct::Message msg(msg_str.begin(), msg_str.end());
+    const auto* msg_u8 = reinterpret_cast<const uint8_t*>(blsct_msg);
+    blsct::Message msg(msg_u8, msg_u8 + msg_len);
 
     blsct::Signature signature;
     UNSERIALIZE_FROM_BYTE_ARRAY_WITH_STREAM(blsct_signature, SIGNATURE_SIZE, signature);

@@ -546,10 +546,14 @@ const char* serialize_public_key(const BlsctPoint* blsct_point);
 BlsctRetVal* deserialize_public_key(const char* hex);
 
 // range proof
+// blsct_msg is msg_len bytes and needs no NUL terminator. It may be NULL only
+// when msg_len is 0, and must not contain a NUL byte, since amount recovery
+// returns it as a C string; either violation returns BLSCT_FAILURE.
 BlsctRetVal* build_range_proof(
     const void* vp_uint64_vec,
     const BlsctPoint* blsct_nonce,
     const char* blsct_msg,
+    size_t msg_len,
     const BlsctTokenId* blsct_token_id);
 
 // Verify range proofs under the v2 transcript ONLY. This has no version context,
@@ -600,13 +604,18 @@ const char* serialize_script(const BlsctScript* blsct_script);
 BlsctRetVal* deserialize_script(const char* hex);
 
 // signature
+// The message is msg_len bytes, any values including NUL, with no terminator
+// needed. It may be NULL only when msg_len is 0; otherwise sign_message
+// returns NULL and verify_msg_sig returns false.
 const BlsctSignature* sign_message(
     const BlsctScalar* blsct_priv_key,
-    const char* blsct_msg);
+    const char* blsct_msg,
+    size_t msg_len);
 
 bool verify_msg_sig(
     const BlsctPubKey* blsct_pub_key,
     const char* blsct_msg,
+    size_t msg_len,
     const BlsctSignature* blsct_signature);
 
 const char* serialize_signature(const BlsctSignature* blsct_signature);

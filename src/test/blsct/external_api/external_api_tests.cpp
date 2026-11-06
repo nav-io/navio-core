@@ -1509,7 +1509,7 @@ BOOST_AUTO_TEST_CASE(test_build_range_proof_verifies_under_default_verifier)
     token_st << token_id;
     std::vector<uint8_t> token_vch = ParseHex(HexStr(token_st));
 
-    auto* rp_rv = build_range_proof(&amounts, reinterpret_cast<const BlsctPoint*>(nonce_vch.data()), "navio", reinterpret_cast<const BlsctTokenId*>(token_vch.data()));
+    auto* rp_rv = build_range_proof(&amounts, reinterpret_cast<const BlsctPoint*>(nonce_vch.data()), "navio", 5, reinterpret_cast<const BlsctTokenId*>(token_vch.data()));
     BOOST_REQUIRE(rp_rv != nullptr);
     BOOST_REQUIRE_EQUAL(rp_rv->result, BLSCT_SUCCESS);
 
@@ -1535,6 +1535,104 @@ BOOST_AUTO_TEST_CASE(test_build_range_proof_verifies_under_default_verifier)
     free(ok);
     free_obj(rp_rv->value);
     free(rp_rv);
+}
+
+// build_range_proof takes exactly msg_len message bytes, which amount recovery
+// returns; a message it could not return intact is refused.
+BOOST_AUTO_TEST_CASE(test_build_range_proof_msg_length)
+{
+    init();
+
+    std::vector<uint64_t> amounts{123};
+    auto nonce = Blst::Point::Rand();
+    auto nonce_vch = nonce.GetVch();
+    const auto* blsct_nonce = reinterpret_cast<const BlsctPoint*>(nonce_vch.data());
+    TokenId token_id;
+    DataStream token_st{};
+    token_st << token_id;
+    std::vector<uint8_t> token_vch = ParseHex(HexStr(token_st));
+    const auto* blsct_token_id = reinterpret_cast<const BlsctTokenId*>(token_vch.data());
+
+    const auto result_of = [&](const char* msg, size_t msg_len) {
+        auto* rv = build_range_proof(&amounts, blsct_nonce, msg, msg_len, blsct_token_id);
+        BOOST_REQUIRE(rv != nullptr);
+        const auto result = rv->result;
+        if (result == BLSCT_SUCCESS) free_obj(rv->value);
+        free(rv);
+        return result;
+    };
+
+    // Only msg_len bytes of an unterminated buffer are taken, and recovery
+    // returns exactly them.
+    const char unterminated[]{'n', 'a', 'v', 'i', 'o', 'X', 'Y', 'Z'};
+    auto* rp_rv = build_range_proof(&amounts, blsct_nonce, unterminated, 5, blsct_token_id);
+    BOOST_REQUIRE(rp_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(rp_rv->result, BLSCT_SUCCESS);
+    auto* req = gen_amount_recovery_req(rp_rv->value, rp_rv->value_size, blsct_nonce, nullptr);
+    BOOST_REQUIRE(req != nullptr);
+    void* req_vec = create_amount_recovery_req_vec();
+    add_to_amount_recovery_req_vec(req_vec, req);
+    auto* amounts_rv = recover_amount(req_vec);
+    BOOST_REQUIRE(amounts_rv != nullptr);
+    BOOST_REQUIRE_EQUAL(amounts_rv->result, BLSCT_SUCCESS);
+    BOOST_REQUIRE(get_amount_recovery_result_is_succ(amounts_rv->value, 0));
+    BOOST_CHECK_EQUAL(std::string{get_amount_recovery_result_msg(amounts_rv->value, 0)}, "navio");
+    delete req;
+    delete_amount_recovery_req_vec(req_vec);
+    free_amounts_ret_val(amounts_rv);
+    free_obj(rp_rv->value);
+    free(rp_rv);
+
+    // An empty message, NULL or not, is accepted; NULL with a length is not.
+    BOOST_CHECK_EQUAL(result_of(nullptr, 0), BLSCT_SUCCESS);
+    BOOST_CHECK_EQUAL(result_of("", 0), BLSCT_SUCCESS);
+    BOOST_CHECK_EQUAL(result_of(nullptr, 5), BLSCT_FAILURE);
+    // Recovery would cut a message at an embedded NUL.
+    const char with_nul[]{'n', 'a', '\0', 'i', 'o'};
+    BOOST_CHECK_EQUAL(result_of(with_nul, sizeof(with_nul)), BLSCT_FAILURE);
+}
+
+// sign_message and verify_msg_sig sign and check exactly msg_len bytes, NUL
+// bytes included.
+BOOST_AUTO_TEST_CASE(test_sign_message_msg_length)
+{
+    init();
+
+    auto* priv_key_rv = gen_scalar(42);
+    BOOST_REQUIRE(priv_key_rv != nullptr);
+    const auto* priv_key = static_cast<const BlsctScalar*>(priv_key_rv->value);
+    const BlsctPubKey* pub_key = scalar_to_pub_key(priv_key);
+    BOOST_REQUIRE(pub_key != nullptr);
+
+    // A message with a NUL byte inside is signed whole: the signature does
+    // not verify for the part before the NUL.
+    const char with_nul[]{'a', 'b', '\0', 'c', 'd'};
+    const BlsctSignature* sig = sign_message(priv_key, with_nul, sizeof(with_nul));
+    BOOST_REQUIRE(sig != nullptr);
+    BOOST_CHECK(verify_msg_sig(pub_key, with_nul, sizeof(with_nul), sig));
+    BOOST_CHECK(!verify_msg_sig(pub_key, with_nul, 2, sig));
+    BOOST_CHECK(!verify_msg_sig(pub_key, "ab", 2, sig));
+
+    // Only msg_len bytes of an unterminated buffer are read.
+    const char unterminated[]{'x', 'y', 'z', 'W'};
+    const BlsctSignature* sig_xyz = sign_message(priv_key, unterminated, 3);
+    BOOST_REQUIRE(sig_xyz != nullptr);
+    BOOST_CHECK(verify_msg_sig(pub_key, "xyz", 3, sig_xyz));
+    BOOST_CHECK(!verify_msg_sig(pub_key, unterminated, 4, sig_xyz));
+
+    // NULL is an empty message only with a zero length.
+    const BlsctSignature* sig_empty = sign_message(priv_key, nullptr, 0);
+    BOOST_REQUIRE(sig_empty != nullptr);
+    BOOST_CHECK(verify_msg_sig(pub_key, "", 0, sig_empty));
+    BOOST_CHECK(sign_message(priv_key, nullptr, 3) == nullptr);
+    BOOST_CHECK(!verify_msg_sig(pub_key, nullptr, 3, sig_empty));
+
+    free_obj((void*)sig);
+    free_obj((void*)sig_xyz);
+    free_obj((void*)sig_empty);
+    free_obj((void*)pub_key);
+    free_obj(priv_key_rv->value);
+    free(priv_key_rv);
 }
 
 BOOST_AUTO_TEST_CASE(test_verify_range_proofs_is_v2_only)
