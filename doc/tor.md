@@ -150,22 +150,22 @@ Manual](https://2019.www.torproject.org/docs/tor-manual.html.en) for more
 details).
 
 
-## 3. Manually create a Bitcoin Core onion service
+## 3. Manually create a Navio onion service
 
 You can also manually configure your node to be reachable from the Tor network.
 Add these lines to your `/etc/tor/torrc` (or equivalent config file):
 
-    HiddenServiceDir /var/lib/tor/bitcoin-service/
-    HiddenServicePort 8333 127.0.0.1:8334
+    HiddenServiceDir /var/lib/tor/navio-service/
+    HiddenServicePort 48470 127.0.0.1:48472
 
 The directory can be different of course, but virtual port numbers should be equal to
-your naviod's P2P listen port (8333 by default), and target addresses and ports
-should be equal to binding address and port for inbound Tor connections (127.0.0.1:8334 by default).
+your naviod's P2P listen port (48470 by default on mainnet), and target addresses and ports
+should be equal to binding address and port for inbound Tor connections (127.0.0.1:48472 by default on mainnet).
 
-    -externalip=X   You can tell bitcoin about its publicly reachable addresses using
+    -externalip=X   You can tell naviod about its publicly reachable addresses using
                     this option, and this can be an onion address. Given the above
                     configuration, you can find your onion address in
-                    /var/lib/tor/bitcoin-service/hostname. For connections
+                    /var/lib/tor/navio-service/hostname. For connections
                     coming from unroutable addresses (such as 127.0.0.1, where the
                     Tor proxy typically runs), onion addresses are given
                     preference for your node to advertise itself with.
@@ -200,7 +200,7 @@ as well, use `discover` instead:
 
     ./naviod ... -discover
 
-and open port 8333 on your firewall (or use port mapping, i.e., `-natpmp`).
+and open port 48470 on your firewall (or use port mapping, i.e., `-natpmp`).
 
 If you only want to use Tor to reach .onion addresses, but not use it as a proxy
 for normal IPv4/IPv6 communication, use:

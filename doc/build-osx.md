@@ -90,7 +90,7 @@ Skip if you do not need ZMQ functionality.
 brew install zeromq
 ```
 
-ZMQ is automatically compiled in and enabled if the dependency is detected.
+ZMQ is not compiled in by default; enable it with `-DWITH_ZMQ=ON`.
 Check out the [further configuration](#further-configuration) section for more information.
 
 For more information on ZMQ, see: [zmq.md](zmq.md)

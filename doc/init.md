@@ -15,7 +15,6 @@ Service User
 
 All three Linux startup configurations assume the existence of a "bitcoin" user
 and group.  They must be created before attempting to use these scripts.
-The macOS configuration assumes naviod will be set up for the current user.
 
 Configuration
 ---------------------------------
@@ -85,9 +84,9 @@ OpenRC).
 ### macOS
 
     Binary:              /usr/local/bin/naviod
-    Configuration file:  ~/Library/Application Support/Bitcoin/navio.conf
-    Data directory:      ~/Library/Application Support/Bitcoin
-    Lock file:           ~/Library/Application Support/Bitcoin/.lock
+    Configuration file:  ~/Library/Application Support/Navio/navio.conf
+    Data directory:      ~/Library/Application Support/Navio
+    Lock file:           ~/Library/Application Support/Navio/.lock
 
 Installing Service Configuration
 -----------------------------------
@@ -127,17 +126,6 @@ Copy naviod.init to /etc/init.d/naviod. Test by running `service naviod start`.
 Using this script, you can adjust the path and flags to the naviod program by
 setting the BITCOIND and FLAGS environment variables in the file
 /etc/sysconfig/naviod. You can also use the DAEMONOPTS environment variable here.
-
-### macOS
-
-Copy org.bitcoin.naviod.plist into ~/Library/LaunchAgents. Load the launch agent by
-running `launchctl load ~/Library/LaunchAgents/org.bitcoin.naviod.plist`.
-
-This Launch Agent will cause naviod to start whenever the user logs in.
-
-NOTE: This approach is intended for those wanting to run naviod as the current user.
-You will need to modify org.bitcoin.naviod.plist if you intend to use it as a
-Launch Daemon with a dedicated bitcoin user.
 
 Auto-respawn
 -----------------------------------

@@ -10,8 +10,8 @@
 # config file.
 
 [Unit]
-Description=Bitcoin daemon
-Documentation=https://github.com/bitcoin/bitcoin/blob/master/doc/init.md
+Description=Navio daemon
+Documentation=https://github.com/nav-io/navio-core/blob/master/doc/init.md
 
 # https://www.freedesktop.org/wiki/Software/systemd/NetworkTarget/
 After=network-online.target
@@ -26,7 +26,7 @@ ExecStart=/usr/bin/naviod -pid=/run/naviod/naviod.pid \
 
 # Make sure the config directory is readable by the service user
 PermissionsStartOnly=true
-ExecStartPre=/bin/chgrp bitcoin /etc/bitcoin
+ExecStartPre=/bin/chgrp bitcoin /etc/navio
 
 # Process management
 ####################
@@ -50,8 +50,8 @@ Group=bitcoin
 RuntimeDirectory=naviod
 RuntimeDirectoryMode=0710
 
-# /etc/bitcoin
-ConfigurationDirectory=bitcoin
+# /etc/navio
+ConfigurationDirectory=navio
 ConfigurationDirectoryMode=0710
 
 # /var/lib/naviod

@@ -38,7 +38,7 @@ pkg install sqlite3
 #### Notifications
 ###### ZeroMQ
 
-Navio Core can provide notifications via ZeroMQ. If the package is installed, support will be compiled in.
+Navio Core can provide notifications via ZeroMQ. Install the package and pass `-DWITH_ZMQ=ON` to compile support in.
 ```bash
 pkg install libzmq4
 ```

@@ -46,11 +46,10 @@ operation.
 
 ## Enabling
 
-By default, the ZeroMQ feature is automatically compiled in if the
-necessary prerequisites are found.  To disable, use --disable-zmq
-during the *configure* step of building naviod:
+The ZeroMQ feature is not compiled in by default. To enable it, pass
+`-DWITH_ZMQ=ON` when configuring the build of naviod:
 
-    $ ./configure --disable-zmq (other options)
+    $ cmake -B build -DWITH_ZMQ=ON (other options)
 
 To actually enable operation, one must set the appropriate options on
 the command line or in the configuration file.
@@ -64,6 +63,7 @@ Currently, the following notifications are supported:
     -zmqpubrawblock=address
     -zmqpubrawtx=address
     -zmqpubsequence=address
+    -zmqpubp2pmsg=address
 
 The socket type is PUB and the address must be a valid ZeroMQ socket
 address. The same address can be used in more than one notification.

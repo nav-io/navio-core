@@ -32,11 +32,11 @@ requests when multiple wallets are in use.
 ### Examples
 
 ```sh
-# Get block count from the / endpoint when rpcuser=alice and rpcport=38332
-$ curl --user alice --data-binary '{"jsonrpc": "1.0", "id": "0", "method": "getblockcount", "params": []}' -H 'content-type: text/plain;' localhost:38332/
+# Get block count from the / endpoint when rpcuser=alice and rpcport=48471
+$ curl --user alice --data-binary '{"jsonrpc": "1.0", "id": "0", "method": "getblockcount", "params": []}' -H 'content-type: text/plain;' localhost:48471/
 
-# Get balance from the /wallet/walletname endpoint when rpcuser=alice, rpcport=38332 and rpcwallet=desc-wallet
-$ curl --user alice --data-binary '{"jsonrpc": "1.0", "id": "0", "method": "getbalance", "params": []}' -H 'content-type: text/plain;' localhost:38332/wallet/desc-wallet
+# Get balance from the /wallet/walletname endpoint when rpcuser=alice, rpcport=48471 and rpcwallet=desc-wallet
+$ curl --user alice --data-binary '{"jsonrpc": "1.0", "id": "0", "method": "getbalance", "params": []}' -H 'content-type: text/plain;' localhost:48471/wallet/desc-wallet
 
 ```
 
@@ -126,7 +126,7 @@ RPC interface will be abused.
     need to expose the RPC port to the host system.  The default way to
     do this in Docker also exposes the port to the public Internet.
     Instead, expose it only on the host system's localhost, for example:
-    `-p 127.0.0.1:8332:8332`
+    `-p 127.0.0.1:48471:48471`
 
 - **Secure authentication:** By default, when no `rpcpassword` is specified, Bitcoin Core generates unique
   login credentials each time it restarts and puts them into a file
