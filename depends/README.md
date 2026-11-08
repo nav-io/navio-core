@@ -105,7 +105,6 @@ The following can be set when running make: `make FOO=bar`
 - `NO_WALLET`: Don't download/build/cache libs needed to enable the wallet
 - `NO_SQLITE`: Don't download/build/cache SQLite
 - `NO_USDT`: Don't download/build/cache packages needed for enabling USDT tracepoints
-- `MULTIPROCESS`: Build libmultiprocess (experimental, requires CMake)
 - `DEBUG`: Disable some optimizations and enable more runtime checking
 - `HOST_ID_SALT`: Optional salt to use when generating host package ids
 - `BUILD_ID_SALT`: Optional salt to use when generating build package ids
