@@ -2195,15 +2195,6 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
         return DISCONNECT_FAILED;
     }
 
-    // Ignore blocks that contain transactions which are 'overwritten' by later transactions,
-    // unless those are already completely spent.
-    // See https://github.com/bitcoin/bitcoin/issues/22596 for additional information.
-    // Note: the blocks specified here are different than the ones used in ConnectBlock because DisconnectBlock
-    // unwinds the blocks in reverse. As a result, the inconsistency is not discovered until the earlier
-    // blocks with the duplicate coinbase transactions are disconnected.
-    bool fEnforceBIP30 = !((pindex->nHeight==91722 && pindex->GetBlockHash() == uint256S("0x00000000000271a2dc26e7667f8419f2e15416dc6955e5a6c6cdf3f2574dd08e")) ||
-                           (pindex->nHeight==91812 && pindex->GetBlockHash() == uint256S("0x00000000000af0aed4792b1acee3d966af36cf5def14935db8de83d6f9306f2f")));
-
     const auto revert_predicate = [&view](const CTxOut& out) {
         if (out.predicate.size() == 0) return true;
         if (blsct::ExecutePredicate(out.predicate, view, true)) return true;
@@ -2230,7 +2221,6 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
     for (int i = block.vtx.size() - 1; i >= 0; i--) {
         const CTransaction& tx = *(block.vtx[i]);
         bool is_coinbase = tx.IsCoinBase();
-        bool is_bip30_exception = (is_coinbase && !fEnforceBIP30);
 
         // Mirror AddCoins(): BLSCT block aggregation may produce vouts whose
         // hash matches a vin prevout in the same tx. Those "self-spent" outputs
@@ -2277,9 +2267,7 @@ DisconnectResult Chainstate::DisconnectBlock(const CBlock& block, const CBlockIn
                 Coin coin;
                 bool is_spent = view.SpendCoin(out, &coin);
                 if (!is_spent || tx.vout[o] != coin.out || pindex->nHeight != coin.nHeight || is_coinbase != coin.fCoinBase) {
-                    if (!is_bip30_exception) {
-                        fClean = false; // transaction output mismatch
-                    }
+                    fClean = false; // transaction output mismatch
                 }
             }
         }
@@ -6883,12 +6871,6 @@ Chainstate& ChainstateManager::ActivateExistingSnapshot(uint256 base_blockhash)
     m_active_chainstate->m_mempool = nullptr;
     m_active_chainstate = m_snapshot_chainstate.get();
     return *m_snapshot_chainstate;
-}
-
-bool IsBIP30Repeat(const CBlockIndex& block_index)
-{
-    return (block_index.nHeight==91842 && block_index.GetBlockHash() == uint256S("0x00000000000a4d0a398161ffc163c503763b1f4360639393e0e4c8e300e0caec")) ||
-           (block_index.nHeight==91880 && block_index.GetBlockHash() == uint256S("0x00000000000743f190a18c5577a3c2d2a1f610ae9601ac046a38084ccb7cd721"));
 }
 
 static fs::path GetSnapshotCoinsDBPath(Chainstate& cs) EXCLUSIVE_LOCKS_REQUIRED(::cs_main)
