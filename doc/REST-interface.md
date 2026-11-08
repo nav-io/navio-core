@@ -1,112 +1,120 @@
-Unauthenticated REST Interface
-==============================
+# Unauthenticated REST Interface
 
 The REST API can be enabled with the `-rest` option.
 
-The interface runs on the same port as the JSON-RPC interface, by default port 48471 for mainnet, port 33677 for testnet,
-port 48487 for signet, port 48486 for regtest and port 48484 for blsctregtest.
+The interface runs on the same port as the JSON-RPC interface, by default port
+48471 for mainnet, port 33677 for testnet, port 48487 for signet, port 48486 for
+regtest and port 48484 for blsctregtest.
 
-REST Interface consistency guarantees
--------------------------------------
+## REST Interface consistency guarantees
 
-The [same guarantees as for the RPC Interface](/doc/JSON-RPC-interface.md#rpc-consistency-guarantees)
+The
+[same guarantees as for the RPC Interface](/doc/JSON-RPC-interface.md#rpc-consistency-guarantees)
 apply.
 
-Limitations
------------
+## Limitations
 
 There is a known issue in the REST interface that can cause a node to crash if
-too many http connections are being opened at the same time because the system runs
-out of available file descriptors. To prevent this from happening you might
+too many http connections are being opened at the same time because the system
+runs out of available file descriptors. To prevent this from happening you might
 want to increase the number of maximum allowed file descriptors in your system
 and try to prevent opening too many connections to your rest interface at the
-same time if this is under your control. It is hard to give general advice
-since this depends on your system but if you make several hundred requests at
-once you are definitely at risk of encountering this issue.
+same time if this is under your control. It is hard to give general advice since
+this depends on your system but if you make several hundred requests at once you
+are definitely at risk of encountering this issue.
 
-Supported API
--------------
+## Supported API
 
 #### Transactions
+
 `GET /rest/tx/<TX-HASH>.<bin|hex|json>`
 
-Given a transaction hash: returns a transaction in binary, hex-encoded binary, or JSON formats.
-Responds with 404 if the transaction doesn't exist.
+Given a transaction hash: returns a transaction in binary, hex-encoded binary,
+or JSON formats. Responds with 404 if the transaction doesn't exist.
 
-By default, this endpoint will only search the mempool.
-To query for a confirmed transaction, enable the transaction index via "txindex=1" command line / configuration option.
+By default, this endpoint will only search the mempool. To query for a confirmed
+transaction, enable the transaction index via "txindex=1" command line /
+configuration option.
 
 #### Blocks
+
 - `GET /rest/block/<BLOCK-HASH>.<bin|hex|json>`
 - `GET /rest/block/notxdetails/<BLOCK-HASH>.<bin|hex|json>`
 
-Given a block hash: returns a block, in binary, hex-encoded binary or JSON formats.
-Responds with 404 if the block doesn't exist.
+Given a block hash: returns a block, in binary, hex-encoded binary or JSON
+formats. Responds with 404 if the block doesn't exist.
 
 The HTTP request and response are both handled entirely in-memory.
 
-With the /notxdetails/ option JSON response will only contain the transaction hash instead of the complete transaction details. The option only affects the JSON response.
+With the /notxdetails/ option JSON response will only contain the transaction
+hash instead of the complete transaction details. The option only affects the
+JSON response.
 
 #### Blockheaders
+
 `GET /rest/headers/<BLOCK-HASH>.<bin|hex|json>?count=<COUNT=5>`
 
 Given a block hash: returns <COUNT> amount of blockheaders in upward direction.
 Returns empty if the block doesn't exist or it isn't in the active chain.
 
-*Deprecated (but not removed) since 24.0:*
+_Deprecated (but not removed) since 24.0:_
 `GET /rest/headers/<COUNT>/<BLOCK-HASH>.<bin|hex|json>`
 
 #### Blockfilter Headers
+
 `GET /rest/blockfilterheaders/<FILTERTYPE>/<BLOCK-HASH>.<bin|hex|json>?count=<COUNT=5>`
 
 Given a block hash: returns <COUNT> amount of blockfilter headers in upward
-direction for the filter type <FILTERTYPE>.
-Returns empty if the block doesn't exist or it isn't in the active chain.
+direction for the filter type <FILTERTYPE>. Returns empty if the block doesn't
+exist or it isn't in the active chain.
 
-*Deprecated (but not removed) since 24.0:*
+_Deprecated (but not removed) since 24.0:_
 `GET /rest/blockfilterheaders/<FILTERTYPE>/<COUNT>/<BLOCK-HASH>.<bin|hex|json>`
 
 #### Blockfilters
+
 `GET /rest/blockfilter/<FILTERTYPE>/<BLOCK-HASH>.<bin|hex|json>`
 
 Given a block hash: returns the block filter of the given block of type
-<FILTERTYPE>.
-Responds with 404 if the block doesn't exist.
+<FILTERTYPE>. Responds with 404 if the block doesn't exist.
 
 #### Blockhash by height
+
 `GET /rest/blockhashbyheight/<HEIGHT>.<bin|hex|json>`
 
 Given a height: returns hash of block in best-block-chain at height provided.
 Responds with 404 if block not found.
 
 #### Chaininfos
+
 `GET /rest/chaininfo.json`
 
-Returns various state info regarding block chain processing.
-Only supports JSON as output format.
-Refer to the `getblockchaininfo` RPC help for details.
+Returns various state info regarding block chain processing. Only supports JSON
+as output format. Refer to the `getblockchaininfo` RPC help for details.
 
 #### Deployment info
-`GET /rest/deploymentinfo.json`
-`GET /rest/deploymentinfo/<BLOCKHASH>.json`
+
+`GET /rest/deploymentinfo.json` `GET /rest/deploymentinfo/<BLOCKHASH>.json`
 
 Returns an object containing various state info regarding deployments of
-consensus changes at the current chain tip, or at <BLOCKHASH> if provided.
-Only supports JSON as output format.
-Refer to the `getdeploymentinfo` RPC help for details.
+consensus changes at the current chain tip, or at <BLOCKHASH> if provided. Only
+supports JSON as output format. Refer to the `getdeploymentinfo` RPC help for
+details.
 
 #### Query UTXO set
+
 - `GET /rest/getutxos/<OUTPUTHASH>/<OUTPUTHASH>/.../<OUTPUTHASH>.<bin|hex|json>`
 - `GET /rest/getutxos/checkmempool/<OUTPUTHASH>/<OUTPUTHASH>/.../<OUTPUTHASH>.<bin|hex|json>`
 
 The getutxos endpoint allows querying the UTXO set, given a set of outpoints.
-Navio identifies an output by its 32-byte output hash alone, so each outpoint
-is that hash in hex, with no `-<N>` index suffix.
-With the `/checkmempool/` option, the mempool is also taken into account.
-See [BIP64](https://github.com/bitcoin/bips/blob/master/bip-0064.mediawiki) for
+Navio identifies an output by its 32-byte output hash alone, so each outpoint is
+that hash in hex, with no `-<N>` index suffix. With the `/checkmempool/` option,
+the mempool is also taken into account. See
+[BIP64](https://github.com/bitcoin/bips/blob/master/bip-0064.mediawiki) for
 input and output serialization (relevant for `bin` and `hex` output formats).
 
 Example:
+
 ```
 $ curl localhost:33677/rest/getutxos/checkmempool/b2cdfd7b89def827ff8af7cd9bff7627ff72e5e8b0f71210f92ea7a4000c5d75.json 2>/dev/null | json_pp
 {
@@ -130,22 +138,25 @@ $ curl localhost:33677/rest/getutxos/checkmempool/b2cdfd7b89def827ff8af7cd9bff76
 ```
 
 #### Memory pool
+
 `GET /rest/mempool/info.json`
 
-Returns various information about the transaction mempool.
-Only supports JSON as output format.
-Refer to the `getmempoolinfo` RPC help for details.
+Returns various information about the transaction mempool. Only supports JSON as
+output format. Refer to the `getmempoolinfo` RPC help for details.
 
 `GET /rest/mempool/contents.json?verbose=<true|false>&mempool_sequence=<false|true>`
 
-Returns the transactions in the mempool.
-Only supports JSON as output format.
+Returns the transactions in the mempool. Only supports JSON as output format.
 Refer to the `getrawmempool` RPC help for details. Defaults to setting
 `verbose=true` and `mempool_sequence=false`.
 
-*Query parameters for `verbose` and `mempool_sequence` available in 25.0 and up.*
+_Query parameters for `verbose` and `mempool_sequence` available in 25.0 and
+up._
 
+## Risks
 
-Risks
--------------
-Running a web browser on the same node with a REST enabled naviod can be a risk. Accessing prepared XSS websites could read out tx/block data of your node by placing links like `<script src="http://127.0.0.1:48471/rest/tx/1234567890.json">` which might break the nodes privacy.
+Running a web browser on the same node with a REST enabled naviod can be a risk.
+Accessing prepared XSS websites could read out tx/block data of your node by
+placing links like
+`<script src="http://127.0.0.1:48471/rest/tx/1234567890.json">` which might
+break the nodes privacy.

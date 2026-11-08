@@ -2,12 +2,13 @@
 
 **Updated for MacOS [11.2](https://www.apple.com/macos/big-sur/)**
 
-This guide describes how to build naviod, command-line utilities, and GUI on macOS
+This guide describes how to build naviod, command-line utilities, and GUI on
+macOS
 
 ## Preparation
 
-The commands in this guide should be executed in a Terminal application.
-macOS comes with a built-in Terminal located in:
+The commands in this guide should be executed in a Terminal application. macOS
+comes with a built-in Terminal located in:
 
 ```
 /Applications/Utilities/Terminal.app
@@ -15,49 +16,53 @@ macOS comes with a built-in Terminal located in:
 
 ### 1. Xcode Command Line Tools
 
-The Xcode Command Line Tools are a collection of build tools for macOS.
-These tools must be installed in order to build Navio Core from source.
+The Xcode Command Line Tools are a collection of build tools for macOS. These
+tools must be installed in order to build Navio Core from source.
 
 To install, run the following command from your terminal:
 
-``` bash
+```bash
 xcode-select --install
 ```
 
-Upon running the command, you should see a popup appear.
-Click on `Install` to continue the installation process.
+Upon running the command, you should see a popup appear. Click on `Install` to
+continue the installation process.
 
 ### 2. Homebrew Package Manager
 
-Homebrew is a package manager for macOS that allows one to install packages from the command line easily.
-While several package managers are available for macOS, this guide will focus on Homebrew as it is the most popular.
-Since the examples in this guide which walk through the installation of a package will use Homebrew, it is recommended that you install it to follow along.
-Otherwise, you can adapt the commands to your package manager of choice.
+Homebrew is a package manager for macOS that allows one to install packages from
+the command line easily. While several package managers are available for macOS,
+this guide will focus on Homebrew as it is the most popular. Since the examples
+in this guide which walk through the installation of a package will use
+Homebrew, it is recommended that you install it to follow along. Otherwise, you
+can adapt the commands to your package manager of choice.
 
 To install the Homebrew package manager, see: https://brew.sh
 
-Note: If you run into issues while installing Homebrew or pulling packages, refer to [Homebrew's troubleshooting page](https://docs.brew.sh/Troubleshooting).
+Note: If you run into issues while installing Homebrew or pulling packages,
+refer to
+[Homebrew's troubleshooting page](https://docs.brew.sh/Troubleshooting).
 
 ### 3. Install Required Dependencies
 
-The first step is to download the required dependencies.
-These dependencies represent the packages required to get a barebones installation up and running.
+The first step is to download the required dependencies. These dependencies
+represent the packages required to get a barebones installation up and running.
 
 See [dependencies.md](dependencies.md) for a complete overview.
 
 To install, run the following from your terminal:
 
-``` bash
+```bash
 brew install cmake ninja boost pkgconf libevent
 ```
 
 ### 4. Clone Navio repository
 
-`git` should already be installed by default on your system.
-Now that all the required dependencies are installed, let's clone the Navio Core repository to a directory.
-All build scripts and commands will run from this directory.
+`git` should already be installed by default on your system. Now that all the
+required dependencies are installed, let's clone the Navio Core repository to a
+directory. All build scripts and commands will run from this directory.
 
-``` bash
+```bash
 git clone https://github.com/nav-io/navio-core.git
 ```
 
@@ -71,27 +76,27 @@ It is not necessary to build wallet functionality to run `naviod`.
 
 `sqlite` is required to support for descriptor wallets.
 
-macOS ships with a useable `sqlite` package, meaning you don't need to
-install anything.
+macOS ships with a useable `sqlite` package, meaning you don't need to install
+anything.
 
 #### Port Mapping Dependencies
 
-PCP/NAT-PMP support is built in unconditionally.
-Check out the [further configuration](#further-configuration) section for more information.
+PCP/NAT-PMP support is built in unconditionally. Check out the
+[further configuration](#further-configuration) section for more information.
 
 ---
 
 #### ZMQ Dependencies
 
-Support for ZMQ notifications requires the following dependency.
-Skip if you do not need ZMQ functionality.
+Support for ZMQ notifications requires the following dependency. Skip if you do
+not need ZMQ functionality.
 
-``` bash
+```bash
 brew install zeromq
 ```
 
-ZMQ is not compiled in by default; enable it with `-DWITH_ZMQ=ON`.
-Check out the [further configuration](#further-configuration) section for more information.
+ZMQ is not compiled in by default; enable it with `-DWITH_ZMQ=ON`. Check out the
+[further configuration](#further-configuration) section for more information.
 
 For more information on ZMQ, see: [zmq.md](zmq.md)
 
@@ -99,10 +104,11 @@ For more information on ZMQ, see: [zmq.md](zmq.md)
 
 #### Test Suite Dependencies
 
-There is an included test suite that is useful for testing code changes when developing.
-To run the test suite (recommended), you will need to have Python 3 installed:
+There is an included test suite that is useful for testing code changes when
+developing. To run the test suite (recommended), you will need to have Python 3
+installed:
 
-``` bash
+```bash
 brew install python
 ```
 
@@ -110,8 +116,8 @@ brew install python
 
 #### Deploy Dependencies
 
-You can deploy a `.zip` containing the Navio Core application using the deploy target.
-It is required that you have `python` installed.
+You can deploy a `.zip` containing the Navio Core application using the deploy
+target. It is required that you have `python` installed.
 
 ## Building Navio Core
 
@@ -121,31 +127,32 @@ There are many ways to configure Navio Core, here are a few common examples:
 
 ##### Wallet (SQLite) Support:
 
-``` bash
+```bash
 cmake -B build -G Ninja
 ```
 
 ##### No Wallet
 
-``` bash
+```bash
 cmake -B build -G Ninja -DENABLE_WALLET=OFF
 ```
 
 ##### Further Configuration
 
-You may want to dig deeper into the configuration options to achieve your desired behavior.
-Examine the output of the following command for a full list of configuration options:
+You may want to dig deeper into the configuration options to achieve your
+desired behavior. Examine the output of the following command for a full list of
+configuration options:
 
-``` bash
+```bash
 cmake -B build -LH
 ```
 
 ### 2. Compile
 
-After configuration, you are ready to compile.
-Run the following in your terminal to compile Navio Core:
+After configuration, you are ready to compile. Run the following in your
+terminal to compile Navio Core:
 
-``` bash
+```bash
 cmake --build build         # use "-j N" here for N parallel jobs
 ctest --test-dir build      # Run tests if Python 3 is available
 ```
@@ -154,12 +161,12 @@ ctest --test-dir build      # Run tests if Python 3 is available
 
 Navio Core should now be available at `./build/bin/naviod`.
 
-The first time you run `naviod`, it will start downloading the blockchain.
-This process could take many hours, or even days on slower than average systems.
+The first time you run `naviod`, it will start downloading the blockchain. This
+process could take many hours, or even days on slower than average systems.
 
 By default, blockchain and wallet data files will be stored in:
 
-``` bash
+```bash
 /Users/${USER}/Library/Application Support/Navio/
 ```
 
