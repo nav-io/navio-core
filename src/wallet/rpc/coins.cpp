@@ -750,7 +750,12 @@ RPCHelpMan listunspent()
             // mirrors how getbalance() adds GetBlsctBalance() on top of
             // GetBalance() to avoid under-reporting BLSCT funds; here we add
             // AvailableBlsctCoins() on top of AvailableCoins() instead.
-            vecBlsctOutputs = AvailableBlsctCoins(*pwallet, &cctl, filter_coins).All();
+            // maximumCount and minimumSumAmount limit the merged listing
+            // below, so this list is gathered without them.
+            CoinFilterParams blsct_filter{filter_coins};
+            blsct_filter.max_count = 0;
+            blsct_filter.min_sum_amount = MAX_MONEY;
+            vecBlsctOutputs = AvailableBlsctCoins(*pwallet, &cctl, blsct_filter).All();
         }
     }
 
@@ -862,15 +867,31 @@ RPCHelpMan listunspent()
     // List each output once, skipping the mirror under the rule the balance
     // RPCs use (IsOutputCoveredByWalletTx), so listunspent agrees with them.
     // A BLSCT output is rendered as one whichever list it came from.
+    //
+    // maximumCount and minimumSumAmount apply to the merged listing, checked
+    // after each coin as AvailableCoins() does. vecOutputs already stopped at
+    // them, so a wallet without output storage lists exactly what it did.
     std::set<COutPoint> listed;
+    CAmount listed_sum{0};
+    auto list = [&](const COutput& out, bool is_blsct) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
+        AssertLockHeld(pwallet->cs_wallet);
+        add_entry(out, is_blsct);
+        listed_sum += out.txout.nValue;
+        const bool sum_reached{filter_coins.min_sum_amount != MAX_MONEY && listed_sum >= filter_coins.min_sum_amount};
+        const bool count_reached{filter_coins.max_count > 0 && listed.size() >= filter_coins.max_count};
+        return !sum_reached && !count_reached;
+    };
+    bool more{true};
     for (const COutput& out : vecOutputs) {
         if (!listed.insert(out.outpoint).second) continue;
-        add_entry(out, /*is_blsct=*/out.txout.HasBLSCTRangeProof() || out.txout.HasBLSCTKeys());
+        more = list(out, /*is_blsct=*/out.txout.HasBLSCTRangeProof() || out.txout.HasBLSCTKeys());
+        if (!more) break;
     }
     for (const COutput& out : vecBlsctOutputs) {
+        if (!more) break;
         if (IsOutputCoveredByWalletTx(*pwallet, out.outpoint)) continue;
         if (!listed.insert(out.outpoint).second) continue;
-        add_entry(out, /*is_blsct=*/true);
+        more = list(out, /*is_blsct=*/true);
     }
 
     return results;
