@@ -12,7 +12,15 @@
 #include <array>
 #include <cstdint>
 #include <map>
+#include <optional>
 #include <vector>
+
+class CCoinsViewCache;
+class CTxMemPool;
+class TxValidationState;
+namespace Consensus {
+struct Params;
+} // namespace Consensus
 
 namespace aggregation {
 
@@ -31,13 +39,52 @@ static constexpr int64_t CANDIDATE_MAX_WEIGHT = 6000;
 //! Number of lock shards (by input-outpoint hash top byte).
 static constexpr size_t POOL_SHARDS = 16;
 
+//! The shape every pooled candidate has: a BLSCT tx (marker set) with exactly
+//! one input and one output, the output not a fee output (a candidate is fee-0
+//! and must not give the combined tx a second fee output, which consensus's
+//! one-fee-output rule rejects) and confidential (it carries a range proof:
+//! a transparent output is held to IsStandardTx's output rules in the
+//! aggregate), within CANDIDATE_MAX_WEIGHT (an oversized
+//! candidate inflates the initiator's additionalFee and memory use). Cheap: no
+//! locks, no chain lookups.
+bool IsCandidateShape(const CTransaction& tx);
+
+//! Check a cover candidate the way mempool acceptance would check it, except
+//! for the minimum-fee rule (a candidate is fee-0): the per-input standardness
+//! rules of IsStandardTx (scriptSig push-only and at most
+//! MAX_STANDARD_SCRIPTSIG_SIZE) always, the rest of IsStandardTx and
+//! AreInputsStandard when `mempool` requires standard txs (as mempool
+//! acceptance does, honouring -acceptnonstdtxn), an input whose coin is not
+//! confidential ("candidate-input-not-confidential"), CheckTransaction, an
+//! input that a mempool tx
+//! already spends ("txn-mempool-conflict"), an output that already exists as
+//! an unspent coin in `view` or is created by a mempool tx
+//! ("txn-duplicate-output"), Consensus::CheckTxInputs against `view` (missing
+//! or spent coin, immature coinbase), and blsct::VerifyTx (scripts, balance,
+//! txSig, range proof).
+//! The aggregate a candidate ends up in is judged by mempool acceptance, so
+//! anything that acceptance rejects would make every aggregate that picks the
+//! candidate fail. In particular, without the mempool checks a candidate whose
+//! input is already spent, or whose output is already created, in the mempool
+//! is never evicted: the TransactionAddedToMempool eviction for that tx ran
+//! before the candidate existed. `view` must be backed by the chain tip and
+//! `spend_height` is the tip height + 1. Run only after IsCandidateShape (or
+//! CandidatePool::WouldAccept) passed; the caller holds cs_main so `view` and
+//! `mempool` agree. `mempool` may be null.
+bool CheckCandidate(const CTransaction& tx, CCoinsViewCache& view, const CTxMemPool* mempool,
+                    int spend_height, int64_t median_time_past, const Consensus::Params& params,
+                    TxValidationState& state);
+
 /**
  * Local pool of single-input-single-output fee-0 cover candidates received from
  * peers. Each candidate is keyed by its single input outpoint:
- *  - dedupe-on-insert: a second candidate spending an input already present is
- *    rejected (first-seen wins);
+ *  - dedupe-on-insert: a second candidate spending an input already present, or
+ *    creating an output another pooled candidate creates, is rejected
+ *    (first-seen wins);
  *  - eviction: when any tx entering the mempool or a connected block spends a
- *    candidate's input, that candidate is dropped (it can no longer be combined).
+ *    candidate's input, or creates the candidate's output, that candidate is
+ *    dropped (it can no longer be combined: mempool acceptance would reject the
+ *    aggregate with txn-mempool-conflict or txn-duplicate-output).
  *
  * Sharded by outpoint hash so inserts/evictions on unrelated inputs do not
  * contend. No BLS/AEAD work happens under a shard lock.
@@ -47,10 +94,10 @@ class CandidatePool final : public CValidationInterface
 public:
     CandidatePool() = default;
 
-    //! Insert a validated candidate from `peer`. Returns false (no insert) if:
-    //! the candidate is not 1-input, its input is already pooled, the per-peer
-    //! cap is hit, or the global cap is hit. `reward_input` records whether the
-    //! candidate's prev-out was created by a coinbase (block-reward) tx -- that
+    //! Insert a candidate that passed CheckCandidate. Returns false (no insert)
+    //! if it fails IsCandidateShape, its input is already pooled, another
+    //! pooled candidate creates the same output, or the global cap is hit.
+    //! `reward_input` records whether the candidate's prev-out was created by a coinbase (block-reward) tx -- that
     //! is public chain data, and matching it against the initiator's own input
     //! types is what makes the cover blend (see PickForAggregate).
     bool AddCandidate(const CTransactionRef& candidate, bool reward_input = false)
@@ -82,21 +129,24 @@ public:
     std::vector<CTransactionRef> PickForAggregate(size_t max_n, size_t prefer_reward) const
        ;
 
-    //! Flag the pooled candidate holding `input` as reward-backed. Split from
-    //! AddCandidate so the (cs_main-holding) chainstate classification runs
-    //! only for candidates that actually entered the pool -- a message
-    //! rejected by the structural checks or the caps must not pay for a coin
-    //! lookup, grow the tip coins cache, or block a p2pmsg worker. No-op if
-    //! the entry is gone (already evicted).
-    void MarkRewardInput(const COutPoint& input);
+    //! Whether AddCandidate would take `candidate` now: IsCandidateShape, its
+    //! input not already pooled, and the pool below POOL_MAX_TOTAL. Lets
+    //! network ingress drop what the pool would refuse anyway before paying
+    //! for cs_main and CheckCandidate. A snapshot: AddCandidate checks again.
+    bool WouldAccept(const CTransaction& candidate) const;
 
     //! Drop the candidate holding `input`, if any. Returns true if one was removed.
     bool EvictByInput(const COutPoint& input);
 
+    //! Drop the candidate whose output has id `output`, if any. Returns true
+    //! if one was removed.
+    bool EvictByOutput(const uint256& output);
+
     size_t Size() const;
     bool Contains(const COutPoint& input) const;
 
-    // CValidationInterface: evict candidates whose input got spent.
+    // CValidationInterface: evict candidates whose input got spent or whose
+    // output got created.
     void TransactionAddedToMempool(const NewMempoolTransactionInfo& tx, uint64_t mempool_sequence) override
        ;
     void BlockConnected(ChainstateRole role, const std::shared_ptr<const CBlock>& block, const CBlockIndex* pindex) override
@@ -112,12 +162,23 @@ private:
     };
 
     static size_t ShardFor(const COutPoint& input);
-    void EvictSpentBy(const CTransaction& tx);
+    //! Output id of a candidate's spendable output, or nullopt when it is
+    //! unspendable (mempool acceptance lets unspendable outputs repeat).
+    static std::optional<uint256> SpendableOutputId(const CTransaction& tx);
+    void EvictConflictingWith(const CTransaction& tx);
+    //! Drop the candidate holding `input`; if `expected_output` is set, only
+    //! when that candidate's output id still equals it.
+    bool EvictEntry(const COutPoint& input, const uint256* expected_output);
 
     //! Shard i is guarded by m_shard_mutex[i]. (Clang thread-safety annotations
     //! cannot express a mutex array, so the pairing is enforced by convention.)
     mutable std::array<Mutex, POOL_SHARDS> m_shard_mutex;
     std::array<std::map<COutPoint, Entry>, POOL_SHARDS> m_shards;
+
+    //! Output id -> input of the pooled candidate that creates it. Lock order:
+    //! m_output_mutex before any shard mutex; never taken while holding one.
+    mutable Mutex m_output_mutex;
+    std::map<uint256, COutPoint> m_by_output GUARDED_BY(m_output_mutex);
 };
 
 //! Process-global handle to the active candidate pool (set at init, cleared at

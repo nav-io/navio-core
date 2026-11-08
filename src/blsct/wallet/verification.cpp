@@ -378,7 +378,12 @@ bool VerifyTxCoreImpl(const CTransaction& tx,
     // Skipped for coinbase/coinstake-style reward txs (blockReward > 0): they
     // carry no fee output, are funded by the block subsidy + collected fees,
     // and use a separate consensus path (`BlockReward`/coinbase value check).
-    if (!tx.IsCoinBase() && blockReward == 0) {
+    //
+    // Also skipped when the caller sets `options.skip_fee_rule`: only the
+    // p2pmsg cover-candidate ingress does, because a candidate is a fee-0
+    // half whose aggregate is fee-checked in full when it reaches the mempool.
+    // No mempool or block path sets it.
+    if (!options.skip_fee_rule && !tx.IsCoinBase() && blockReward == 0) {
         const CAmount min_fee = static_cast<CAmount>(blsct::GetTransactionWeight(tx)) * nBLSCTDefaultFee;
         if (nFee < min_fee) {
             return state.Invalid(TxValidationResult::TX_CONSENSUS, "blsct-fee-below-min");
@@ -505,7 +510,7 @@ bool PrepareTxForDeferredVerification(const CTransaction& tx,
                                       int nBLSCTProofV2Height)
 {
     // Block path: every VerifyTxOptions policy switch off.
-    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee, nBLSCTProofV2Height, &out_sig_check, /*threads=*/0, VerifyTxOptions{.enforce_script_pair_limit = false});
+    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee, nBLSCTProofV2Height, &out_sig_check, /*threads=*/0, VerifyTxOptions{.enforce_script_pair_limit = false, .skip_fee_rule = false});
 }
 
 bool VerifyTxCollectProofs(const CTransaction& tx,
@@ -520,7 +525,7 @@ bool VerifyTxCollectProofs(const CTransaction& tx,
                            int nBLSCTProofV2Height)
 {
     // Block path: every VerifyTxOptions policy switch off.
-    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee, nBLSCTProofV2Height, /*out_sig_check=*/nullptr, /*threads=*/0, VerifyTxOptions{.enforce_script_pair_limit = false});
+    return VerifyTxCore(tx, view, state, out_proofs, blockReward, minStake, nSpendHeight, nMedianTimePast, /*verify_rp_inline=*/false, nBLSCTDefaultFee, nBLSCTProofV2Height, /*out_sig_check=*/nullptr, /*threads=*/0, VerifyTxOptions{.enforce_script_pair_limit = false, .skip_fee_rule = false});
 }
 
 TxSignatureBatchResult VerifyPreparedTxSignatures(const std::vector<PreparedTxSignatureCheck>& sig_checks, size_t threads)

@@ -15,6 +15,8 @@ listpendingcandidaterequests and answered via replycandidate.
 """
 
 from decimal import Decimal
+
+from test_framework.script import OP_NOP
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import assert_equal, assert_raises_rpc_error
 
@@ -109,6 +111,8 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         with n0.assert_debug_log(["p2pmsg: dropping kind 3 addressed to a user reply key"], timeout=240):
             res = w1.replycandidate(user_reply_key)
             assert "candidate_txid" in res, res
+        # Node0 never pooled this one, so it can be replayed below.
+        unpooled = res
         assert_equal(n0.getaggregationhint()["available"], 0)
         self.log.info("candidate sent to a user reply key was dropped")
 
@@ -124,6 +128,59 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
 
         self.wait_until(got_two, timeout=240)
         uniq = list(dict.fromkeys(keys))
+
+        # Anyone who sees the public pull request holds the reply key, so a
+        # candidate sent to it proves nothing about its author. Node0 must
+        # verify what it receives before pooling it; a pooled bad candidate
+        # makes every aggregate that picks it fail.
+        #
+        # A forged candidate: the honest one above with the txSig of an
+        # unrelated tx (the txSig is the last 96 bytes of a BLSCT tx).
+        other = w1.signblsctrawtransaction(w1.fundblsctrawtransaction(
+            w1.createblsctrawtransaction([], [{"address": miner, "amount": 1000}])))
+        forged_hex = unpooled["hex"][:-192] + other[-192:]
+        forged_txid = n0.decoderawtransaction(forged_hex)["txid"]
+        with n0.assert_debug_log([f"p2pmsg: dropping CANDIDATE_TX {forged_txid}: failed-signature-check"], timeout=240):
+            assert n1.sendcandidate(uniq[0], forged_hex)
+        assert_equal(n0.getaggregationhint()["available"], 0)
+        self.log.info("forged candidate sent to a valid reply key was dropped")
+
+        # A candidate whose scriptSig is not push-only. Mempool acceptance
+        # applies IsStandardTx's per-input rules to the aggregate, so such a
+        # candidate, even one its author signed, would fail every aggregate
+        # that picks it with scriptsig-not-pushonly. It is dropped before any
+        # signature or script check.
+        # Layout: nVersion (4 bytes), vin count (1), prevout hash (32), then
+        # the scriptSig, empty here (length 0x00). Make it OP_NOP.
+        assert_equal(unpooled["hex"][8:10], "01")
+        assert_equal(unpooled["hex"][74:76], "00")
+        nop_hex = unpooled["hex"][:74] + "01" + bytes([OP_NOP]).hex() + unpooled["hex"][76:]
+        nop_dec = n0.decoderawtransaction(nop_hex)
+        assert_equal(nop_dec["vin"][0]["scriptSig"]["hex"], bytes([OP_NOP]).hex())
+        nop_txid = nop_dec["txid"]
+        with n0.assert_debug_log([f"p2pmsg: dropping CANDIDATE_TX {nop_txid}: scriptsig-not-pushonly"], timeout=240):
+            assert n1.sendcandidate(uniq[0], nop_hex)
+        assert_equal(n0.getaggregationhint()["available"], 0)
+        self.log.info("candidate with a non-push-only scriptSig was dropped")
+
+        # An honest candidate whose coin a mempool tx already spends. Its
+        # mempool eviction already ran, so if pooled it would stay until
+        # the next block and fail every aggregate with txn-mempool-conflict.
+        spend = w1.signblsctrawtransaction(w1.fundblsctrawtransaction(
+            w1.createblsctrawtransaction([{"outid": unpooled["inputs"][0]}], [{"address": miner, "amount": 1000}])))
+        n1.sendrawtransaction(spend)
+        self.sync_mempools()
+        with n0.assert_debug_log([f"p2pmsg: dropping CANDIDATE_TX {unpooled['candidate_txid']}: txn-mempool-conflict"], timeout=240):
+            assert n1.sendcandidate(uniq[0], unpooled["hex"])
+        assert_equal(n0.getaggregationhint()["available"], 0)
+        self.log.info("candidate spending a coin already spent in the mempool was dropped")
+
+        # Confirm that spend before serving again: replycandidate can pick its
+        # unconfirmed change, and a candidate spending an unconfirmed coin is
+        # dropped by the requester (bad-txns-inputs-missingorspent).
+        self.generate_blsct_blocks(n1, miner, 1)
+        self.sync_blocks()
+
         before = n0.getaggregationhint()["available"]
         res = w1.replycandidate(uniq[0])
         assert "candidate_txid" in res, res
