@@ -231,8 +231,10 @@ void AddCoins(CCoinsViewCache& cache, const CTransaction& tx, int nHeight, bool 
         const uint256& outid = out_ids[i].ToUint256();
         if (self_spent.contains(outid)) continue;
         bool overwrite = check_for_overwrite ? cache.HaveCoin(COutPoint(outid)) : fCoinbase;
-        // Coinbase transactions can always be overwritten, in order to correctly
-        // deal with the pre-BIP30 occurrences of duplicate coinbase transactions.
+        // Coinbase outputs are added with overwrite allowed, kept from upstream,
+        // where it served Bitcoin's pre-BIP30 duplicate coinbases. No navio
+        // block has those: ConnectBlock rejects every block with an output
+        // that duplicates an unspent one (bad-txns-BIP30).
         cache.AddCoin(COutPoint(outid), Coin(tx.vout[i], nHeight, fCoinbase), overwrite);
     }
 }
