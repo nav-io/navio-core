@@ -26,8 +26,9 @@ constexpr size_t REDOWNLOAD_BUFFER_SIZE{14441}; // 14441/606 = ~23.8 commitments
 // Commented since the SetMemProof has a dynamic size
 // static_assert(sizeof(CompressedHeader) == 2344);
 
-HeadersWorkRateLimit::HeadersWorkRateLimit(const CBlockIndex* tip, const Consensus::Params& params)
+HeadersWorkRateLimit::HeadersWorkRateLimit(const CChain& active, const CBlockIndex& chain_start, const Consensus::Params& params)
 {
+    const CBlockIndex* tip{active.Tip()};
     if (!params.fBLSCT || tip == nullptr) return;
     const int window{REFERENCE_INTERVALS * static_cast<int>(params.DifficultyAdjustmentIntervalPos())};
     if (tip->nHeight - window <= params.nLastPOWHeight) return;
@@ -36,17 +37,20 @@ HeadersWorkRateLimit::HeadersWorkRateLimit(const CBlockIndex* tip, const Consens
     if (seconds <= 0) return;
     m_max_work_per_second = arith_uint256{tip->nChainWork - first->nChainWork} * MAX_RATE_FACTOR / arith_uint256{static_cast<uint64_t>(seconds)};
     m_slack_seconds = params.nPosTargetTimespan;
-    m_last_pow_height = params.nLastPOWHeight;
+    const CBlockIndex* fork{active.FindFork(&chain_start)};
+    if (fork == nullptr || fork->nHeight <= params.nLastPOWHeight) return;
+    m_fork_chain_work = fork->nChainWork;
+    m_fork_time = fork->GetBlockTime();
     m_active = true;
 }
 
-bool HeadersWorkRateLimit::Allows(const CBlockIndex& start, const arith_uint256& work, int64_t last_time, int64_t now) const
+bool HeadersWorkRateLimit::Allows(const arith_uint256& chain_work, int64_t last_time, int64_t now) const
 {
-    if (!m_active || start.nHeight <= m_last_pow_height) return true;
+    if (!m_active || chain_work <= m_fork_chain_work) return true;
     // A timestamp past MAX_FUTURE_BLOCK_TIME is invalid; it buys no time.
     const int64_t end{std::min(last_time, now + MAX_FUTURE_BLOCK_TIME)};
-    const int64_t seconds{std::max<int64_t>(0, end - start.GetBlockTime()) + m_slack_seconds};
-    return work <= m_max_work_per_second * arith_uint256{static_cast<uint64_t>(seconds)};
+    const int64_t seconds{std::max<int64_t>(0, end - m_fork_time) + m_slack_seconds};
+    return chain_work - m_fork_chain_work <= m_max_work_per_second * arith_uint256{static_cast<uint64_t>(seconds)};
 }
 
 bool IsDeepProofOfStakeFork(const CChain& active, const CBlockIndex& start, const Consensus::Params& params, int depth)
@@ -242,7 +246,7 @@ bool HeadersSyncState::ValidateAndProcessSingleHeader(const CBlockHeader& curren
     }
 
     m_current_chain_work += GetBlockProof(CBlockIndex(current));
-    if (!m_work_rate_limit.Allows(*m_chain_start, m_current_chain_work - m_chain_start->nChainWork, current.nTime,
+    if (!m_work_rate_limit.Allows(m_current_chain_work, current.nTime,
                                   TicksSinceEpoch<std::chrono::seconds>(GetAdjustedTime()))) {
         LogPrint(BCLog::NET, "Initial headers sync aborted with peer=%d: chain work grows implausibly fast at height=%i (presync phase)\n", m_id, next_height);
         return false;

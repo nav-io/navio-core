@@ -676,10 +676,11 @@ private:
     bool CheckHeadersPoW(const std::vector<CBlockHeader>& headers, const Consensus::Params& consensusParams, Peer& peer);
     /** Calculate an anti-DoS work threshold for headers chains */
     arith_uint256 GetAntiDoSWorkThreshold();
-    /** The limit on how fast a peer's headers chain may claim work, measured
-     *  on our chain; no limit during initial block download, when our tip says
-     *  nothing about the chain's current rate. */
-    HeadersWorkRateLimit GetHeadersWorkRateLimit();
+    /** The limit on how fast a peer's headers chain built on `chain_start`
+     *  may claim work, measured on our chain from where it forks; no limit
+     *  during initial block download, when our tip says nothing about the
+     *  chain's current rate. */
+    HeadersWorkRateLimit GetHeadersWorkRateLimit(const CBlockIndex& chain_start);
     /** Deal with state tracking and headers sync for peers that send the
      * occasional non-connecting header (this can happen due to BIP 130 headers
      * announcements for blocks interacting with the 2hr (MAX_FUTURE_BLOCK_TIME) rule). */
@@ -2808,11 +2809,11 @@ arith_uint256 PeerManagerImpl::GetAntiDoSWorkThreshold()
     return std::max(near_chaintip_work, m_chainman.MinimumChainWork());
 }
 
-HeadersWorkRateLimit PeerManagerImpl::GetHeadersWorkRateLimit()
+HeadersWorkRateLimit PeerManagerImpl::GetHeadersWorkRateLimit(const CBlockIndex& chain_start)
 {
     LOCK(cs_main);
     if (m_chainman.IsInitialBlockDownload()) return {};
-    return HeadersWorkRateLimit{m_chainman.ActiveChain().Tip(), m_chainparams.GetConsensus()};
+    return HeadersWorkRateLimit{m_chainman.ActiveChain(), chain_start, m_chainparams.GetConsensus()};
 }
 
 /**
@@ -2978,7 +2979,7 @@ bool PeerManagerImpl::TryLowWorkHeadersSync(Peer& peer, CNode& pfrom, const CBlo
             // advancing to the first unknown header would be a small effect.
             LOCK(peer.m_headers_sync_mutex);
             peer.m_headers_sync.reset(new HeadersSyncState(peer.m_id, m_chainparams.GetConsensus(),
-                chain_start_header, minimum_chain_work, GetHeadersWorkRateLimit()));
+                chain_start_header, minimum_chain_work, GetHeadersWorkRateLimit(*chain_start_header)));
 
             // Now a HeadersSyncState object for tracking this synchronization
             // is created, process the headers using it as normal. Failures are
@@ -3276,8 +3277,8 @@ void PeerManagerImpl::ProcessHeadersMessage(CNode& pfrom, Peer& peer,
     // free to make: refuse a chain claiming work faster than an honest one can
     // (see HeadersWorkRateLimit). Headers from a presync were checked there.
     if (!already_validated_work &&
-        !GetHeadersWorkRateLimit().Allows(*chain_start_header, CalculateHeadersWork(headers), headers.back().nTime,
-                                          TicksSinceEpoch<std::chrono::seconds>(GetAdjustedTime()))) {
+        !GetHeadersWorkRateLimit(*chain_start_header).Allows(chain_start_header->nChainWork + CalculateHeadersWork(headers),
+                                                             headers.back().nTime, TicksSinceEpoch<std::chrono::seconds>(GetAdjustedTime()))) {
         LogPrint(BCLog::NET, "Ignoring headers whose chain work grows implausibly fast (height=%u) from peer=%d\n", chain_start_header->nHeight + headers.size(), pfrom.GetId());
         return;
     }

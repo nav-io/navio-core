@@ -123,15 +123,19 @@ public:
 
     //! No limit.
     HeadersWorkRateLimit() = default;
-    //! The limit measured on the chain ending at `tip`. No limit unless the
-    //! chain is a BLSCT one with REFERENCE_INTERVALS proof-of-stake retarget
-    //! intervals past nLastPOWHeight.
-    HeadersWorkRateLimit(const CBlockIndex* tip, const Consensus::Params& params);
+    //! The limit on headers built on `chain_start`, measured on `active`. The
+    //! work and time a chain claims are counted from where it forks from
+    //! `active`, not from `chain_start`, so delivering a chain in many small
+    //! batches buys no extra slack. No limit unless `active` is a BLSCT chain
+    //! with REFERENCE_INTERVALS proof-of-stake retarget intervals past
+    //! nLastPOWHeight.
+    HeadersWorkRateLimit(const CChain& active, const CBlockIndex& chain_start, const Consensus::Params& params);
 
-    //! Whether headers built on `start` may claim `work`, the last of them
-    //! timestamped `last_time`, at adjusted time `now`. Headers built on a
-    //! block at or below nLastPOWHeight are not limited.
-    bool Allows(const CBlockIndex& start, const arith_uint256& work, int64_t last_time, int64_t now) const;
+    //! Whether a header chain whose last header has total chain work
+    //! `chain_work` and is timestamped `last_time` is allowed at adjusted time
+    //! `now`. Headers built on a block at or below nLastPOWHeight are not
+    //! limited.
+    bool Allows(const arith_uint256& chain_work, int64_t last_time, int64_t now) const;
 
     bool IsActive() const { return m_active; }
 
@@ -140,7 +144,9 @@ private:
     //! MAX_RATE_FACTOR times our measured work per second.
     arith_uint256 m_max_work_per_second;
     int64_t m_slack_seconds{0};
-    int m_last_pow_height{0};
+    //! Where the limited chain forks from ours.
+    arith_uint256 m_fork_chain_work;
+    int64_t m_fork_time{0};
 };
 
 /** Whether headers built on `start` fork from `active` more than `depth`
