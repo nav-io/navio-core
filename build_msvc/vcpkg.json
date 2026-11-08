@@ -2,9 +2,7 @@
   "name": "navio-core",
   "version-string": "1",
   "dependencies": [
-    "boost-date-time",
     "boost-multi-index",
-    "boost-signals2",
     "boost-test",
     "libevent",
     "sqlite3",

@@ -26,8 +26,7 @@ EXCLUDED_DIRS = ["depends/patches/",
                  "src/crc32c/",
                  "src/secp256k1/",
                  "src/minisketch/",
-                 "doc/release-notes/",
-                 "src/qt/locale"]
+                 "doc/release-notes/"]
 
 def parse_args():
     """Parse command line arguments."""
