@@ -8,9 +8,6 @@ sqlite_packages=sqlite
 
 zmq_packages=zeromq
 
-multiprocess_packages = libmultiprocess capnp
-multiprocess_native_packages = native_libmultiprocess native_capnp
-
 usdt_linux_packages=systemtap
 
 # Darwin no longer needs a depends-managed toolchain: the guix profile
