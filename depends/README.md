@@ -12,17 +12,11 @@ For example:
 
     make HOST=x86_64-w64-mingw32 -j4
 
-**Bitcoin Core's `configure` script by default will ignore the depends output.** In
-order for it to pick up libraries, tools, and settings from the depends build,
-you must set the `CONFIG_SITE` environment variable to point to a `config.site` settings file.
-Make sure that `CONFIG_SITE` is an absolute path.
-In the above example, a file named `depends/x86_64-w64-mingw32/share/config.site` will be
-created. To use it during compilation:
+**CMake by default ignores the depends output.** To pick up libraries, tools
+and settings from the depends build, pass the toolchain file it writes. In the
+above example, that is `depends/x86_64-w64-mingw32/toolchain.cmake`:
 
-    CONFIG_SITE=$PWD/depends/x86_64-w64-mingw32/share/config.site ./configure
-
-The default install prefix when using `config.site` is `--prefix=depends/<host-platform-triplet>`,
-so depends build outputs will be installed in that location.
+    cmake -B build --toolchain depends/x86_64-w64-mingw32/toolchain.cmake
 
 Common `host-platform-triplet`s for cross compilation are:
 
