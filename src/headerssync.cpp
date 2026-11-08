@@ -38,7 +38,7 @@ HeadersWorkRateLimit::HeadersWorkRateLimit(const CChain& active, const CBlockInd
     m_max_work_per_second = arith_uint256{tip->nChainWork - first->nChainWork} * MAX_RATE_FACTOR / arith_uint256{static_cast<uint64_t>(seconds)};
     m_slack_seconds = params.nPosTargetTimespan;
     const CBlockIndex* fork{active.FindFork(&chain_start)};
-    if (fork == nullptr || fork->nHeight <= params.nLastPOWHeight) return;
+    if (fork == nullptr) return;
     m_fork_chain_work = fork->nChainWork;
     m_fork_time = fork->GetBlockTime();
     m_active = true;
@@ -53,11 +53,11 @@ bool HeadersWorkRateLimit::Allows(const arith_uint256& chain_work, int64_t last_
     return chain_work - m_fork_chain_work <= m_max_work_per_second * arith_uint256{static_cast<uint64_t>(seconds)};
 }
 
-bool IsDeepProofOfStakeFork(const CChain& active, const CBlockIndex& start, const Consensus::Params& params, int depth)
+bool IsDeepBlsctFork(const CChain& active, const CBlockIndex& start, const Consensus::Params& params, int depth)
 {
     if (!params.fBLSCT || active.Tip() == nullptr) return false;
     const CBlockIndex* fork{active.FindFork(&start)};
-    return fork != nullptr && fork->nHeight > params.nLastPOWHeight && fork->nHeight + depth < active.Height();
+    return fork != nullptr && fork->nHeight + depth < active.Height();
 }
 
 HeadersSyncState::HeadersSyncState(NodeId id, const Consensus::Params& consensus_params,

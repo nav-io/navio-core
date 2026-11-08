@@ -283,8 +283,8 @@ BOOST_AUTO_TEST_CASE(headers_work_rate_limit)
     BOOST_CHECK(!limit.Allows(tip_work + cap + 1, now + span, now + span));
     // Timestamps past MAX_FUTURE_BLOCK_TIME buy no time.
     BOOST_CHECK(!limit.Allows(tip_work + cap, now + span, now + span - MAX_FUTURE_BLOCK_TIME - 1));
-    // Headers built on the proof-of-work part are not limited.
-    BOOST_CHECK(HeadersWorkRateLimit(active, *tip->GetAncestor(consensus.nLastPOWHeight), consensus).Allows(tip_work + proof * 1000000, now, now));
+    // Headers built on the proof-of-work part are limited too.
+    BOOST_CHECK(!HeadersWorkRateLimit(active, *tip->GetAncestor(consensus.nLastPOWHeight), consensus).Allows(tip_work + proof * 1000000, now, now));
 
     // A free chain with packed timestamps is refused before it can pass the
     // anti-DoS threshold on a deep fork.
@@ -360,9 +360,9 @@ BOOST_AUTO_TEST_CASE(headers_sync_work_rate)
     BOOST_CHECK(!sync(HeadersWorkRateLimit{active, *fork, consensus}));
 }
 
-// Only forks from more than the given depth below the tip, in the
-// proof-of-stake part of a BLSCT chain, are deep.
-BOOST_AUTO_TEST_CASE(deep_proof_of_stake_fork)
+// Only forks from more than the given depth below the tip of a BLSCT chain
+// are deep, the proof-of-work part included.
+BOOST_AUTO_TEST_CASE(deep_blsct_fork)
 {
     const auto consensus = CreateChainParams(*m_node.args, ChainType::MAIN)->GetConsensus();
     std::vector<std::unique_ptr<CBlockIndex>> store;
@@ -371,14 +371,39 @@ BOOST_AUTO_TEST_CASE(deep_proof_of_stake_fork)
     active.SetTip(*tip);
     const auto branch_from = [&](CBlockIndex* fork) { return AddIndex(store, fork, fork->nTime + 1, fork->nBits); };
 
-    BOOST_CHECK(!IsDeepProofOfStakeFork(active, *tip, consensus, 144));
-    BOOST_CHECK(!IsDeepProofOfStakeFork(active, *branch_from(tip->GetAncestor(tip->nHeight - 144)), consensus, 144));
-    BOOST_CHECK(IsDeepProofOfStakeFork(active, *branch_from(tip->GetAncestor(tip->nHeight - 145)), consensus, 144));
-    // A fork in the proof-of-work part, or on a chain without BLSCT, is not.
-    BOOST_CHECK(!IsDeepProofOfStakeFork(active, *branch_from(tip->GetAncestor(consensus.nLastPOWHeight)), consensus, 144));
+    BOOST_CHECK(!IsDeepBlsctFork(active, *tip, consensus, 144));
+    BOOST_CHECK(!IsDeepBlsctFork(active, *branch_from(tip->GetAncestor(tip->nHeight - 144)), consensus, 144));
+    BOOST_CHECK(IsDeepBlsctFork(active, *branch_from(tip->GetAncestor(tip->nHeight - 145)), consensus, 144));
+    BOOST_CHECK(IsDeepBlsctFork(active, *branch_from(tip->GetAncestor(consensus.nLastPOWHeight)), consensus, 144));
+    BOOST_CHECK(IsDeepBlsctFork(active, *branch_from(tip->GetAncestor(1)), consensus, 144));
+    // A fork on a chain without BLSCT is not.
     auto no_blsct{consensus};
     no_blsct.fBLSCT = false;
-    BOOST_CHECK(!IsDeepProofOfStakeFork(active, *branch_from(tip->GetAncestor(tip->nHeight - 145)), no_blsct, 144));
+    BOOST_CHECK(!IsDeepBlsctFork(active, *branch_from(tip->GetAncestor(tip->nHeight - 145)), no_blsct, 144));
+}
+
+// Mainnet's proof-of-work blocks sit at the proof-of-work limit, so a fork from
+// there is as free as one from the proof-of-stake part, and the deepest
+// available. Free headers built on it are refused by the rate limit, and an
+// inbound peer cannot lead us onto it at all.
+BOOST_AUTO_TEST_CASE(proof_of_work_range_fork)
+{
+    const auto consensus = CreateChainParams(*m_node.args, ChainType::MAIN)->GetConsensus();
+    std::vector<std::unique_ptr<CBlockIndex>> store;
+    CBlockIndex* tip{BuildMainnetLikeChain(store, consensus, 2500)};
+    CChain active;
+    active.SetTip(*tip);
+    const int64_t now{tip->GetBlockTime()};
+    BOOST_REQUIRE_EQUAL(tip->GetAncestor(2)->nBits, UintToArith256(consensus.powLimit).GetCompact());
+
+    for (const int fork_height : {2, consensus.nLastPOWHeight}) {
+        CBlockIndex* fork{tip->GetAncestor(fork_height)};
+        const auto packed{BuildFakeChain(fork, active, consensus, now, [&](int i) { return fork->nTime + i; }, 3000, now + MAX_FUTURE_BLOCK_TIME)};
+        BOOST_REQUIRE_GT(packed.passes_threshold_at, 0);
+        BOOST_CHECK_GT(packed.refused_at, 0);
+        BOOST_CHECK_LT(packed.refused_at, packed.passes_threshold_at);
+        BOOST_CHECK(IsDeepBlsctFork(active, *fork, consensus, 144));
+    }
 }
 
 // What free proof-of-stake headers can do to a mainnet node, with and without

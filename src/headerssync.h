@@ -133,8 +133,9 @@ public:
 
     //! Whether a header chain whose last header has total chain work
     //! `chain_work` and is timestamped `last_time` is allowed at adjusted time
-    //! `now`. Headers built on a block at or below nLastPOWHeight are not
-    //! limited.
+    //! `now`. A fork from the proof-of-work part is limited too: its blocks
+    //! may sit at the proof-of-work limit, as mainnet's do, which makes
+    //! forking there as free as forking later.
     bool Allows(const arith_uint256& chain_work, int64_t last_time, int64_t now) const;
 
     bool IsActive() const { return m_active; }
@@ -150,9 +151,11 @@ private:
 };
 
 /** Whether headers built on `start` fork from `active` more than `depth`
- * blocks below its tip, in the proof-of-stake part of a BLSCT chain. Such
- * headers are free to make, so only a peer we chose may lead us there. */
-bool IsDeepProofOfStakeFork(const CChain& active, const CBlockIndex& start, const Consensus::Params& params, int depth);
+ * blocks below its tip, on a BLSCT chain. Proof-of-stake headers are free to
+ * make, and so are proof-of-work ones at the proof-of-work limit (mainnet's
+ * are), so only a peer we chose may lead us onto such a fork, wherever it
+ * starts. */
+bool IsDeepBlsctFork(const CChain& active, const CBlockIndex& start, const Consensus::Params& params, int depth);
 
 class HeadersSyncState {
 public:
