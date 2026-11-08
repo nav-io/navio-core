@@ -32,8 +32,11 @@ CAmount TxGetChange(const CWallet& wallet, const CTransaction& tx, const TokenId
 //! paid to, which is usually a receive address, so OutputIsChange() does not
 //! see it as change. These recognise such an output: it carries
 //! blsct::COVER_CANDIDATE_MEMO, and pays the same subaddress and the same
-//! amount as one of our coins spent alongside it. A payer can't fake the
-//! match, since it doesn't know our amounts.
+//! amount as one of our coins the same transaction spends. A payer that
+//! knows one of our coins (it paid it to us) can mimic a return only inside a
+//! transaction that also spends that coin, which only an aggregate merging
+//! our served cover does; there it can at most swap which of the two outputs
+//! is listed as the receive, not change any amount.
 //!
 //! Our BLSCT NAV coins `tx` spends, as (subaddress hash id, amount) pairs.
 //! Each cover return found by OutputIsCoverReturn() uses one pair up.
@@ -42,7 +45,7 @@ OwnSpentCoins GetOwnSpentCoins(const CWallet& wallet, const CTransaction& tx) EX
 //! Whether output `txout` of a tx spending `spent` returns one of those coins.
 bool OutputIsCoverReturn(const CWallet& wallet, const CTxOut& txout, const range_proof::RecoveredData<Blst>& recovered, OwnSpentCoins& spent) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 //! The same for an output-storage row, whose transaction the wallet does not
-//! keep: it matches any of our spent coins other than the row itself.
+//! keep: the match is made when the row is synced and stored with it.
 bool OutputIsCoverReturn(const CWallet& wallet, const CWalletOutput& wout) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 
 CAmount CachedTxGetCredit(const CWallet& wallet, const CWalletTx& wtx, const isminefilter& filter, const TokenId& token_id = TokenId())
