@@ -108,7 +108,7 @@ The following can be set when running make: `make FOO=bar`
 - `LOG`: Use file-based logging for individual packages. During a package build its log file
   resides in the `depends` directory, and the log file is printed out automatically in case
   of build error. After successful build log files are moved along with package archives
-- `LTO`: Enable options needed for LTO. Does not add `-flto` related options to *FLAGS.
+- `LTO`: Enable options needed for LTO. Does not add `-flto` related options to \*FLAGS.
 - `NO_HARDEN=1`: Don't use hardening options when building packages
 
 If some packages are not built, for example `make NO_WALLET=1`, the appropriate
@@ -120,7 +120,6 @@ options will be passed to bitcoin's configure. In this case, `--disable-wallet`.
     download-osx: run 'make download-osx' to fetch all sources needed for macOS builds
     download-win: run 'make download-win' to fetch all sources needed for win builds
     download-linux: run 'make download-linux' to fetch all sources needed for linux builds
-
 
 ### Other documentation
 
