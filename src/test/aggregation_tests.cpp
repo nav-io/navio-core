@@ -4,6 +4,7 @@
 
 #include <algorithm>
 
+#include <addresstype.h>
 #include <aggregation/combine.h>
 #include <aggregation/pool.h>
 #include <aggregation/pull.h>
@@ -138,9 +139,10 @@ BOOST_FIXTURE_TEST_CASE(candidate_verifies_with_fee_rule_skipped, TestingSetup)
 
 // Network ingress runs aggregation::CheckCandidate before pooling. Skipping
 // the fee rule must not skip anything else: a non-standard scriptSig, a forged
-// signature, a missing input, an immature coinbase input, an output that
-// already exists in the UTXO set or the mempool, and an input a mempool tx
-// already spends are each rejected.
+// signature, a transparent output or input, sigops in the output or in a
+// P2SH prevout's redeem script, a missing input, an immature coinbase input,
+// an output that already exists in the UTXO set or the mempool, and an input
+// a mempool tx already spends are each rejected.
 BOOST_FIXTURE_TEST_CASE(check_candidate_rejects_invalid, TestingSetup)
 {
     auto wallet = std::make_unique<wallet::CWallet>(m_node.chain.get(), "", wallet::CreateMockableWalletDatabase());
@@ -226,6 +228,24 @@ BOOST_FIXTURE_TEST_CASE(check_candidate_rejects_invalid, TestingSetup)
         CMutableTransaction sigops{*good};
         sigops.vout[0].scriptPubKey << OP_CHECKSIG;
         BOOST_CHECK(!check(CTransaction{sigops}, cache, reason));
+        BOOST_CHECK_EQUAL(reason, "candidate-sigops");
+    }
+
+    // Sigops in a P2SH redeem script: AreInputsStandard skips a confidential
+    // prevout, but GetTransactionSigOpCost still counts the redeem script of
+    // a confidential coin whose scriptPubKey is P2SH.
+    {
+        const CScript redeem{CScript() << OP_CHECKSIG};
+        CCoinsViewCache p2sh{&cache, /*deterministic=*/true};
+        Coin coin = p2sh.AccessCoin(prevout);
+        BOOST_REQUIRE(!coin.IsSpent());
+        BOOST_REQUIRE(coin.out.HasBLSCTRangeProof());
+        p2sh.SpendCoin(prevout);
+        coin.out.scriptPubKey = GetScriptForDestination(ScriptHash(redeem));
+        p2sh.AddCoin(prevout, std::move(coin), /*possible_overwrite=*/false);
+        CMutableTransaction spend{*good};
+        spend.vin[0].scriptSig = CScript() << std::vector<unsigned char>(redeem.begin(), redeem.end());
+        BOOST_CHECK(!check(CTransaction{spend}, p2sh, reason));
         BOOST_CHECK_EQUAL(reason, "candidate-sigops");
     }
 
