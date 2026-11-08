@@ -9,7 +9,6 @@
 #include <dbwrapper.h>
 #include <kernel/chain.h>
 #include <node/miner.h>
-#include <policy/fees.h>
 #include <pow.h>
 #include <util/vector.h>
 #include <validation.h>
