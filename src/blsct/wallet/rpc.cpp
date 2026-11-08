@@ -512,7 +512,7 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
         if (!c.subaddress) {
             ReleaseCandidateInput(COutPoint(c.outpoint.hash));
             ReturnServeBudget(*budget_slot);
-            error = "could not find the candidate coin's subaddress";
+            error = strprintf("could not find the subaddress of candidate coin %s", c.outpoint.hash.GetHex());
             return std::nullopt;
         }
         const blsct::SubAddress self_dest = km->GetSubAddress(*c.subaddress);

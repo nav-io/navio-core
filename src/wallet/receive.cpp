@@ -190,19 +190,7 @@ bool OutputIsCoverReturn(const CWallet& wallet, const CTxOut& txout, const range
 bool OutputIsCoverReturn(const CWallet& wallet, const CWalletOutput& wout)
 {
     AssertLockHeld(wallet.cs_wallet);
-    if (wout.blsctRecoveryData.message != blsct::COVER_CANDIDATE_MEMO) return false;
-    if (!wout.out->tokenId.IsNull() || !wout.out->HasBLSCTKeys()) return false;
-    const auto* blsct_km = wallet.GetBLSCTKeyMan();
-    if (!blsct_km) return false;
-    const CKeyID hash_id = blsct_km->GetHashId(*wout.out);
-    const uint256 self = wout.GetOutputHash();
-    // Only rows that carry the memo get here, so the scan is rare.
-    for (const auto& [outpoint, other] : wallet.mapOutputs) {
-        if (other.GetOutputHash() == self || other.m_spent_by.IsNull()) continue;
-        if (other.blsctRecoveryData.amount != wout.blsctRecoveryData.amount || !other.out->tokenId.IsNull()) continue;
-        if (blsct_km->GetHashId(*other.out) == hash_id) return true;
-    }
-    return false;
+    return wout.fCoverReturn;
 }
 
 CAmount OutputGetChange(const CWallet& wallet, const CTxOut& txout, const TokenId& token_id)

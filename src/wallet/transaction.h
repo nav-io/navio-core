@@ -198,6 +198,10 @@ public:
     bool fBLSCTOutput;          //!< true if the output originally had a BLSCT range proof (survives stripping)
     bool fStakedCommitment;     //!< true if the output is a staked commitment (survives stripping)
     uint256 outputHash;         //!< original output hash before range proof stripping
+    //! Whether this output returns one of our coins that the same transaction
+    //! spent, as a served cover candidate does (see OutputIsCoverReturn()).
+    //! Decided when the output is synced, while its transaction is in hand.
+    bool fCoverReturn;
 
     CWalletOutput(CTxOutRef out, const TxState& state) : out(std::move(out)), m_state(state), m_state_spent(TxStateInactive{})
     {
@@ -213,6 +217,7 @@ public:
         fBLSCTOutput = false;
         fStakedCommitment = false;
         outputHash.SetNull();
+        fCoverReturn = false;
         m_spent_by.SetNull();
         blsctRecoveryData = {};
     }
@@ -247,6 +252,7 @@ public:
         // Spending txid, persisted so a confirmed spend survives DB reloads and
         // can only be cleared by the same transaction (reorg), not a superseded one.
         s << m_spent_by;
+        s << fCoverReturn;
     }
 
     template <typename Stream>
@@ -274,6 +280,11 @@ public:
         // clear the spend) until a rescan repopulates it.
         if (!s.eof()) {
             s >> m_spent_by;
+        }
+        // Backward compatible: older DBs omit fCoverReturn; leave false, so
+        // such a row is listed as a receive.
+        if (!s.eof()) {
+            s >> fCoverReturn;
         }
     }
 

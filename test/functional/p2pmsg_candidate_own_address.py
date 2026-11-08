@@ -13,7 +13,9 @@ pays the producer's same address, and is mined. Afterwards:
 - its history shows the coin it was paid and the new payment, and no send or
   receive for the cover, which a receive address does not make change by
   account. The payment shares the cover's address and transaction, so it
-  must not be taken for the cover coming back.
+  must not be taken for the cover coming back;
+- a later outside payment of the same amount to the same address, carrying
+  the cover memo, is still listed as received.
 
 Run for an output-storage producer and for a full-transaction one.
 """
@@ -87,10 +89,11 @@ class P2PMsgCandidateOwnAddressTest(BitcoinTestFramework):
         assert_equal(Decimal(str(producer.getbalanceforaddress(savings)["mine"]["trusted"])), Decimal("10"))
 
         self.log.info("Serve the producer's coin to node0 as a cover candidate")
+        # Listing drains the queue, so keep what the poll returned.
         keys = []
 
         def got_one():
-            keys.extend(n1.listpendingcandidaterequests())
+            keys[:] = n1.listpendingcandidaterequests()
             return len(keys) > 0
 
         self.wait_until(got_one, timeout=120)
@@ -118,6 +121,19 @@ class P2PMsgCandidateOwnAddressTest(BitcoinTestFramework):
         received = [e for e in entries if e["category"] == "receive"]
         assert_equal(sorted(Decimal(str(e["amount"])) for e in received), [Decimal("1"), Decimal("10")])
         assert_equal({e["label"] for e in received}, {"savings"})
+
+        self.log.info("An outside payment with the cover memo is still listed as received")
+        # The payer knows the amount and address of the coin it paid before,
+        # which the cover has since spent, so only the transaction the coin
+        # was spent in may make a match.
+        self.funder.sendtoblsctaddress(savings, 10, "candidate")
+        self.wait_until(lambda: len(n1.getrawmempool()) == 1, timeout=60)
+        self.mine(n1, self.funder_addr, 1)
+        self.wait_until(lambda: Decimal(str(producer.getblsctbalance())) == Decimal("21"), timeout=60)
+        entries = producer.listtransactions("*", 1000)
+        received = [e for e in entries if e["category"] == "receive"]
+        assert_equal(sorted(Decimal(str(e["amount"])) for e in received), [Decimal("1"), Decimal("10"), Decimal("10")])
+        assert_equal([e.get("memo") for e in received if e.get("memo") == "candidate"], ["candidate"])
 
 
 if __name__ == "__main__":
