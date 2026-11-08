@@ -40,6 +40,17 @@ const blst_scalar& ZeroScalar()
     return z;
 }
 
+// Compare the canonical big-endian encodings, wiping both copies.
+int CompareEncodings(const BlstScalar& a, const BlstScalar& b)
+{
+    auto a_vch = a.GetVch();
+    auto b_vch = b.GetVch();
+    const int cmp{std::memcmp(a_vch.data(), b_vch.data(), BlstScalar::SERIALIZATION_SIZE)};
+    memory_cleanse(a_vch.data(), a_vch.size());
+    memory_cleanse(b_vch.data(), b_vch.size());
+    return cmp;
+}
+
 // Fill `buf` with OS entropy. The full node uses random.cpp's GetRandBytes;
 // the standalone libblsct.a does not carry random.cpp (it needs the whole
 // util layer), and the mcl backend it replaced brought its own CSPRNG, so
@@ -208,6 +219,9 @@ BlstScalar BlstScalar::ApplyBitwiseOp(const BlstScalar& a, const BlstScalar& b,
         c_vec[i] = op(longer[i], 0);
     }
     ret.SetVch(c_vec);
+    memory_cleanse(a_vec.data(), a_vec.size());
+    memory_cleanse(b_vec.data(), b_vec.size());
+    memory_cleanse(c_vec.data(), c_vec.size());
     return ret;
 }
 
@@ -293,12 +307,12 @@ bool BlstScalar::operator!=(const BlstScalar& b) const
 
 bool BlstScalar::operator<(const BlstScalar& b) const
 {
-    return std::memcmp(&(GetVch()[0]), &(b.GetVch()[0]), SERIALIZATION_SIZE) < 0;
+    return CompareEncodings(*this, b) < 0;
 }
 
 bool BlstScalar::operator>(const BlstScalar& b) const
 {
-    return std::memcmp(&(GetVch()[0]), &(b.GetVch()[0]), SERIALIZATION_SIZE) > 0;
+    return CompareEncodings(*this, b) > 0;
 }
 
 const BlstScalar::Underlying& BlstScalar::GetUnderlying() const
@@ -390,6 +404,7 @@ uint64_t BlstScalar::GetUint64() const
     for (auto i = 0; i < 8; ++i) {
         ret |= (uint64_t)vch[vch.size() - 1 - i] << i * 8;
     }
+    memory_cleanse(vch.data(), vch.size());
     return ret;
 }
 
@@ -400,7 +415,9 @@ std::vector<uint8_t> BlstScalar::GetVch(const bool trim_preceeding_zeros) const
     blst_bendian_from_scalar(vec.data(), &s);
     memory_cleanse(&s, sizeof(s));
     if (trim_preceeding_zeros) {
-        vec = blsct::Common::TrimPreceedingZeros<uint8_t>(vec);
+        auto trimmed = blsct::Common::TrimPreceedingZeros<uint8_t>(vec);
+        memory_cleanse(vec.data(), vec.size());
+        return trimmed;
     }
     return vec;
 }
@@ -439,7 +456,9 @@ uint256 BlstScalar::GetHashWithSalt(const uint64_t& salt) const
 std::string BlstScalar::GetString(const int8_t& radix) const
 {
     auto be = GetVch();
-    return blst_arith::BytesToRadixString(be.data(), be.size(), radix);
+    auto str = blst_arith::BytesToRadixString(be.data(), be.size(), radix);
+    memory_cleanse(be.data(), be.size());
+    return str;
 }
 
 std::vector<bool> BlstScalar::ToBinaryVec() const
@@ -450,6 +469,7 @@ std::vector<bool> BlstScalar::ToBinaryVec() const
     for (auto& c : bitStr) {
         vec.push_back(c == '0' ? 0 : 1);
     }
+    memory_cleanse(bitStr.data(), bitStr.size());
     return vec;
 }
 
@@ -460,5 +480,7 @@ bool BlstScalar::GetSeriBit(const uint8_t& n) const
     const uint8_t vchIdx = 31 - n / 8;
     const uint8_t bitIdx = n % 8;
     const uint8_t mask = 1 << bitIdx;
-    return (vch[vchIdx] & mask) != 0;
+    const bool bit{(vch[vchIdx] & mask) != 0};
+    memory_cleanse(vch.data(), vch.size());
+    return bit;
 }

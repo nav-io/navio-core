@@ -37,14 +37,10 @@ template <typename T>
 std::vector<T> blsct::Common::TrimPreceedingZeros(
     const std::vector<T>& vec
 ) {
-    std::vector<T> trimmed_vec;
-
-    bool should_take = false;
-    for (auto x : vec) {
-        if (!should_take && x) should_take = true;
-        if (should_take) trimmed_vec.push_back(x);
-    }
-    return trimmed_vec;
+    // One allocation of the final size: growing the result element by element
+    // would free partial copies of a possibly secret value along the way.
+    const auto first = std::find_if(vec.begin(), vec.end(), [](const T& x) { return static_cast<bool>(x); });
+    return std::vector<T>(first, vec.end());
 }
 template
 std::vector<bool> blsct::Common::TrimPreceedingZeros(const std::vector<bool>&);

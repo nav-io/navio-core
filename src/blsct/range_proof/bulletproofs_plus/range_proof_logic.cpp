@@ -463,8 +463,8 @@ bool RangeProofLogic<T>::VerifyProofs(
         // Compute: z^2 * 1, ..., z^2 * 2^n-1, z^4 * 1, ..., z^4 * 2^n-1, z^6 * 1, ...
         Scalars z_times_two_pows;
         {
-            for (auto z_pow : z_asc_by_2_pows.m_vec) {
-                for (auto two_pow : two_pows.m_vec) {
+            for (const auto& z_pow : z_asc_by_2_pows.m_vec) {
+                for (const auto& two_pow : two_pows.m_vec) {
                     z_times_two_pows.Add(z_pow * two_pow);
                 }
             }
@@ -512,7 +512,7 @@ bool RangeProofLogic<T>::VerifyProofs(
 
         Scalars vs_exp;
         {
-            for (auto x : z_asc_by_2_pows.m_vec) {
+            for (const auto& x : z_asc_by_2_pows.m_vec) {
                 vs_exp.Add(x * y_to_mn_plus_1);
             }
         }
