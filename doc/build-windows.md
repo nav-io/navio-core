@@ -1,29 +1,34 @@
-WINDOWS BUILD NOTES
-====================
+# WINDOWS BUILD NOTES
 
 Below are some notes on how to build Navio Core for Windows.
 
 The options known to work for building Navio Core on Windows are:
 
-* On Linux, using the [Mingw-w64](https://www.mingw-w64.org/) cross compiler tool chain.
-* On Windows, using [Windows Subsystem for Linux (WSL)](https://learn.microsoft.com/en-us/windows/wsl/about) and Mingw-w64.
-* On Windows, using [Microsoft Visual Studio](https://visualstudio.microsoft.com). See [README.md](/build_msvc/README.md).
+- On Linux, using the [Mingw-w64](https://www.mingw-w64.org/) cross compiler
+  tool chain.
+- On Windows, using
+  [Windows Subsystem for Linux (WSL)](https://learn.microsoft.com/en-us/windows/wsl/about)
+  and Mingw-w64.
+- On Windows, using
+  [Microsoft Visual Studio](https://visualstudio.microsoft.com). See
+  [README.md](/build_msvc/README.md).
 
-Other options which may work, but which have not been extensively tested are (please contribute instructions):
+Other options which may work, but which have not been extensively tested are
+(please contribute instructions):
 
-* On Windows, using a POSIX compatibility layer application such as [cygwin](https://www.cygwin.com/) or [msys2](https://www.msys2.org/).
+- On Windows, using a POSIX compatibility layer application such as
+  [cygwin](https://www.cygwin.com/) or [msys2](https://www.msys2.org/).
 
-Installing Windows Subsystem for Linux
----------------------------------------
+## Installing Windows Subsystem for Linux
 
-Follow the upstream installation instructions, available [here](https://learn.microsoft.com/en-us/windows/wsl/install).
+Follow the upstream installation instructions, available
+[here](https://learn.microsoft.com/en-us/windows/wsl/install).
 
-Cross-compilation for Ubuntu and Windows Subsystem for Linux
-------------------------------------------------------------
+## Cross-compilation for Ubuntu and Windows Subsystem for Linux
 
-The steps below can be performed on Ubuntu or WSL. The depends system
-will also work on other Linux distributions, however the commands for
-installing the toolchain will be different.
+The steps below can be performed on Ubuntu or WSL. The depends system will also
+work on other Linux distributions, however the commands for installing the
+toolchain will be different.
 
 First, install the general dependencies:
 
@@ -36,7 +41,8 @@ packages need to build host utilities that are used in the build process.
 
 See [dependencies.md](dependencies.md) for a complete overview.
 
-If you want to build the windows installer you need [NSIS](https://nsis.sourceforge.io/Main_Page):
+If you want to build the windows installer you need
+[NSIS](https://nsis.sourceforge.io/Main_Page):
 
     sudo apt install nsis
 
@@ -55,9 +61,10 @@ sudo apt install g++-mingw-w64-x86-64-posix
 
 Once the toolchain is installed the build steps are common:
 
-Note that for WSL the Navio Core source path MUST be somewhere in the default mount file system, for
-example /usr/src/navio-core, AND not under /mnt/d/. If this is not the case the build may fail.
-This means you cannot use a directory that is located directly on the host Windows file system to perform the build.
+Note that for WSL the Navio Core source path MUST be somewhere in the default
+mount file system, for example /usr/src/navio-core, AND not under /mnt/d/. If
+this is not the case the build may fail. This means you cannot use a directory
+that is located directly on the host Windows file system to perform the build.
 
 Build using:
 
@@ -72,10 +79,10 @@ Build using:
 
 ## Depends system
 
-For further documentation on the depends system see [README.md](../depends/README.md) in the depends directory.
+For further documentation on the depends system see
+[README.md](../depends/README.md) in the depends directory.
 
-Installation
--------------
+## Installation
 
 After building using the Windows subsystem it can be useful to copy the compiled
 executables to a directory on the Windows drive in the same directory structure
