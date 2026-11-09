@@ -4,8 +4,8 @@
 
 - [General](#general)
   - [Cache compilations with `ccache`](#cache-compilations-with-ccache)
-  - [Disable features with `./configure`](#disable-features-with-configure)
-  - [Make use of your threads with `make -j`](#make-use-of-your-threads-with-make--j)
+  - [Disable features with CMake options](#disable-features-with-cmake-options)
+  - [Make use of your threads with `cmake --build -j`](#make-use-of-your-threads-with-cmake---build--j)
   - [Only build what you need](#only-build-what-you-need)
   - [Compile on multiple machines](#compile-on-multiple-machines)
   - [Multiple working directories with `git worktrees`](#multiple-working-directories-with-git-worktrees)
@@ -31,8 +31,9 @@ to do so, from its description at the time of writing:
 > of previous compilations and detecting when the same compilation is being done
 > again. Supported languages are C, C++, Objective-C and Objective-C++.
 
-Install `ccache` through your distribution's package manager, and run
-`./configure` with your normal flags to pick it up.
+Install `ccache` through your distribution's package manager. The `WITH_CCACHE`
+CMake option is `ON` by default, so CMake picks `ccache` up automatically when
+it finds it; pass `-DWITH_CCACHE=OFF` to opt out.
 
 To use ccache for all your C/C++ projects, follow the symlinks method
 [here](https://ccache.samba.org/manual/latest.html#_run_modes) to set it up.
@@ -217,7 +218,7 @@ section to your `.git/config` file:
 ```
 [remote "upstream-pull"]
         fetch = +refs/pull/*/head:refs/remotes/upstream-pull/*
-        url = git@github.com:bitcoin/bitcoin.git
+        url = git@github.com:nav-io/navio-core.git
 ```
 
 This will add an `upstream-pull` remote to your git repository, which can be
