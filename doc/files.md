@@ -40,7 +40,6 @@ stored.
 | ------------------------------ | ----------------------------- |
 | `-chain=main` (default)        | _path_to_datadir_`/`          |
 | `-chain=test` or `-testnet`    | _path_to_datadir_`/testnet3/` |
-| `-chain=signet` or `-signet`   | _path_to_datadir_`/signet/`   |
 | `-chain=regtest` or `-regtest` | _path_to_datadir_`/regtest/`  |
 
 ## Data directory layout

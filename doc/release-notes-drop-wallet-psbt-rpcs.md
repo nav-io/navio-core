@@ -28,5 +28,4 @@
 
 - The signet miner (`contrib/signet/miner`) has been removed. It signed each
   block's signet challenge through `walletprocesspsbt`, and Navio's BLSCT chains
-  are produced by staking, not by this tool. `contrib/signet/getcoins.py`
-  remains.
+  are produced by staking, not by this tool.

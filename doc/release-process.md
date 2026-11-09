@@ -41,8 +41,8 @@ fingerprint in the top-level README and https://nav.io/releases.asc together.
   `src/chainparamsseeds.h` as the [seeds README](/contrib/seeds/README.md)
   describes.
 - Update the following variables in
-  [`src/kernel/chainparams.cpp`](/src/kernel/chainparams.cpp) for mainnet,
-  testnet, and signet:
+  [`src/kernel/chainparams.cpp`](/src/kernel/chainparams.cpp) for mainnet and
+  testnet:
   - `m_assumed_blockchain_size` and `m_assumed_chain_state_size` with the
     current size plus some overhead (see
     [this](#how-to-calculate-assumed-blockchain-and-chain-state-size) for
@@ -361,17 +361,15 @@ on top of its base value.
 To calculate `m_assumed_blockchain_size`, take the size in GiB of these
 directories:
 
-- For `mainnet` -> the data directory, excluding the `/testnet3`, `/signet`, and
-  `/regtest` directories and any overly large files, e.g. a huge `debug.log`
+- For `mainnet` -> the data directory, excluding the `/testnet3` and `/regtest`
+  directories and any overly large files, e.g. a huge `debug.log`
 - For `testnet` -> `/testnet3`
-- For `signet` -> `/signet`
 
 To calculate `m_assumed_chain_state_size`, take the size in GiB of these
 directories:
 
 - For `mainnet` -> `/chainstate`
 - For `testnet` -> `/testnet3/chainstate`
-- For `signet` -> `/signet/chainstate`
 
 Notes:
 

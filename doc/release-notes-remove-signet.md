@@ -8,3 +8,4 @@
   unrecognized section.
 - `getblocktemplate` no longer accepts or reports the `signet` rule and no
   longer returns the `signet_challenge` field.
+- `contrib/signet/getcoins.py` has been removed.

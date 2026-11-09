@@ -197,9 +197,6 @@ BIPs that are implemented by Bitcoin Core:
   The v2 transport protocol specified by BIP324 and the associated `NODE_P2P_V2`
   service bit are supported as of **v26.0**, but off by default
   ([PR 28331](https://github.com/bitcoin/bitcoin/pull/28331)).
-- [`BIP 325`](https://github.com/bitcoin/bips/blob/master/bip-0325.mediawiki):
-  Signet test network is supported as of **v0.21.0**
-  ([PR 18267](https://github.com/bitcoin/bitcoin/pull/18267)).
 - [`BIP 339`](https://github.com/bitcoin/bips/blob/master/bip-0339.mediawiki):
   Relay of transactions by wtxid is supported as of **v0.21.0**
   ([PR 18044](https://github.com/bitcoin/bitcoin/pull/18044)).

@@ -3,8 +3,8 @@
 The REST API can be enabled with the `-rest` option.
 
 The interface runs on the same port as the JSON-RPC interface, by default port
-48471 for mainnet, port 33677 for testnet, port 48487 for signet, port 48486 for
-regtest and port 48484 for blsctregtest.
+48471 for mainnet, port 33677 for testnet, port 48486 for regtest and port 48484
+for blsctregtest.
 
 ## REST Interface consistency guarantees
 

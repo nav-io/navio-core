@@ -46,7 +46,7 @@ Comments may appear in two ways:
 Network specific options can be:
 
 - placed into sections with headers `[main]` (not `[mainnet]`), `[test]` (not
-  `[testnet]`), `[signet]` or `[regtest]`;
+  `[testnet]`), `[regtest]` or `[blsctregtest]`;
 - prefixed with a chain name; e.g., `regtest.maxmempool=100`.
 
 Network specific options take precedence over non-network specific options. If
