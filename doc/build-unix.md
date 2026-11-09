@@ -1,11 +1,10 @@
-UNIX BUILD NOTES
-====================
+# UNIX BUILD NOTES
+
 Some notes on how to build Navio Core in Unix.
 
 (For BSD specific instructions, see `build-*bsd.md` in this directory.)
 
-To Build
----------------------
+## To Build
 
 ```bash
 cmake -B build -G Ninja
@@ -14,7 +13,8 @@ ctest --test-dir build        # optional: run unit tests
 cmake --install build         # optional: install to system prefix
 ```
 
-See below for [Linux distribution-specific instructions](#linux-distribution-specific-instructions),
+See below for
+[Linux distribution-specific instructions](#linux-distribution-specific-instructions),
 or the [dependencies](#dependencies) section for a complete overview.
 
 ## Memory Requirements
@@ -44,8 +44,8 @@ Build requirements:
 
     sudo apt-get install build-essential cmake ninja-build pkgconf python3
 
-Now, you can either build from self-compiled [depends](#dependencies) or
-install the required dependencies:
+Now, you can either build from self-compiled [depends](#dependencies) or install
+the required dependencies:
 
     sudo apt-get install libevent-dev libboost-dev
 
@@ -53,7 +53,7 @@ SQLite is required for the descriptor wallet:
 
     sudo apt install libsqlite3-dev
 
-To build without wallet, see [*Disable-wallet mode*](#disable-wallet-mode).
+To build without wallet, see [_Disable-wallet mode_](#disable-wallet-mode).
 
 ZMQ dependencies (provides ZMQ API):
 
@@ -71,8 +71,8 @@ Build requirements:
 
     sudo dnf install gcc-c++ cmake ninja-build pkgconf python3
 
-Now, you can either build from self-compiled [depends](#dependencies) or
-install the required dependencies:
+Now, you can either build from self-compiled [depends](#dependencies) or install
+the required dependencies:
 
     sudo dnf install libevent-devel boost-devel
 
@@ -80,7 +80,7 @@ SQLite is required for the descriptor wallet:
 
     sudo dnf install sqlite-devel
 
-To build without wallet, see [*Disable-wallet mode*](#disable-wallet-mode).
+To build without wallet, see [_Disable-wallet mode_](#disable-wallet-mode).
 
 ZMQ dependencies (provides ZMQ API):
 
@@ -96,8 +96,8 @@ See [dependencies.md](dependencies.md) for a complete overview, and
 [depends](/depends/README.md) on how to compile them yourself, if you wish to
 not use the packages of your Linux distribution.
 
-Disable-wallet mode
---------------------
+## Disable-wallet mode
+
 When the intention is to only run a P2P node, without a wallet, Navio Core can
 be compiled in disable-wallet mode:
 
@@ -108,14 +108,14 @@ In this case there is no dependency on SQLite.
 Mining is also possible in disable-wallet mode using the `getblocktemplate` RPC
 call.
 
-Additional CMake Options
---------------------------
+## Additional CMake Options
+
 A list of available CMake options can be displayed with:
 
     cmake -B build -LH
 
-Setup and Build Example: Arch Linux
------------------------------------
+## Setup and Build Example: Arch Linux
+
 This example lists the steps necessary to setup and build a command line only
 distribution of the latest changes on Arch Linux:
 
