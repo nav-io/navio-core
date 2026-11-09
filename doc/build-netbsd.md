@@ -2,8 +2,7 @@
 
 Updated for NetBSD [9.2](https://netbsd.org/releases/formal-9/NetBSD-9.2.html).
 
-This guide describes how to build naviod, command-line utilities, and GUI on
-NetBSD.
+This guide describes how to build naviod and command-line utilities on NetBSD.
 
 ## Preparation
 
@@ -19,20 +18,22 @@ pkgin install boost cmake git libevent ninja-build pkgconf
 ```
 
 NetBSD currently ships with an older version of `gcc` than is needed to build.
-You should upgrade your `gcc` and then pass this new version to CMake.
+Navio Core requires a compiler with C++20 support (see
+[dependencies.md](dependencies.md) for the minimum versions). You should upgrade
+your `gcc` and then pass this new version to CMake.
 
-For example, grab `gcc9`:
+For example, grab `gcc12`:
 
 ```
-pkgin install gcc9
+pkgin install gcc12
 ```
 
 Then, when configuring, pass the following:
 
 ```bash
 cmake -B build -G Ninja \
-    -DCMAKE_C_COMPILER=/usr/pkg/gcc9/bin/gcc \
-    -DCMAKE_CXX_COMPILER=/usr/pkg/gcc9/bin/g++
+    -DCMAKE_C_COMPILER=/usr/pkg/gcc12/bin/gcc \
+    -DCMAKE_CXX_COMPILER=/usr/pkg/gcc12/bin/g++
 ```
 
 See [dependencies.md](dependencies.md) for a complete overview.
@@ -50,49 +51,24 @@ git clone https://github.com/nav-io/navio-core.git
 
 #### Wallet Dependencies
 
-It is not necessary to build wallet functionality to run naviod or the GUI.
+It is not necessary to build wallet functionality to run naviod.
 
-###### Descriptor Wallet Support
+###### Wallet Support
 
-`sqlite3` is required to enable support for
-[descriptor wallets](https://github.com/bitcoin/bitcoin/blob/master/doc/descriptors.md).
+`sqlite3` is required to build the wallet (`-DENABLE_WALLET=ON`, the default).
 
 ```bash
 pkgin install sqlite3
 ```
 
-###### Legacy Wallet Support
-
-`db4` is required to enable support for legacy wallets.
-
-```bash
-pkgin install db4
-```
-
-#### GUI Dependencies
-
-Navio Core includes a GUI built with the cross-platform Qt Framework. To compile
-the GUI, we need to install `qt5`.
-
-```bash
-pkgin install qt5
-```
-
-The GUI can encode addresses in a QR Code. To build in QR support for the GUI,
-install `qrencode`.
-
-```bash
-pkgin install qrencode
-```
-
 #### Test Suite Dependencies
 
 There is an included test suite that is useful for testing code changes when
-developing. To run the test suite (recommended), you will need to have Python 3
-installed:
+developing. To run the test suite (recommended), you will need to have Python
+3.10 or newer installed, for example:
 
 ```bash
-pkgin install python37
+pkgin install python311
 ```
 
 ### Building Navio Core
@@ -100,7 +76,7 @@ pkgin install python37
 ### 1. Configuration
 
 There are many ways to configure Navio Core. Here is an example that explicitly
-disables the wallet and GUI:
+disables the wallet:
 
 ```bash
 cmake -B build -G Ninja -DENABLE_WALLET=OFF \
