@@ -4,12 +4,8 @@
 
 ### 1.1 Creating the Wallet
 
-Since version 0.21, Bitcoin Core no longer has a default wallet. Wallets can be
-created with the `createwallet` RPC or with the `Create wallet` GUI menu item.
-
-In the GUI, the `Create a new wallet` button is displayed on the main screen
-when there is no wallet loaded. Alternatively, there is the option `File`
-->`Create wallet`.
+Navio does not create a default wallet. Wallets can be created with the
+`createwallet` RPC.
 
 The following command, for example, creates a BLSCT wallet, navio's default and
 standard wallet type. Pass `blsct=false` to create a descriptor wallet instead.
@@ -24,11 +20,11 @@ By default, wallets are created in the `wallets` folder of the data directory,
 which varies by operating system, as shown below. The user can change the
 default by using the `-datadir` or `-walletdir` initialization parameters.
 
-| Operating System | Default wallet directory                                    |
-| ---------------- | :---------------------------------------------------------- |
-| Linux            | `/home/<user>/.bitcoin/wallets`                             |
-| Windows          | `C:\Users\<user>\AppData\Roaming\Bitcoin\wallets`           |
-| macOS            | `/Users/<user>/Library/Application Support/Bitcoin/wallets` |
+| Operating System | Default wallet directory                                  |
+| ---------------- | :-------------------------------------------------------- |
+| Linux            | `/home/<user>/.navio/wallets`                             |
+| Windows          | `C:\Users\<user>\AppData\Roaming\Navio\wallets`           |
+| macOS            | `/Users/<user>/Library/Application Support/Navio/wallets` |
 
 ### 1.2 Encrypting the Wallet
 
@@ -46,7 +42,7 @@ user's machine.
 
 After encrypting the wallet or changing the passphrase, a new backup needs to be
 created immediately. The reason is that the keypool is flushed and a new HD seed
-is generated after encryption. Any bitcoins received by the new seed cannot be
+is generated after encryption. Any coins received by the new seed cannot be
 recovered from the previous backups.
 
 The wallet's private key may be encrypted with the following command:
@@ -80,10 +76,10 @@ lost forever.
 ### 1.3 Unlocking the Wallet
 
 If the wallet is encrypted and the user tries any operation related to private
-keys, such as sending bitcoins, an error message will be displayed.
+keys, such as sending coins, an error message will be displayed.
 
 ```
-$ navio-cli -rpcwallet="wallet-01" sendtoaddress "tb1qw508d6qejxtdg4y5r3zarvary0c5xw7kxpjzsx" 0.01
+$ navio-cli -rpcwallet="wallet-01" sendtoblsctaddress "<blsct address>" 0.01
 error code: -13
 error message:
 Error: Please enter the wallet passphrase with walletpassphrase first.
@@ -100,27 +96,18 @@ memory. After this period expires, the user needs to execute this RPC again.
 $ navio-cli -rpcwallet="wallet-01" walletpassphrase "passphrase" 120
 ```
 
-In the GUI, there is no specific menu item to unlock the wallet. When the user
-sends bitcoins, the passphrase will be prompted automatically.
-
 ### 1.4 Backing Up the Wallet
 
-To backup the wallet, the `backupwallet` RPC or the `Backup Wallet` GUI menu
-item must be used to ensure the file is in a safe state when the copy is made.
+To backup the wallet, the `backupwallet` RPC must be used to ensure the file is
+in a safe state when the copy is made.
 
 In the RPC, the destination parameter must include the name of the file.
 Otherwise, the command will return an error message like "Error: Wallet backup
-failed!" for descriptor wallets. If it is a legacy wallet, it will be copied and
-a file will be created with the default file name `wallet.dat`.
+failed!".
 
 ```
 $ navio-cli -rpcwallet="wallet-01" backupwallet /home/node01/Backups/backup-01.dat
 ```
-
-In the GUI, the wallet is selected in the `Wallet` drop-down list in the upper
-right corner. If this list is not present, the wallet can be loaded in `File`
-->`Open Wallet` if necessary. Then, the backup can be done in `File` ->
-`Backup Wallet…`.
 
 This backup file can be stored on one or multiple offline devices, which must be
 reliable enough to work in an emergency and be malware free. Backup files can be
@@ -130,8 +117,8 @@ If the computer has malware, it can compromise the wallet when recovering the
 backup file. One way to minimize this is to not connect the backup to an online
 device.
 
-If both the wallet and all backups are lost for any reason, the bitcoins related
-to this wallet will become permanently inaccessible.
+If both the wallet and all backups are lost for any reason, the coins related to
+this wallet will become permanently inaccessible.
 
 ### 1.5 Backup Frequency
 
@@ -153,14 +140,9 @@ significant number of new transactions to maintain the metadata, such as labels.
 Metadata cannot be retrieved from a blockchain rescan, so if the backup is too
 old, the metadata will be lost forever.
 
-Wallets created before version 0.13 are not HD and must be backed up every 100
-keys used since the previous backup, or even more often to maintain the
-metadata.
-
 ### 1.6 Restoring the Wallet From a Backup
 
-To restore a wallet, the `restorewallet` RPC or the `Restore Wallet` GUI menu
-item (`File` -> `Restore Wallet…`) must be used.
+To restore a wallet, the `restorewallet` RPC must be used.
 
 ```
 $ navio-cli restorewallet "restored-wallet" /home/node01/Backups/backup-01.dat
@@ -172,36 +154,3 @@ restored.
 ```
 $ navio-cli -rpcwallet="restored-wallet" getwalletinfo
 ```
-
-The restored wallet can also be loaded in the GUI via `File` ->`Open wallet`.
-
-## Migrating Legacy Wallets to Descriptor Wallets
-
-Legacy wallets (traditional non-descriptor wallets) can be migrated to become
-Descriptor wallets through the use of the `migratewallet` RPC. Migrated wallets
-will have all of their addresses and private keys added to a newly created
-Descriptor wallet that has the same name as the original wallet. Because
-Descriptor wallets do not support having private keys and watch-only scripts,
-there may be up to two additional wallets created after migration. In addition
-to a descriptor wallet of the same name, there may also be a wallet named
-`<name>_watchonly` and `<name>_solvables`. `<name>_watchonly` contains all of
-the watchonly scripts. `<name>_solvables` contains any scripts which the wallet
-knows but is not watching the corresponding P2(W)SH scripts.
-
-Migrated wallets will also generate new addresses differently. While the same
-BIP 32 seed will be used, the BIP 44, 49, 84, and 86 standard derivation paths
-will be used. After migrating, a new backup of the wallet(s) will need to be
-created.
-
-Given that there is an extremely large number of possible configurations for the
-scripts that Legacy wallets can know about, be watching for, and be able to sign
-for, `migratewallet` only makes a best effort attempt to capture all of these
-things into Descriptor wallets. There may be unforeseen configurations which
-result in some scripts being excluded. If a migration fails unexpectedly or
-otherwise misses any scripts, please create an issue on GitHub. A backup of the
-original wallet can be found in the wallet directory with the name
-`<name>-<timestamp>.legacy.bak`.
-
-The backup can be restored using the methods discussed in the
-[Restoring the Wallet From a Backup](#16-restoring-the-wallet-from-a-backup)
-section.
