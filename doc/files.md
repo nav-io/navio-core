@@ -1,4 +1,4 @@
-# Bitcoin Core file system
+# Navio file system
 
 **Contents**
 
@@ -8,122 +8,95 @@
 
 - [Multi-wallet environment](#multi-wallet-environment)
 
-  - [Berkeley DB database based wallets](#berkeley-db-database-based-wallets)
-
-  - [SQLite database based wallets](#sqlite-database-based-wallets)
-
-- [GUI settings](#gui-settings)
-
-- [Legacy subdirectories and files](#legacy-subdirectories-and-files)
-
 - [Notes](#notes)
 
 ## Data directory location
 
-The data directory is the default location where the Bitcoin Core files are stored.
+The data directory is the default location where the Navio files are stored.
 
 1. The default data directory paths for supported platforms are:
 
-Platform | Data directory path
----------|--------------------
-Linux    | `$HOME/.bitcoin/`
-macOS    | `$HOME/Library/Application Support/Bitcoin/`
-Windows  | `%APPDATA%\Bitcoin\` <sup>[\[1\]](#note1)</sup>
+| Platform | Data directory path                           |
+| -------- | --------------------------------------------- |
+| Linux    | `$HOME/.navio/`                               |
+| macOS    | `$HOME/Library/Application Support/Navio/`    |
+| Windows  | `%APPDATA%\Navio\` <sup>[\[1\]](#note1)</sup> |
 
 2. A custom data directory path can be specified with the `-datadir` option.
 
-3. All content of the data directory, except for `navio.conf` file, is chain-specific. This means the actual data directory paths for non-mainnet cases differ:
+3. All content of the data directory, except for `navio.conf` file, is
+   chain-specific. This means the actual data directory paths for non-mainnet
+   cases differ:
 
-Chain option                   | Data directory path
--------------------------------|------------------------------
-`-chain=main` (default)        | *path_to_datadir*`/`
-`-chain=test` or `-testnet`    | *path_to_datadir*`/testnet3/`
-`-chain=signet` or `-signet`   | *path_to_datadir*`/signet/`
-`-chain=regtest` or `-regtest` | *path_to_datadir*`/regtest/`
+| Chain option                             | Data directory path               |
+| ---------------------------------------- | --------------------------------- |
+| `-chain=main` (default)                  | _path_to_datadir_`/`              |
+| `-chain=test` or `-testnet`              | _path_to_datadir_`/testnet7/`     |
+| `-chain=signet` or `-signet`             | _path_to_datadir_`/signet/`       |
+| `-chain=regtest` or `-regtest`           | _path_to_datadir_`/regtest/`      |
+| `-chain=blsctregtest` or `-blsctregtest` | _path_to_datadir_`/blsctregtest/` |
 
 ## Data directory layout
 
-Subdirectory       | File(s)               | Description
--------------------|-----------------------|------------
-`blocks/`          |                       | Blocks directory; can be specified by `-blocksdir` option (except for `blocks/index/`)
-`blocks/index/`    | LevelDB database      | Block index; `-blocksdir` option does not affect this path
-`blocks/`          | `blkNNNNN.dat`<sup>[\[2\]](#note2)</sup> | Actual Bitcoin blocks (in network format, dumped in raw on disk, 128 MiB per file)
-`blocks/`          | `revNNNNN.dat`<sup>[\[2\]](#note2)</sup> | Block undo data (custom format)
-`chainstate/`      | LevelDB database      | Blockchain state (a compact representation of all currently unspent transaction outputs (UTXOs) and metadata about the transactions they are from)
-`indexes/txindex/` | LevelDB database      | Transaction index; *optional*, used if `-txindex=1`
-`indexes/outindex/` | LevelDB database     | Output index; *optional*, used if `-outindex=1`
-`indexes/blockfilter/basic/db/` | LevelDB database      | Blockfilter index LevelDB database for the basic filtertype; *optional*, used if `-blockfilterindex=basic`
-`indexes/blockfilter/basic/`    | `fltrNNNNN.dat`<sup>[\[2\]](#note2)</sup> | Blockfilter index filters for the basic filtertype; *optional*, used if `-blockfilterindex=basic`
-`indexes/coinstats/db/` | LevelDB database | Coinstats index; *optional*, used if `-coinstatsindex=1`
-`wallets/`         |                       | [Contains wallets](#multi-wallet-environment); can be specified by `-walletdir` option; if `wallets/` subdirectory does not exist, wallets reside in the [data directory](#data-directory-location)
-`./`               | `anchors.dat`         | Anchor IP address database, created on shutdown and deleted at startup. Anchors are last known outgoing block-relay-only peers that are tried to re-connect to on startup
-`./`               | `banlist.json`        | Stores the addresses/subnets of banned nodes.
-`./`               | `navio.conf`        | User-defined [configuration settings](bitcoin-conf.md) for `naviod` or `navio-qt`. File is not written to by the software and must be created manually. Path can be specified by `-conf` option
-`./`               | `naviod.pid`        | Stores the process ID (PID) of `naviod` or `navio-qt` while running; created at start and deleted on shutdown; can be specified by `-pid` option
-`./`               | `debug.log`           | Contains debug information and general logging generated by `naviod` or `navio-qt`; can be specified by `-debuglogfile` option
-`./`               | `fee_estimates.dat`   | Stores statistics used to estimate minimum transaction fees required for confirmation
-`./`               | `guisettings.ini.bak` | Backup of former [GUI settings](#gui-settings) after `-resetguisettings` option is used
-`./`               | `ip_asn.map`          | IP addresses to Autonomous System Numbers (ASNs) mapping used for bucketing of the peers; path can be specified with the `-asmap` option
-`./`               | `mempool.dat`         | Dump of the mempool's transactions
-`./`               | `onion_v3_private_key` | Cached Tor onion service private key for `-listenonion` option
-`./`               | `i2p_private_key`     | Private key that corresponds to our I2P address. When `-i2psam=` is specified the contents of this file is used to identify ourselves for making outgoing connections to I2P peers and possibly accepting incoming ones. Automatically generated if it does not exist.
-`./`               | `peers.dat`           | Peer IP address database (custom format)
-`./`               | `settings.json`       | Read-write settings set through GUI or RPC interfaces, augmenting manual settings from [navio.conf](bitcoin-conf.md). File is created automatically if read-write settings storage is not disabled with `-nosettings` option. Path can be specified with `-settings` option
-`./`               | `.cookie`             | Session RPC authentication cookie; if used, created at start and deleted on shutdown; can be specified by `-rpccookiefile` option
-`./`               | `.lock`               | Data directory lock file
+| Subdirectory                    | File(s)                                   | Description                                                                                                                                                                                                                                                            |
+| ------------------------------- | ----------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `blocks/`                       |                                           | Blocks directory; can be specified by `-blocksdir` option (except for `blocks/index/`)                                                                                                                                                                                 |
+| `blocks/index/`                 | LevelDB database                          | Block index; `-blocksdir` option does not affect this path                                                                                                                                                                                                             |
+| `blocks/`                       | `blkNNNNN.dat`<sup>[\[2\]](#note2)</sup>  | Actual Navio blocks (in network format, dumped in raw on disk, 128 MiB per file)                                                                                                                                                                                       |
+| `blocks/`                       | `revNNNNN.dat`<sup>[\[2\]](#note2)</sup>  | Block undo data (custom format)                                                                                                                                                                                                                                        |
+| `chainstate/`                   | LevelDB database                          | Blockchain state (a compact representation of all currently unspent transaction outputs (UTXOs) and metadata about the transactions they are from)                                                                                                                     |
+| `indexes/txindex/`              | LevelDB database                          | Transaction index; _optional_, used if `-txindex=1`                                                                                                                                                                                                                    |
+| `indexes/outindex/`             | LevelDB database                          | Output index; _optional_, used if `-outindex=1`                                                                                                                                                                                                                        |
+| `indexes/blockfilter/basic/db/` | LevelDB database                          | Blockfilter index LevelDB database for the basic filtertype; _optional_, used if `-blockfilterindex=basic`                                                                                                                                                             |
+| `indexes/blockfilter/basic/`    | `fltrNNNNN.dat`<sup>[\[2\]](#note2)</sup> | Blockfilter index filters for the basic filtertype; _optional_, used if `-blockfilterindex=basic`                                                                                                                                                                      |
+| `indexes/coinstats/db/`         | LevelDB database                          | Coinstats index; _optional_, used if `-coinstatsindex=1`                                                                                                                                                                                                               |
+| `p2pmsg_inbox/`                 | LevelDB database                          | Store of received p2p messages, drained by the `listp2pmsgs` RPC; size and expiry are bounded by `-p2pmsgstoresize` and `-p2pmsgstoreexpiry`; not created when `-p2pmsgstoresize=0` or `-p2pmsg=0`                                                                     |
+| `p2pmsg_archive/`               | LevelDB database                          | Archive of relayed, flagged p2p message envelopes kept so offline peers can retrieve them later; _optional_, used if `-p2pmsgarchive=1`                                                                                                                                |
+| `wallets/`                      |                                           | [Contains wallets](#multi-wallet-environment); can be specified by `-walletdir` option; if `wallets/` subdirectory does not exist, wallets reside in the [data directory](#data-directory-location)                                                                    |
+| `./`                            | `anchors.dat`                             | Anchor IP address database, created on shutdown and deleted at startup. Anchors are last known outgoing block-relay-only peers that are tried to re-connect to on startup                                                                                              |
+| `./`                            | `banlist.json`                            | Stores the addresses/subnets of banned nodes.                                                                                                                                                                                                                          |
+| `./`                            | `navio.conf`                              | User-defined [configuration settings](navio-conf.md) for `naviod`. File is not written to by the software and must be created manually. Path can be specified by `-conf` option                                                                                        |
+| `./`                            | `naviod.pid`                              | Stores the process ID (PID) of `naviod` while running; created at start and deleted on shutdown; can be specified by `-pid` option                                                                                                                                     |
+| `./`                            | `debug.log`                               | Contains debug information and general logging generated by `naviod`; can be specified by `-debuglogfile` option                                                                                                                                                       |
+| `./`                            | `fee_estimates.dat`                       | Stores statistics used to estimate minimum transaction fees required for confirmation                                                                                                                                                                                  |
+| `./`                            | `ip_asn.map`                              | IP addresses to Autonomous System Numbers (ASNs) mapping used for bucketing of the peers; path can be specified with the `-asmap` option                                                                                                                               |
+| `./`                            | `mempool.dat`                             | Dump of the mempool's transactions                                                                                                                                                                                                                                     |
+| `./`                            | `onion_v3_private_key`                    | Cached Tor onion service private key for `-listenonion` option                                                                                                                                                                                                         |
+| `./`                            | `i2p_private_key`                         | Private key that corresponds to our I2P address. When `-i2psam=` is specified the contents of this file is used to identify ourselves for making outgoing connections to I2P peers and possibly accepting incoming ones. Automatically generated if it does not exist. |
+| `./`                            | `p2pmsg_identity.dat`                     | Private key of this node's p2p messaging identity; _optional_, only written if `-p2pmsgpersistidentity=1` (otherwise the identity is ephemeral per run). Created with owner-only permissions                                                                           |
+| `./`                            | `peers.dat`                               | Peer IP address database (custom format)                                                                                                                                                                                                                               |
+| `./`                            | `settings.json`                           | Read-write settings set through RPC interfaces, augmenting manual settings from [navio.conf](navio-conf.md). File is created automatically if read-write settings storage is not disabled with `-nosettings` option. Path can be specified with `-settings` option     |
+| `./`                            | `.cookie`                                 | Session RPC authentication cookie; if used, created at start and deleted on shutdown; can be specified by `-rpccookiefile` option                                                                                                                                      |
+| `./`                            | `.lock`                                   | Data directory lock file                                                                                                                                                                                                                                               |
 
 ## Multi-wallet environment
 
-Wallets are Berkeley DB (BDB) or SQLite databases.
+Wallets are SQLite databases.
 
-1. Each user-defined wallet named "wallet_name" resides in the `wallets/wallet_name/` subdirectory.
+1. Each user-defined wallet named "wallet_name" resides in the
+   `wallets/wallet_name/` subdirectory.
 
-2. The default (unnamed) wallet resides in `wallets/` subdirectory; if the latter does not exist, the wallet resides in the data directory.
+2. The default (unnamed) wallet resides in `wallets/` subdirectory; if the
+   latter does not exist, the wallet resides in the data directory.
 
 3. A wallet database path can be specified with the `-wallet` option.
 
-4. `wallet.dat` files must not be shared across different node instances, as that can result in key-reuse and double-spends due the lack of synchronization between instances.
+4. `wallet.dat` files must not be shared across different node instances, as
+   that can result in key-reuse and double-spends due the lack of
+   synchronization between instances.
 
-5. Any copy or backup of the wallet should be done through a `backupwallet` call in order to update and lock the wallet, preventing any file corruption caused by updates during the copy.
+5. Any copy or backup of the wallet should be done through a `backupwallet` call
+   in order to update and lock the wallet, preventing any file corruption caused
+   by updates during the copy.
 
-
-### Berkeley DB database based wallets
-
-Subdirectory | File(s)           | Description
--------------|-------------------|-------------
-`database/`  | BDB logging files | Part of BDB environment; created at start and deleted on shutdown; a user *must keep it as safe* as personal wallet `wallet.dat`
-`./`         | `db.log`          | BDB error file
-`./`         | `wallet.dat`      | Personal wallet (a BDB database) with keys and transactions
-`./`         | `.walletlock`     | BDB wallet lock file
-
-### SQLite database based wallets
-
-Subdirectory | File                 | Description
--------------|----------------------|-------------
-`./`         | `wallet.dat`         | Personal wallet (a SQLite database) with keys and transactions
-`./`         | `wallet.dat-journal` | SQLite Rollback Journal file for `wallet.dat`. Usually created at start and deleted on shutdown. A user *must keep it as safe* as the `wallet.dat` file.
-
-
-## GUI settings
-
-`navio-qt` uses [`QSettings`](https://doc.qt.io/qt-5/qsettings.html) class; this implies platform-specific [locations where application settings are stored](https://doc.qt.io/qt-5/qsettings.html#locations-where-application-settings-are-stored).
-
-## Legacy subdirectories and files
-
-These subdirectories and files are no longer used by Bitcoin Core:
-
-Path           | Description | Repository notes
----------------|-------------|-----------------
-`banlist.dat`  | Stores the addresses/subnets of banned nodes; superseded by `banlist.json` in 22.0 and completely ignored in 23.0 | [PR #20966](https://github.com/bitcoin/bitcoin/pull/20966), [PR #22570](https://github.com/bitcoin/bitcoin/pull/22570)
-`blktree/`     | Blockchain index; replaced by `blocks/index/` in [0.8.0](https://github.com/bitcoin/bitcoin/blob/master/doc/release-notes/release-notes-0.8.0.md#improvements) | [PR #2231](https://github.com/bitcoin/bitcoin/pull/2231), [`8fdc94cc`](https://github.com/bitcoin/bitcoin/commit/8fdc94cc8f0341e96b1edb3a5b56811c0b20bd15)
-`coins/`       | Unspent transaction output database; replaced by `chainstate/` in 0.8.0 | [PR #2231](https://github.com/bitcoin/bitcoin/pull/2231), [`8fdc94cc`](https://github.com/bitcoin/bitcoin/commit/8fdc94cc8f0341e96b1edb3a5b56811c0b20bd15)
-`blkindex.dat` | Blockchain index BDB database; replaced by {`chainstate/`, `blocks/index/`, `blocks/revNNNNN.dat`<sup>[\[2\]](#note2)</sup>} in 0.8.0 | [PR #1677](https://github.com/bitcoin/bitcoin/pull/1677)
-`blk000?.dat`  | Block data (custom format, 2 GiB per file); replaced by `blocks/blkNNNNN.dat`<sup>[\[2\]](#note2)</sup> in 0.8.0 | [PR #1677](https://github.com/bitcoin/bitcoin/pull/1677)
-`addr.dat`     | Peer IP address BDB database; replaced by `peers.dat` in [0.7.0](https://github.com/bitcoin/bitcoin/blob/master/doc/release-notes/release-notes-0.7.0.md) | [PR #1198](https://github.com/bitcoin/bitcoin/pull/1198), [`928d3a01`](https://github.com/bitcoin/bitcoin/commit/928d3a011cc66c7f907c4d053f674ea77dc611cc)
-`onion_private_key` | Cached Tor onion service private key for `-listenonion` option. Was used for Tor v2 services; replaced by `onion_v3_private_key` in [0.21.0](https://github.com/bitcoin/bitcoin/blob/master/doc/release-notes/release-notes-0.21.0.md) | [PR #19954](https://github.com/bitcoin/bitcoin/pull/19954)
+| Subdirectory | File                 | Description                                                                                                                                              |
+| ------------ | -------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `./`         | `wallet.dat`         | Personal wallet (a SQLite database) with keys and transactions                                                                                           |
+| `./`         | `wallet.dat-journal` | SQLite Rollback Journal file for `wallet.dat`. Usually created at start and deleted on shutdown. A user _must keep it as safe_ as the `wallet.dat` file. |
 
 ## Notes
 
-<a name="note1">1</a>. The `/` (slash, U+002F) is used as the platform-independent path component separator in this document.
+<a name="note1">1</a>. The `/` (slash, U+002F) is used as the
+platform-independent path component separator in this document.
 
 <a name="note2">2</a>. `NNNNN` matches `[0-9]{5}` regex.
