@@ -6,7 +6,7 @@ To run linters locally with the same versions as the CI environment, use the
 included Dockerfile:
 
 ```sh
-DOCKER_BUILDKIT=1 docker build -t bitcoin-linter --file "./ci/lint_imagefile" ./ && docker run --rm -v $(pwd):/bitcoin -it bitcoin-linter
+DOCKER_BUILDKIT=1 docker build -t navio-linter --file "./ci/lint_imagefile" ./ && docker run --rm -v $(pwd):/bitcoin -it navio-linter
 ```
 
 Building the container can be done every time, because it is fast when the
