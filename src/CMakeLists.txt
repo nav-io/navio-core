@@ -227,6 +227,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     common/pcp.cpp
     common/settings.cpp
     common/system.cpp
+    common/signet.cpp
     common/url.cpp
     compressor.cpp
     core_read.cpp
@@ -254,6 +255,7 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     script/sign.cpp
     script/signingprovider.cpp
     script/solver.cpp
+    signet.cpp
     warnings.cpp
   )
   target_link_libraries(navio_common
@@ -394,7 +396,6 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     rpc/signmessage.cpp
     rpc/txoutproof.cpp
     script/sigcache.cpp
-    signet.cpp
     timedata.cpp
     torcontrol.cpp
     txdb.cpp

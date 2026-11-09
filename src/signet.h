@@ -9,7 +9,11 @@
 #include <primitives/block.h>
 #include <primitives/transaction.h>
 
+#include <cstdint>
 #include <optional>
+
+/** Marks the witness commitment push that carries a block's signet solution. */
+inline constexpr uint8_t SIGNET_HEADER[4] = {0xec, 0xc7, 0xda, 0xa2};
 
 /**
  * Extract signature and check whether a block has a valid solution

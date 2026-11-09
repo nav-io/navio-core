@@ -3,11 +3,14 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <chainparams.h>
+#include <common/signet.h>
 #include <consensus/amount.h>
 #include <consensus/merkle.h>
 #include <core_io.h>
 #include <hash.h>
+#include <key.h>
 #include <net.h>
+#include <script/signingprovider.h>
 #include <signet.h>
 #include <uint256.h>
 #include <util/chaintype.h>
@@ -130,6 +133,77 @@ BOOST_AUTO_TEST_CASE(signet_parse_tests)
     block.vtx.at(0) = MakeTransactionRef(cb);
     BOOST_CHECK(!SignetTxs::Create(block, challenge));
     BOOST_CHECK(!CheckSignetBlockSolution(block, signet_params->GetConsensus()));
+}
+
+//! A block with a coinbase that has an empty witness commitment output.
+static CBlock BlockWithWitnessCommitment()
+{
+    CMutableTransaction cb;
+    cb.vin.emplace_back();
+    cb.vout.emplace_back(0, CScript{} << OP_TRUE);
+    CScript commitment;
+    commitment.resize(MINIMUM_WITNESS_COMMITMENT);
+    commitment[0] = OP_RETURN;
+    commitment[1] = 0x24;
+    commitment[2] = 0xaa;
+    commitment[3] = 0x21;
+    commitment[4] = 0xa9;
+    commitment[5] = 0xed;
+    cb.vout.emplace_back(0, commitment);
+    CBlock block;
+    block.nTime = 1;
+    block.vtx.push_back(MakeTransactionRef(std::move(cb)));
+    block.hashMerkleRoot = BlockMerkleRoot(block);
+    return block;
+}
+
+BOOST_AUTO_TEST_CASE(signet_sign_block)
+{
+    const CKey key{GenerateRandomKey()};
+    const CKey other_key{GenerateRandomKey()};
+    const CScript challenge{GetScriptForDestination(WitnessV0KeyHash(key.GetPubKey()))};
+    ArgsManager signet_argsman;
+    signet_argsman.ForceSetArg("-signetchallenge", HexStr(challenge));
+    const auto signet_params = CreateChainParams(signet_argsman, ChainType::SIGNET);
+    const Consensus::Params& consensus{signet_params->GetConsensus()};
+    const auto provider{SignetKeyProvider(HexStr(Span{key.begin(), key.size()}))};
+    const auto other_provider{SignetKeyProvider(HexStr(Span{other_key.begin(), other_key.size()}))};
+    BOOST_REQUIRE(provider && other_provider);
+    BOOST_CHECK(!SignetKeyProvider("00"));
+    BOOST_CHECK(!SignetKeyProvider(std::string(64, '0'))); // zero is not a valid secret
+
+    CBlock block{BlockWithWitnessCommitment()};
+    std::string error;
+    BOOST_CHECK(!CheckSignetBlockSolution(block, consensus));
+
+    // A key that cannot satisfy the challenge fails and leaves the block alone.
+    const uint256 unsigned_hash{block.GetHash()};
+    BOOST_CHECK(!SignSignetBlock(block, challenge, *other_provider, error));
+    BOOST_CHECK_EQUAL(error, "the signing keys cannot satisfy the signet challenge");
+    BOOST_CHECK(block.GetHash() == unsigned_hash);
+
+    BOOST_REQUIRE(SignSignetBlock(block, challenge, *provider, error));
+    BOOST_CHECK(CheckSignetBlockSolution(block, consensus));
+    BOOST_CHECK(block.hashMerkleRoot == BlockMerkleRoot(block));
+
+    // Signing twice is refused rather than stacking a second solution.
+    BOOST_CHECK(!SignSignetBlock(block, challenge, *provider, error));
+    BOOST_CHECK_EQUAL(error, "block already carries a signet solution");
+
+    // The signature covers the time but not the nonce.
+    block.nTime++;
+    BOOST_CHECK(!CheckSignetBlockSolution(block, consensus));
+    block.nTime--;
+    block.nNonce++;
+    BOOST_CHECK(CheckSignetBlockSolution(block, consensus));
+
+    // No witness commitment, nowhere to put the solution.
+    CBlock no_commitment{BlockWithWitnessCommitment()};
+    CMutableTransaction cb{*no_commitment.vtx[0]};
+    cb.vout.pop_back();
+    no_commitment.vtx[0] = MakeTransactionRef(std::move(cb));
+    BOOST_CHECK(!SignSignetBlock(no_commitment, challenge, *provider, error));
+    BOOST_CHECK_EQUAL(error, "block has no witness commitment to carry the signet solution");
 }
 
 //! Test retrieval of valid assumeutxo values.
