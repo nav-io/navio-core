@@ -1,25 +1,23 @@
-This directory contains integration tests that test naviod and its
-utilities in their entirety. It does not contain unit tests, which
-can be found in [/src/test](/src/test), [/src/wallet/test](/src/wallet/test),
-etc.
+This directory contains integration tests that test naviod and its utilities in
+their entirety. It does not contain unit tests, which can be found in
+[/src/test](/src/test), [/src/wallet/test](/src/wallet/test), etc.
 
 This directory contains the following sets of tests:
 
 - [fuzz](/test/fuzz) A runner to execute all fuzz targets from
   [/src/test/fuzz](/src/test/fuzz).
-- [functional](/test/functional) which test the functionality of
-naviod and bitcoin-qt by interacting with them through the RPC and P2P
-interfaces.
+- [functional](/test/functional) which test the functionality of naviod and
+  bitcoin-qt by interacting with them through the RPC and P2P interfaces.
 - [util](/test/util) which tests the utilities (navio-util, navio-tx, ...).
 - [lint](/test/lint/) which perform various static analysis checks.
 
 The util tests are run as part of `ctest --test-dir build`. The fuzz tests,
-functional tests and lint scripts can be run as explained in the sections
-below.
+functional tests and lint scripts can be run as explained in the sections below.
 
 # Running tests locally
 
-Before tests can be run locally, Bitcoin Core must be built.  See the [building instructions](/doc#building) for help.
+Before tests can be run locally, Bitcoin Core must be built. See the
+[building instructions](/doc#building) for help.
 
 ## Fuzz tests
 
@@ -33,7 +31,6 @@ The ZMQ functional test requires a python ZMQ library. To install it:
 
 - on Unix, run `sudo apt-get install python3-zmq`
 - on mac OS, run `pip3 install pyzmq`
-
 
 On Windows the `PYTHONUTF8` environment variable must be set to 1:
 
@@ -62,8 +59,8 @@ build/test/functional/test_runner.py <testname1> <testname2> <testname3> ...
 ```
 
 Wildcard test names can be passed, if the paths are coherent and the test runner
-is called from a `bash` shell or similar that does the globbing. For example,
-to run all the wallet tests:
+is called from a `bash` shell or similar that does the globbing. For example, to
+run all the wallet tests:
 
 ```
 build/test/functional/test_runner.py test/functional/wallet*
@@ -96,16 +93,18 @@ Run all possible tests with
 build/test/functional/test_runner.py --extended
 ```
 
-By default, up to 4 tests will be run in parallel by test_runner. To specify
-how many jobs to run, append `--jobs=n`
+By default, up to 4 tests will be run in parallel by test_runner. To specify how
+many jobs to run, append `--jobs=n`
 
-The individual tests and the test_runner harness have many command-line
-options. Run `build/test/functional/test_runner.py -h` to see them all.
+The individual tests and the test_runner harness have many command-line options.
+Run `build/test/functional/test_runner.py -h` to see them all.
 
 #### Speed up test runs with a RAM disk
 
-If you have available RAM on your system you can create a RAM disk to use as the `cache` and `tmp` directories for the functional tests in order to speed them up.
-Speed-up amount varies on each system (and according to your RAM speed and other variables), but a 2-3x speed-up is not uncommon.
+If you have available RAM on your system you can create a RAM disk to use as the
+`cache` and `tmp` directories for the functional tests in order to speed them
+up. Speed-up amount varies on each system (and according to your RAM speed and
+other variables), but a 2-3x speed-up is not uncommon.
 
 **Linux**
 
@@ -116,17 +115,20 @@ sudo mkdir -p /mnt/tmp
 sudo mount -t tmpfs -o size=4g tmpfs /mnt/tmp/
 ```
 
-Configure the size of the RAM disk using the `size=` option.
-The size of the RAM disk needed is relative to the number of concurrent jobs the test suite runs.
-For example running the test suite with `--jobs=100` might need a 4 GiB RAM disk, but running with `--jobs=32` will only need a 2.5 GiB RAM disk.
+Configure the size of the RAM disk using the `size=` option. The size of the RAM
+disk needed is relative to the number of concurrent jobs the test suite runs.
+For example running the test suite with `--jobs=100` might need a 4 GiB RAM
+disk, but running with `--jobs=32` will only need a 2.5 GiB RAM disk.
 
-To use, run the test suite specifying the RAM disk as the `cachedir` and `tmpdir`:
+To use, run the test suite specifying the RAM disk as the `cachedir` and
+`tmpdir`:
 
 ```bash
 build/test/functional/test_runner.py --cachedir=/mnt/tmp/cache --tmpdir=/mnt/tmp
 ```
 
-Once finished with the tests and the disk, and to free the RAM, simply unmount the disk:
+Once finished with the tests and the disk, and to free the RAM, simply unmount
+the disk:
 
 ```bash
 sudo umount /mnt/tmp
@@ -140,8 +142,9 @@ To create a 4 GiB RAM disk named "ramdisk" at `/Volumes/ramdisk/`:
 diskutil erasevolume HFS+ ramdisk $(hdiutil attach -nomount ram://8388608)
 ```
 
-Configure the RAM disk size, expressed as the number of blocks, at the end of the command
-(`4096 MiB * 2048 blocks/MiB = 8388608 blocks` for 4 GiB). To run the tests using the RAM disk:
+Configure the RAM disk size, expressed as the number of blocks, at the end of
+the command (`4096 MiB * 2048 blocks/MiB = 8388608 blocks` for 4 GiB). To run
+the tests using the RAM disk:
 
 ```bash
 build/test/functional/test_runner.py --cachedir=/Volumes/ramdisk/cache --tmpdir=/Volumes/ramdisk/tmp
@@ -159,18 +162,18 @@ umount /Volumes/ramdisk
 
 The P2P and RPC ports used by the naviod nodes-under-test are chosen to make
 conflicts with other processes unlikely. However, if there is another naviod
-process running on the system (perhaps from a previous test which hasn't successfully
-killed all its naviod nodes), then there may be a port conflict which will
-cause the test to fail. It is recommended that you run the tests on a system
-where no other naviod processes are running.
+process running on the system (perhaps from a previous test which hasn't
+successfully killed all its naviod nodes), then there may be a port conflict
+which will cause the test to fail. It is recommended that you run the tests on a
+system where no other naviod processes are running.
 
-On linux, the test framework will warn if there is another
-naviod process running when the tests are started.
+On linux, the test framework will warn if there is another naviod process
+running when the tests are started.
 
-If there are zombie naviod processes after test failure, you can kill them
-by running the following commands. **Note that these commands will kill all
-naviod processes running on the system, so should not be used if any non-test
-naviod processes are being run.**
+If there are zombie naviod processes after test failure, you can kill them by
+running the following commands. **Note that these commands will kill all naviod
+processes running on the system, so should not be used if any non-test naviod
+processes are being run.**
 
 ```bash
 killall naviod
@@ -182,15 +185,13 @@ or
 pkill -9 naviod
 ```
 
-
 ##### Data directory cache
 
-A pre-mined blockchain with 200 blocks is generated the first time a
-functional test is run and is stored in test/cache. This speeds up
-test startup times since new blockchains don't need to be generated for
-each test. However, the cache may get into a bad state, in which case
-tests will fail. If this happens, remove the cache directory (and make
-sure naviod processes are stopped as above):
+A pre-mined blockchain with 200 blocks is generated the first time a functional
+test is run and is stored in test/cache. This speeds up test startup times since
+new blockchains don't need to be generated for each test. However, the cache may
+get into a bad state, in which case tests will fail. If this happens, remove the
+cache directory (and make sure naviod processes are stopped as above):
 
 ```bash
 rm -rf test/cache
@@ -204,22 +205,23 @@ and CRITICAL). From within your functional tests you can log to these different
 levels using the logger included in the test_framework, e.g.
 `self.log.debug(object)`. By default:
 
-- when run through the test_runner harness, *all* logs are written to
+- when run through the test_runner harness, _all_ logs are written to
   `test_framework.log` and no logs are output to the console.
-- when run directly, *all* logs are written to `test_framework.log` and INFO
+- when run directly, _all_ logs are written to `test_framework.log` and INFO
   level and above are output to the console.
-- when run by [our CI (Continuous Integration)](/ci/README.md), no logs are output to the console. However, if a test
-  fails, the `test_framework.log` and naviod `debug.log`s will all be dumped
-  to the console to help troubleshooting.
+- when run by [our CI (Continuous Integration)](/ci/README.md), no logs are
+  output to the console. However, if a test fails, the `test_framework.log` and
+  naviod `debug.log`s will all be dumped to the console to help troubleshooting.
 
 These log files can be located under the test data directory (which is always
 printed in the first line of test output):
-  - `<test data directory>/test_framework.log`
-  - `<test data directory>/node<node number>/regtest/debug.log`.
+
+- `<test data directory>/test_framework.log`
+- `<test data directory>/node<node number>/regtest/debug.log`.
 
 The node number identifies the relevant test node, starting from `node0`, which
-corresponds to its position in the nodes list of the specific test,
-e.g. `self.nodes[0]`.
+corresponds to its position in the nodes list of the specific test, e.g.
+`self.nodes[0]`.
 
 To change the level of logs output to the console, use the `-l` command line
 argument.
@@ -234,13 +236,13 @@ test/functional/combine_logs.py -c <test data directory> | less -r
 
 will pipe the colorized logs from the test into less.
 
-Use `--tracerpc` to trace out all the RPC calls and responses to the console. For
-some tests (eg any that use `submitblock` to submit a full block over RPC),
+Use `--tracerpc` to trace out all the RPC calls and responses to the console.
+For some tests (eg any that use `submitblock` to submit a full block over RPC),
 this can result in a lot of screen output.
 
-By default, the test data directory will be deleted after a successful run.
-Use `--nocleanup` to leave the test data directory intact. The test data
-directory is never deleted after a failed test.
+By default, the test data directory will be deleted after a successful run. Use
+`--nocleanup` to leave the test data directory intact. The test data directory
+is never deleted after a failed test.
 
 ##### Attaching a debugger
 
@@ -253,21 +255,21 @@ import pdb; pdb.set_trace()
 anywhere in the test. You will then be able to inspect variables, as well as
 call methods that interact with the naviod nodes-under-test.
 
-If further introspection of the naviod instances themselves becomes
-necessary, this can be accomplished by first setting a pdb breakpoint
-at an appropriate location, running the test to that point, then using
-`gdb` (or `lldb` on macOS) to attach to the process and debug.
+If further introspection of the naviod instances themselves becomes necessary,
+this can be accomplished by first setting a pdb breakpoint at an appropriate
+location, running the test to that point, then using `gdb` (or `lldb` on macOS)
+to attach to the process and debug.
 
-For instance, to attach to `self.node[1]` during a run you can get
-the pid of the node within `pdb`.
+For instance, to attach to `self.node[1]` during a run you can get the pid of
+the node within `pdb`.
 
 ```
 (pdb) self.node[1].process.pid
 ```
 
-Alternatively, you can find the pid by inspecting the temp folder for the specific test
-you are running. The path to that folder is printed at the beginning of every
-test run:
+Alternatively, you can find the pid by inspecting the temp folder for the
+specific test you are running. The path to that folder is printed at the
+beginning of every test run:
 
 ```bash
 2017-06-27 14:13:56.686000 TestFramework (INFO): Initializing test directory /tmp/user/1000/testo9vsdjo3
@@ -285,21 +287,23 @@ Then you can use the pid to start `gdb`:
 gdb /home/example/naviod <pid>
 ```
 
-Note: gdb attach step may require ptrace_scope to be modified, or `sudo` preceding the `gdb`.
-See this link for considerations: https://www.kernel.org/doc/Documentation/security/Yama.txt
+Note: gdb attach step may require ptrace_scope to be modified, or `sudo`
+preceding the `gdb`. See this link for considerations:
+https://www.kernel.org/doc/Documentation/security/Yama.txt
 
-Often while debugging RPC calls in functional tests, the test might time out before the
-process can return a response. Use `--timeout-factor 0` to disable all RPC timeouts for that particular
-functional test. Ex: `test/functional/wallet_hd.py --timeout-factor 0`.
+Often while debugging RPC calls in functional tests, the test might time out
+before the process can return a response. Use `--timeout-factor 0` to disable
+all RPC timeouts for that particular functional test. Ex:
+`test/functional/wallet_hd.py --timeout-factor 0`.
 
 ##### Profiling
 
-An easy way to profile node performance during functional tests is provided
-for Linux platforms using `perf`.
+An easy way to profile node performance during functional tests is provided for
+Linux platforms using `perf`.
 
 Perf will sample the running node and will generate profile data in the node's
-datadir. The profile data can then be presented using `perf report` or a graphical
-tool like [hotspot](https://github.com/KDAB/hotspot).
+datadir. The profile data can then be presented using `perf report` or a
+graphical tool like [hotspot](https://github.com/KDAB/hotspot).
 
 To generate a profile during test suite runs, use the `--perf` flag.
 
@@ -314,8 +318,8 @@ For ways to generate more granular profiles, see the README in
 
 ### Util tests
 
-Util tests can be run locally by running `build/test/util/test_runner.py`.
-Use the `-v` option for verbose output.
+Util tests can be run locally by running `build/test/util/test_runner.py`. Use
+the `-v` option for verbose output.
 
 ### Lint tests
 
@@ -324,5 +328,5 @@ See the README in [test/lint](/test/lint).
 # Writing functional tests
 
 You are encouraged to write functional tests for new or existing features.
-Further information about the functional test framework and individual
-tests is found in [test/functional](/test/functional).
+Further information about the functional test framework and individual tests is
+found in [test/functional](/test/functional).
