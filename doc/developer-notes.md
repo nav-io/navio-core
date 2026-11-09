@@ -1,122 +1,123 @@
-Developer Notes
-===============
+# Developer Notes
 
 <!-- markdown-toc start -->
+
 **Table of Contents**
 
 - [Developer Notes](#developer-notes)
-    - [Coding Style (General)](#coding-style-general)
-    - [Coding Style (C++)](#coding-style-c)
-    - [Coding Style (Python)](#coding-style-python)
-    - [Coding Style (Doxygen-compatible comments)](#coding-style-doxygen-compatible-comments)
-      - [Generating Documentation](#generating-documentation)
-    - [Development tips and tricks](#development-tips-and-tricks)
-        - [Compiling for debugging](#compiling-for-debugging)
-        - [Show sources in debugging](#show-sources-in-debugging)
-        - [Compiling for gprof profiling](#compiling-for-gprof-profiling)
-        - [`debug.log`](#debuglog)
-        - [Signet, testnet, and regtest modes](#signet-testnet-and-regtest-modes)
-        - [DEBUG_LOCKORDER](#debug_lockorder)
-        - [DEBUG_LOCKCONTENTION](#debug_lockcontention)
-        - [Valgrind suppressions file](#valgrind-suppressions-file)
-        - [Compiling for test coverage](#compiling-for-test-coverage)
-        - [Performance profiling with perf](#performance-profiling-with-perf)
-        - [Sanitizers](#sanitizers)
-    - [Locking/mutex usage notes](#lockingmutex-usage-notes)
-    - [Threads](#threads)
-    - [Ignoring IDE/editor files](#ignoring-ideeditor-files)
+  - [Coding Style (General)](#coding-style-general)
+  - [Coding Style (C++)](#coding-style-c)
+  - [Coding Style (Python)](#coding-style-python)
+  - [Coding Style (Doxygen-compatible comments)](#coding-style-doxygen-compatible-comments)
+    - [Generating Documentation](#generating-documentation)
+  - [Development tips and tricks](#development-tips-and-tricks)
+    - [Compiling for debugging](#compiling-for-debugging)
+    - [Show sources in debugging](#show-sources-in-debugging)
+    - [Compiling for gprof profiling](#compiling-for-gprof-profiling)
+    - [`debug.log`](#debuglog)
+    - [Signet, testnet, and regtest modes](#signet-testnet-and-regtest-modes)
+    - [DEBUG_LOCKORDER](#debug_lockorder)
+    - [DEBUG_LOCKCONTENTION](#debug_lockcontention)
+    - [Valgrind suppressions file](#valgrind-suppressions-file)
+    - [Compiling for test coverage](#compiling-for-test-coverage)
+    - [Performance profiling with perf](#performance-profiling-with-perf)
+    - [Sanitizers](#sanitizers)
+  - [Locking/mutex usage notes](#lockingmutex-usage-notes)
+  - [Threads](#threads)
+  - [Ignoring IDE/editor files](#ignoring-ideeditor-files)
 - [Development guidelines](#development-guidelines)
-    - [General Bitcoin Core](#general-bitcoin-core)
-    - [Wallet](#wallet)
-    - [General C++](#general-c)
-    - [C++ data structures](#c-data-structures)
-    - [Strings and formatting](#strings-and-formatting)
-    - [Shadowing](#shadowing)
-    - [Lifetimebound](#lifetimebound)
-    - [Threads and synchronization](#threads-and-synchronization)
-    - [Scripts](#scripts)
-        - [Shebang](#shebang)
-    - [Source code organization](#source-code-organization)
-    - [GUI](#gui)
-    - [Subtrees](#subtrees)
-    - [Upgrading LevelDB](#upgrading-leveldb)
-      - [File Descriptor Counts](#file-descriptor-counts)
-      - [Consensus Compatibility](#consensus-compatibility)
-    - [Scripted diffs](#scripted-diffs)
-        - [Suggestions and examples](#suggestions-and-examples)
-    - [Release notes](#release-notes)
-    - [RPC interface guidelines](#rpc-interface-guidelines)
-    - [Internal interface guidelines](#internal-interface-guidelines)
+  - [General Bitcoin Core](#general-bitcoin-core)
+  - [Wallet](#wallet)
+  - [General C++](#general-c)
+  - [C++ data structures](#c-data-structures)
+  - [Strings and formatting](#strings-and-formatting)
+  - [Shadowing](#shadowing)
+  - [Lifetimebound](#lifetimebound)
+  - [Threads and synchronization](#threads-and-synchronization)
+  - [Scripts](#scripts)
+    - [Shebang](#shebang)
+  - [Source code organization](#source-code-organization)
+  - [GUI](#gui)
+  - [Subtrees](#subtrees)
+  - [Upgrading LevelDB](#upgrading-leveldb)
+    - [File Descriptor Counts](#file-descriptor-counts)
+    - [Consensus Compatibility](#consensus-compatibility)
+  - [Scripted diffs](#scripted-diffs)
+    - [Suggestions and examples](#suggestions-and-examples)
+  - [Release notes](#release-notes)
+  - [RPC interface guidelines](#rpc-interface-guidelines)
+  - [Internal interface guidelines](#internal-interface-guidelines)
 
 <!-- markdown-toc end -->
 
-Coding Style (General)
-----------------------
+## Coding Style (General)
 
-Various coding styles have been used during the history of the codebase,
-and the result is not very consistent. However, we're now trying to converge to
-a single style, which is specified below. When writing patches, favor the new
-style over attempting to mimic the surrounding style, except for move-only
-commits.
+Various coding styles have been used during the history of the codebase, and the
+result is not very consistent. However, we're now trying to converge to a single
+style, which is specified below. When writing patches, favor the new style over
+attempting to mimic the surrounding style, except for move-only commits.
 
 Do not submit patches solely to modify the style of existing code.
 
-Coding Style (C++)
-------------------
+## Coding Style (C++)
 
 - **Indentation and whitespace rules** as specified in
-[src/.clang-format](/src/.clang-format). You can use the provided
-[clang-format-diff script](/contrib/devtools/README.md#clang-format-diffpy)
-tool to clean up patches automatically before submission.
+  [src/.clang-format](/src/.clang-format). You can use the provided
+  [clang-format-diff script](/contrib/devtools/README.md#clang-format-diffpy)
+  tool to clean up patches automatically before submission.
   - Braces on new lines for classes, functions, methods.
   - Braces on the same line for everything else.
   - 4 space indentation (no tabs) for every block except namespaces.
   - No indentation for `public`/`protected`/`private` or for `namespace`.
   - No extra spaces inside parenthesis; don't do `( this )`.
   - No space after function names; one space after `if`, `for` and `while`.
-  - If an `if` only has a single-statement `then`-clause, it can appear
-    on the same line as the `if`, without braces. In every other case,
-    braces are required, and the `then` and `else` clauses must appear
-    correctly indented on a new line.
+  - If an `if` only has a single-statement `then`-clause, it can appear on the
+    same line as the `if`, without braces. In every other case, braces are
+    required, and the `then` and `else` clauses must appear correctly indented
+    on a new line.
   - There's no hard limit on line width, but prefer to keep lines to <100
-    characters if doing so does not decrease readability. Break up long
-    function declarations over multiple lines using the Clang Format
+    characters if doing so does not decrease readability. Break up long function
+    declarations over multiple lines using the Clang Format
     [AlignAfterOpenBracket](https://clang.llvm.org/docs/ClangFormatStyleOptions.html)
     style option.
 
 - **Symbol naming conventions**. These are preferred in new code, but are not
-required when doing so would need changes to significant pieces of existing
-code.
-  - Variable (including function arguments) and namespace names are all lowercase and may use `_` to
-    separate words (snake_case).
+  required when doing so would need changes to significant pieces of existing
+  code.
+  - Variable (including function arguments) and namespace names are all
+    lowercase and may use `_` to separate words (snake_case).
     - Class member variables have a `m_` prefix.
     - Global variables have a `g_` prefix.
   - Constant names are all uppercase, and use `_` to separate words.
-  - Enumerator constants may be `snake_case`, `PascalCase` or `ALL_CAPS`.
-    This is a more tolerant policy than the [C++ Core
-    Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Renum-caps),
-    which recommend using `snake_case`.  Please use what seems appropriate.
+  - Enumerator constants may be `snake_case`, `PascalCase` or `ALL_CAPS`. This
+    is a more tolerant policy than the
+    [C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Renum-caps),
+    which recommend using `snake_case`. Please use what seems appropriate.
   - Class names, function names, and method names are UpperCamelCase
-    (PascalCase). Do not prefix class names with `C`. See [Internal interface
-    naming style](#internal-interface-naming-style) for an exception to this
-    convention.
+    (PascalCase). Do not prefix class names with `C`. See
+    [Internal interface naming style](#internal-interface-naming-style) for an
+    exception to this convention.
 
   - Test suite naming convention: The Boost test suite in file
-    `src/test/foo_tests.cpp` should be named `foo_tests`. Test suite names
-    must be unique.
+    `src/test/foo_tests.cpp` should be named `foo_tests`. Test suite names must
+    be unique.
 
 - **Miscellaneous**
   - `++i` is preferred over `i++`.
   - `nullptr` is preferred over `NULL` or `(void*)0`.
-  - `static_assert` is preferred over `assert` where possible. Generally; compile-time checking is preferred over run-time checking.
+  - `static_assert` is preferred over `assert` where possible. Generally;
+    compile-time checking is preferred over run-time checking.
   - Use a named cast or functional cast, not a C-Style cast. When casting
     between integer types, use functional casts such as `int(x)` or `int{x}`
-    instead of `(int) x`. When casting between more complex types, use `static_cast`.
-    Use `reinterpret_cast` and `const_cast` as appropriate.
+    instead of `(int) x`. When casting between more complex types, use
+    `static_cast`. Use `reinterpret_cast` and `const_cast` as appropriate.
 
-For function calls a namespace should be specified explicitly, unless such functions have been declared within it.
-Otherwise, [argument-dependent lookup](https://en.cppreference.com/w/cpp/language/adl), also known as ADL, could be
-triggered that makes code harder to maintain and reason about:
+For function calls a namespace should be specified explicitly, unless such
+functions have been declared within it. Otherwise,
+[argument-dependent lookup](https://en.cppreference.com/w/cpp/language/adl),
+also known as ADL, could be triggered that makes code harder to maintain and
+reason about:
+
 ```c++
 #include <filesystem>
 
@@ -137,6 +138,7 @@ int main()
 ```
 
 Block style example:
+
 ```c++
 int g_count = 0;
 
@@ -168,18 +170,17 @@ public:
 } // namespace foo
 ```
 
-Coding Style (C++ functions and methods)
---------------------
+## Coding Style (C++ functions and methods)
 
 - When ordering function parameters, place input parameters first, then any
   in-out parameters, followed by any output parameters.
 
-- *Rationale*: API consistency.
+- _Rationale_: API consistency.
 
 - Prefer returning values directly to using in-out or output parameters. Use
   `std::optional` where helpful for returning values.
 
-- *Rationale*: Less error-prone (no need for assumptions about what the output
+- _Rationale_: Less error-prone (no need for assumptions about what the output
   is initialized to on failure), easier to read, and often the same or better
   performance.
 
@@ -189,8 +190,7 @@ Coding Style (C++ functions and methods)
   non-optional in-out and output parameters should usually be references, as
   they cannot be null.
 
-Coding Style (C++ named arguments)
-------------------------------
+## Coding Style (C++ named arguments)
 
 When passing named arguments, use a format that clang-tidy understands. The
 argument names can otherwise not be verified by clang-tidy.
@@ -214,8 +214,8 @@ To run clang-tidy on Ubuntu/Debian, install the dependencies:
 apt install clang-tidy bear clang
 ```
 
-CMake generates `compile_commands.json` automatically; just configure with
-clang and build:
+CMake generates `compile_commands.json` automatically; just configure with clang
+and build:
 
 ```sh
 cmake -B build -G Ninja \
@@ -239,16 +239,15 @@ To run clang-tidy on the changed source lines:
 git diff | ( cd ./src/ && clang-tidy-diff -p2 -j $(nproc) )
 ```
 
-Coding Style (Python)
----------------------
+## Coding Style (Python)
 
-Refer to [/test/functional/README.md#style-guidelines](/test/functional/README.md#style-guidelines).
+Refer to
+[/test/functional/README.md#style-guidelines](/test/functional/README.md#style-guidelines).
 
+## Coding Style (Doxygen-compatible comments)
 
-Coding Style (Doxygen-compatible comments)
-------------------------------------------
-
-Navio Core uses [Doxygen](https://www.doxygen.nl/) to generate its official documentation.
+Navio Core uses [Doxygen](https://www.doxygen.nl/) to generate its official
+documentation.
 
 Use Doxygen-compatible comment blocks for functions, methods, and fields.
 
@@ -269,11 +268,13 @@ For example, to describe a function use:
 bool function(int arg1, const char *arg2, std::string& arg3)
 ```
 
-A complete list of `@xxx` commands can be found at https://www.doxygen.nl/manual/commands.html.
-As Doxygen recognizes the comments by the delimiters (`/**` and `*/` in this case), you don't
-*need* to provide any commands for a comment to be valid; just a description text is fine.
+A complete list of `@xxx` commands can be found at
+https://www.doxygen.nl/manual/commands.html. As Doxygen recognizes the comments
+by the delimiters (`/**` and `*/` in this case), you don't _need_ to provide any
+commands for a comment to be valid; just a description text is fine.
 
 To describe a class, use the same construct above the class definition:
+
 ```c++
 /**
  * Alerts are for notifying old versions if they become too obsolete and
@@ -284,17 +285,20 @@ class CAlert
 ```
 
 To describe a member or variable use:
+
 ```c++
 //! Description before the member
 int var;
 ```
 
 or
+
 ```c++
 int var; //!< Description after the member
 ```
 
 Also OK:
+
 ```c++
 ///
 /// ... Description ...
@@ -303,6 +307,7 @@ bool function2(int arg1, const char *arg2)
 ```
 
 Not picked up by Doxygen:
+
 ```c++
 //
 // ... Description ...
@@ -310,14 +315,15 @@ Not picked up by Doxygen:
 ```
 
 Also not picked up by Doxygen:
+
 ```c++
 /*
  * ... Description ...
  */
 ```
 
-A full list of comment syntaxes picked up by Doxygen can be found at https://www.doxygen.nl/manual/docblocks.html,
-but the above styles are favored.
+A full list of comment syntaxes picked up by Doxygen can be found at
+https://www.doxygen.nl/manual/docblocks.html, but the above styles are favored.
 
 Recommendations:
 
@@ -339,8 +345,8 @@ Recommendations:
 
 ### Generating Documentation
 
-The documentation can be generated with `make docs` and cleaned up with `make
-clean-docs`. The resulting files are located in `doc/doxygen/html`; open
+The documentation can be generated with `make docs` and cleaned up with
+`make clean-docs`. The resulting files are located in `doc/doxygen/html`; open
 `index.html` in that directory to view the homepage.
 
 Before running `make docs`, you'll need to install these dependencies:
@@ -349,8 +355,7 @@ Linux: `sudo apt install doxygen graphviz`
 
 MacOS: `brew install doxygen graphviz`
 
-Development tips and tricks
----------------------------
+## Development tips and tricks
 
 ### Compiling for debugging
 
@@ -370,16 +375,19 @@ There are a few possible fixes:
 1. Configure source file mapping.
 
 For `gdb` create or append to `.gdbinit` file:
+
 ```
 set substitute-path ./src /path/to/project/root/src
 ```
 
 For `lldb` create or append to `.lldbinit` file:
+
 ```
 settings set target.source-map ./src /path/to/project/root/src
 ```
 
 2. Add a symlink to the `./src` directory:
+
 ```
 ln -s /path/to/project/root/src src
 ```
@@ -392,16 +400,16 @@ Run configure with the `--enable-gprof` option, then make.
 
 ### `debug.log`
 
-If the code is behaving strangely, take a look in the `debug.log` file in the data directory;
-error and debugging messages are written there.
+If the code is behaving strangely, take a look in the `debug.log` file in the
+data directory; error and debugging messages are written there.
 
 Debug logging can be enabled on startup with the `-debug` and `-loglevel`
 configuration options and toggled while naviod is running with the `logging`
-RPC.  For instance, launching naviod with `-debug` or `-debug=1` will turn on
-all log categories and `-loglevel=trace` will turn on all log severity levels.
+RPC. For instance, launching naviod with `-debug` or `-debug=1` will turn on all
+log categories and `-loglevel=trace` will turn on all log severity levels.
 
-The Qt code routes `qDebug()` output to `debug.log` under category "qt": run with `-debug=qt`
-to see it.
+The Qt code routes `qDebug()` output to `debug.log` under category "qt": run
+with `-debug=qt` to see it.
 
 ### Signet, testnet, and regtest modes
 
@@ -410,8 +418,8 @@ you can run with either the `-signet` or the `-testnet` config option to test
 with "play navios" on a test network.
 
 If you are testing something that can run on one machine, run with the
-`-regtest` option.  In regression test mode, blocks can be created on demand;
-see [test/functional/](/test/functional) for tests that run in `-regtest` mode.
+`-regtest` option. In regression test mode, blocks can be created on demand; see
+[test/functional/](/test/functional) for tests that run in `-regtest` mode.
 
 ### DEBUG_LOCKORDER
 
@@ -429,12 +437,12 @@ to the `debug.log` file.
 
 The `--enable-debug` configure option adds `-DDEBUG_LOCKCONTENTION` to the
 compiler flags. You may also enable it manually for a non-debug build by running
-configure with `-DDEBUG_LOCKCONTENTION` added to your CPPFLAGS,
-i.e. `CPPFLAGS="-DDEBUG_LOCKCONTENTION"`, then build and run naviod.
+configure with `-DDEBUG_LOCKCONTENTION` added to your CPPFLAGS, i.e.
+`CPPFLAGS="-DDEBUG_LOCKCONTENTION"`, then build and run naviod.
 
 You can then use the `-debug=lock` configuration option at naviod startup or
-`navio-cli logging '["lock"]'` at runtime to turn on lock contention logging.
-It can be toggled off again with `navio-cli logging [] '["lock"]'`.
+`navio-cli logging '["lock"]'` at runtime to turn on lock contention logging. It
+can be toggled off again with `navio-cli logging [] '["lock"]'`.
 
 ### Assertions and Checks
 
@@ -442,26 +450,26 @@ The util file `src/util/check.h` offers helpers to protect against coding and
 internal logic bugs. They must never be used to validate user, network or any
 other input.
 
-* `assert` or `Assert` should be used to document assumptions when any
-  violation would mean that it is not safe to continue program execution. The
-  code is always compiled with assertions enabled.
-   - For example, a nullptr dereference or any other logic bug in validation
-     code means the program code is faulty and must terminate immediately.
-* `CHECK_NONFATAL` should be used for recoverable internal logic bugs. On
+- `assert` or `Assert` should be used to document assumptions when any violation
+  would mean that it is not safe to continue program execution. The code is
+  always compiled with assertions enabled.
+  - For example, a nullptr dereference or any other logic bug in validation code
+    means the program code is faulty and must terminate immediately.
+- `CHECK_NONFATAL` should be used for recoverable internal logic bugs. On
   failure, it will throw an exception, which can be caught to recover from the
   error.
-   - For example, a nullptr dereference or any other logic bug in RPC code
-     means that the RPC code is faulty and cannot be executed. However, the
-     logic bug can be shown to the user and the program can continue to run.
-* `Assume` should be used to document assumptions when program execution can
-  safely continue even if the assumption is violated. In debug builds it
-  behaves like `Assert`/`assert` to notify developers and testers about
-  nonfatal errors. In production it doesn't warn or log anything, though the
-  expression is always evaluated.
-   - For example it can be assumed that a variable is only initialized once,
-     but a failed assumption does not result in a fatal bug. A failed
-     assumption may or may not result in a slightly degraded user experience,
-     but it is safe to continue program execution.
+  - For example, a nullptr dereference or any other logic bug in RPC code means
+    that the RPC code is faulty and cannot be executed. However, the logic bug
+    can be shown to the user and the program can continue to run.
+- `Assume` should be used to document assumptions when program execution can
+  safely continue even if the assumption is violated. In debug builds it behaves
+  like `Assert`/`assert` to notify developers and testers about nonfatal errors.
+  In production it doesn't warn or log anything, though the expression is always
+  evaluated.
+  - For example it can be assumed that a variable is only initialized once, but
+    a failed assumption does not result in a fatal bug. A failed assumption may
+    or may not result in a slightly degraded user experience, but it is safe to
+    continue program execution.
 
 ### Valgrind suppressions file
 
@@ -484,9 +492,9 @@ $ ./test/functional/test_runner.py --valgrind
 LCOV can be used to generate a test coverage report. LCOV must be installed on
 your system (e.g. the `lcov` package on Debian/Ubuntu).
 
-The CMake build emits `Coverage.cmake` / `CoverageFuzz.cmake` / `CoverageInclude.cmake`
-helper scripts into the build dir. Run them from `cmake -P` after building
-the project with coverage flags:
+The CMake build emits `Coverage.cmake` / `CoverageFuzz.cmake` /
+`CoverageInclude.cmake` helper scripts into the build dir. Run them from
+`cmake -P` after building the project with coverage flags:
 
 ```shell
 cmake -B build -G Ninja \
@@ -505,8 +513,8 @@ cmake -P build/Coverage.cmake
 Profiling is a good way to get a precise idea of where time is being spent in
 code. One tool for doing profiling on Linux platforms is called
 [`perf`](https://www.brendangregg.com/perf.html), and has been integrated into
-the functional test framework. Perf can observe a running process and sample
-(at some frequency) where its execution is.
+the functional test framework. Perf can observe a running process and sample (at
+some frequency) where its execution is.
 
 Perf installation is contingent on which kernel version you're running; see
 [this thread](https://askubuntu.com/questions/50145/how-to-install-perf-monitoring-tool)
@@ -520,12 +528,12 @@ $ sudo sysctl -w kernel.perf_event_paranoid=-1
 $ sudo sysctl -w kernel.kptr_restrict=0
 ```
 
-Make sure you [understand the security
-trade-offs](https://lwn.net/Articles/420403/) of setting these kernel
-parameters.
+Make sure you
+[understand the security trade-offs](https://lwn.net/Articles/420403/) of
+setting these kernel parameters.
 
-To profile a running naviod process for 60 seconds, you could use an
-invocation of `perf record` like this:
+To profile a running naviod process for 60 seconds, you could use an invocation
+of `perf record` like this:
 
 ```sh
 $ perf record \
@@ -542,7 +550,6 @@ perf report --stdio | c++filt | less
 or using a graphical tool like [Hotspot](https://github.com/KDAB/hotspot).
 
 See the functional test documentation for how to invoke perf within tests.
-
 
 ### Sanitizers
 
@@ -570,17 +577,18 @@ address sanitizer, libtsan for the thread sanitizer, and libubsan for the
 undefined sanitizer. If you are missing required libraries, the configure script
 will fail with a linker error when testing the sanitizer flags.
 
-The test suite should pass cleanly with the `thread` and `undefined` sanitizers. You
-may need to use a suppressions file, see `test/sanitizer_suppressions`. They may be
-used as follows:
+The test suite should pass cleanly with the `thread` and `undefined` sanitizers.
+You may need to use a suppressions file, see `test/sanitizer_suppressions`. They
+may be used as follows:
+
 ```bash
 export LSAN_OPTIONS="suppressions=$(pwd)/test/sanitizer_suppressions/lsan"
 export TSAN_OPTIONS="suppressions=$(pwd)/test/sanitizer_suppressions/tsan:halt_on_error=1:second_deadlock_stack=1"
 export UBSAN_OPTIONS="suppressions=$(pwd)/test/sanitizer_suppressions/ubsan:print_stacktrace=1:halt_on_error=1:report_error_type=1"
 ```
 
-See the CI config for more examples, and upstream documentation for more information
-about any additional options.
+See the CI config for more examples, and upstream documentation for more
+information about any additional options.
 
 There are a number of known problems when using the `address` sanitizer. The
 address sanitizer is known to fail in
@@ -597,20 +605,19 @@ compiler.
 
 Additional resources:
 
- * [AddressSanitizer](https://clang.llvm.org/docs/AddressSanitizer.html)
- * [LeakSanitizer](https://clang.llvm.org/docs/LeakSanitizer.html)
- * [MemorySanitizer](https://clang.llvm.org/docs/MemorySanitizer.html)
- * [ThreadSanitizer](https://clang.llvm.org/docs/ThreadSanitizer.html)
- * [UndefinedBehaviorSanitizer](https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html)
- * [GCC Instrumentation Options](https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html)
- * [Google Sanitizers Wiki](https://github.com/google/sanitizers/wiki)
- * [Issue #12691: Enable -fsanitize flags in Travis](https://github.com/bitcoin/bitcoin/issues/12691)
+- [AddressSanitizer](https://clang.llvm.org/docs/AddressSanitizer.html)
+- [LeakSanitizer](https://clang.llvm.org/docs/LeakSanitizer.html)
+- [MemorySanitizer](https://clang.llvm.org/docs/MemorySanitizer.html)
+- [ThreadSanitizer](https://clang.llvm.org/docs/ThreadSanitizer.html)
+- [UndefinedBehaviorSanitizer](https://clang.llvm.org/docs/UndefinedBehaviorSanitizer.html)
+- [GCC Instrumentation Options](https://gcc.gnu.org/onlinedocs/gcc/Instrumentation-Options.html)
+- [Google Sanitizers Wiki](https://github.com/google/sanitizers/wiki)
+- [Issue #12691: Enable -fsanitize flags in Travis](https://github.com/bitcoin/bitcoin/issues/12691)
 
-Locking/mutex usage notes
--------------------------
+## Locking/mutex usage notes
 
-The code is multi-threaded and uses mutexes and the
-`LOCK` and `TRY_LOCK` macros to protect data structures.
+The code is multi-threaded and uses mutexes and the `LOCK` and `TRY_LOCK` macros
+to protect data structures.
 
 Deadlocks due to inconsistent lock ordering (thread 1 locks `cs_main` and then
 `cs_wallet`, while thread 2 locks them in the opposite order: result, deadlock
@@ -618,21 +625,21 @@ as each waits for the other to release its lock) are a problem. Compile with
 `-DDEBUG_LOCKORDER` (or use `--enable-debug`) to get lock order inconsistencies
 reported in the `debug.log` file.
 
-Re-architecting the core code so there are better-defined interfaces
-between the various components is a goal, with any necessary locking
-done by the components (e.g. see the self-contained `FillableSigningProvider` class
-and its `cs_KeyStore` lock for example).
+Re-architecting the core code so there are better-defined interfaces between the
+various components is a goal, with any necessary locking done by the components
+(e.g. see the self-contained `FillableSigningProvider` class and its
+`cs_KeyStore` lock for example).
 
-Threads
--------
+## Threads
 
 - [Main thread (`naviod`)](https://doxygen.bitcoincore.org/naviod_8cpp.html#a0ddf1224851353fc92bfbff6f499fa97)
   : Started from `main()` in `naviod.cpp`. Responsible for starting up and
   shutting down the application.
 
 - [Init load (`b-initload`)](https://doxygen.bitcoincore.org/namespacenode.html#ab4305679079866f0f420f7dbf278381d)
-  : Performs various loading tasks that are part of init but shouldn't block the node from being started: external block import,
-   reindex, reindex-chainstate, main chain activation, spawn indexes background sync threads and mempool load.
+  : Performs various loading tasks that are part of init but shouldn't block the
+  node from being started: external block import, reindex, reindex-chainstate,
+  main chain activation, spawn indexes background sync threads and mempool load.
 
 - [CCheckQueue::Loop (`b-scriptch.x`)](https://doxygen.bitcoincore.org/class_c_check_queue.html#a6e7fa51d3a25e7cb65446d4b50e6a987)
   : Parallel script validation threads for transactions in blocks.
@@ -654,16 +661,14 @@ Threads
   : Libevent thread for tor connections.
 
 - Net threads:
-
   - [ThreadMessageHandler (`b-msghand`)](https://doxygen.bitcoincore.org/class_c_connman.html#aacdbb7148575a31bb33bc345e2bf22a9)
-    : Application level message handling (sending and receiving). Almost
-    all net_processing and validation logic runs on this thread.
+    : Application level message handling (sending and receiving). Almost all
+    net_processing and validation logic runs on this thread.
 
   - [ThreadDNSAddressSeed (`b-dnsseed`)](https://doxygen.bitcoincore.org/class_c_connman.html#aa7c6970ed98a4a7bafbc071d24897d13)
     : Loads addresses of peers from the DNS.
 
-  - ThreadMapPort (`b-mapport`)
-    : Universal plug-and-play startup/shutdown.
+  - ThreadMapPort (`b-mapport`) : Universal plug-and-play startup/shutdown.
 
   - [ThreadSocketHandler (`b-net`)](https://doxygen.bitcoincore.org/class_c_connman.html#a765597cbfe99c083d8fa3d61bb464e34)
     : Sends/Receives data from peers on port 8333.
@@ -675,28 +680,29 @@ Threads
     : Initiates new connections to peers.
 
   - [ThreadI2PAcceptIncoming (`b-i2paccept`)](https://doxygen.bitcoincore.org/class_c_connman.html#a57787b4f9ac847d24065fbb0dd6e70f8)
-    : Listens for and accepts incoming I2P connections through the I2P SAM proxy.
+    : Listens for and accepts incoming I2P connections through the I2P SAM
+    proxy.
 
-Ignoring IDE/editor files
---------------------------
+## Ignoring IDE/editor files
 
 In closed-source environments in which everyone uses the same IDE, it is common
 to add temporary files it produces to the project-wide `.gitignore` file.
 
-However, in open source software such as Navio Core, where everyone uses
-their own editors/IDE/tools, it is less common. Only you know what files your
-editor produces and this may change from version to version. The canonical way
-to do this is thus to create your local gitignore. Add this to `~/.gitconfig`:
+However, in open source software such as Navio Core, where everyone uses their
+own editors/IDE/tools, it is less common. Only you know what files your editor
+produces and this may change from version to version. The canonical way to do
+this is thus to create your local gitignore. Add this to `~/.gitconfig`:
 
 ```
 [core]
         excludesfile = /home/.../.gitignore_global
 ```
 
-(alternatively, type the command `git config --global core.excludesfile ~/.gitignore_global`
-on a terminal)
+(alternatively, type the command
+`git config --global core.excludesfile ~/.gitignore_global` on a terminal)
 
 Then put your favourite tool's temporary filenames in that file, e.g.
+
 ```
 # NetBeans
 nbproject/
@@ -706,129 +712,120 @@ Another option is to create a per-repository excludes file `.git/info/exclude`.
 These are not committed but apply only to one repository.
 
 If a set of tools is used by the build system or scripts the repository (for
-example, lcov) it is perfectly acceptable to add its files to `.gitignore`
-and commit them.
+example, lcov) it is perfectly acceptable to add its files to `.gitignore` and
+commit them.
 
-Development guidelines
-============================
+# Development guidelines
 
-A few non-style-related recommendations for developers, as well as points to
-pay attention to for reviewers of Navio Core code.
+A few non-style-related recommendations for developers, as well as points to pay
+attention to for reviewers of Navio Core code.
 
-General Navio Core
-----------------------
+## General Navio Core
 
-- New features should be exposed on RPC first, then can be made available in the GUI.
-
-  - *Rationale*: RPC allows for better automatic testing. The test suite for
-    the GUI is very limited.
+- New features should be exposed on RPC first, then can be made available in the
+  GUI.
+  - _Rationale_: RPC allows for better automatic testing. The test suite for the
+    GUI is very limited.
 
 - Make sure pull requests pass CI before merging.
+  - _Rationale_: Makes sure that they pass thorough testing, and that the tester
+    will keep passing on the master branch. Otherwise, all new pull requests
+    will start failing the tests, resulting in confusion and mayhem.
 
-  - *Rationale*: Makes sure that they pass thorough testing, and that the tester will keep passing
-     on the master branch. Otherwise, all new pull requests will start failing the tests, resulting in
-     confusion and mayhem.
-
-  - *Explanation*: If the test suite is to be updated for a change, this has to
+  - _Explanation_: If the test suite is to be updated for a change, this has to
     be done first.
 
-Logging
--------
+## Logging
 
-The macros `LogInfo`, `LogDebug`, `LogTrace`, `LogWarning` and `LogError` are available for
-logging messages. They should be used as follows:
+The macros `LogInfo`, `LogDebug`, `LogTrace`, `LogWarning` and `LogError` are
+available for logging messages. They should be used as follows:
 
-- `LogDebug(BCLog::CATEGORY, fmt, params...)` is what you want
-  most of the time, and it should be used for log messages that are
-  useful for debugging and can reasonably be enabled on a production
-  system (that has sufficient free storage space). They will be logged
-  if the program is started with `-debug=category` or `-debug=1`.
-  Note that `LogPrint(BCLog::CATEGORY, fmt, params...)` is a deprecated
-  alias for `LogDebug`.
+- `LogDebug(BCLog::CATEGORY, fmt, params...)` is what you want most of the time,
+  and it should be used for log messages that are useful for debugging and can
+  reasonably be enabled on a production system (that has sufficient free storage
+  space). They will be logged if the program is started with `-debug=category`
+  or `-debug=1`. Note that `LogPrint(BCLog::CATEGORY, fmt, params...)` is a
+  deprecated alias for `LogDebug`.
 
 - `LogInfo(fmt, params...)` should only be used rarely, e.g. for startup
-  messages or for infrequent and important events such as a new block tip
-  being found or a new outbound connection being made. These log messages
-  are unconditional, so care must be taken that they can't be used by an
-  attacker to fill up storage. Note that `LogPrintf(fmt, params...)` is
-  a deprecated alias for `LogInfo`.
+  messages or for infrequent and important events such as a new block tip being
+  found or a new outbound connection being made. These log messages are
+  unconditional, so care must be taken that they can't be used by an attacker to
+  fill up storage. Note that `LogPrintf(fmt, params...)` is a deprecated alias
+  for `LogInfo`.
 
-- `LogError(fmt, params...)` should be used in place of `LogInfo` for
-  severe problems that require the node (or a subsystem) to shut down
-  entirely (e.g., insufficient storage space).
+- `LogError(fmt, params...)` should be used in place of `LogInfo` for severe
+  problems that require the node (or a subsystem) to shut down entirely (e.g.,
+  insufficient storage space).
 
-- `LogWarning(fmt, params...)` should be used in place of `LogInfo` for
-  severe problems that the node admin should address, but are not
-  severe enough to warrant shutting down the node (e.g., system time
-  appears to be wrong, unknown soft fork appears to have activated).
+- `LogWarning(fmt, params...)` should be used in place of `LogInfo` for severe
+  problems that the node admin should address, but are not severe enough to
+  warrant shutting down the node (e.g., system time appears to be wrong, unknown
+  soft fork appears to have activated).
 
 - `LogTrace(BCLog::CATEGORY, fmt, params...)` should be used in place of
-  `LogDebug` for log messages that would be unusable on a production
-  system, e.g. due to being too noisy in normal use, or too resource
-  intensive to process. These will be logged if the startup
-  options `-debug=category -loglevel=category:trace` or `-debug=1
-  -loglevel=trace` are selected.
+  `LogDebug` for log messages that would be unusable on a production system,
+  e.g. due to being too noisy in normal use, or too resource intensive to
+  process. These will be logged if the startup options
+  `-debug=category -loglevel=category:trace` or `-debug=1 -loglevel=trace` are
+  selected.
 
-Note that the format strings and parameters of `LogDebug` and `LogTrace`
-are only evaluated if the logging category is enabled, so you must be
-careful to avoid side-effects in those expressions.
+Note that the format strings and parameters of `LogDebug` and `LogTrace` are
+only evaluated if the logging category is enabled, so you must be careful to
+avoid side-effects in those expressions.
 
-Wallet
--------
+## Wallet
 
 - Make sure that no crashes happen with run-time option `-disablewallet`.
 
-General C++
--------------
+## General C++
 
-For general C++ guidelines, you may refer to the [C++ Core
-Guidelines](https://isocpp.github.io/CppCoreGuidelines/).
+For general C++ guidelines, you may refer to the
+[C++ Core Guidelines](https://isocpp.github.io/CppCoreGuidelines/).
 
 Common misconceptions are clarified in those sections:
 
-- Passing (non-)fundamental types in the [C++ Core
-  Guideline](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Rf-conventional).
+- Passing (non-)fundamental types in the
+  [C++ Core Guideline](https://isocpp.github.io/CppCoreGuidelines/CppCoreGuidelines#Rf-conventional).
 
 - If you use the `.h`, you must link the `.cpp`.
+  - _Rationale_: Include files define the interface for the code in
+    implementation files. Including one but not linking the other is confusing.
+    Please avoid that. Moving functions from the `.h` to the `.cpp` should not
+    result in build errors.
 
-  - *Rationale*: Include files define the interface for the code in implementation files. Including one but
-      not linking the other is confusing. Please avoid that. Moving functions from
-      the `.h` to the `.cpp` should not result in build errors.
+- Use the RAII (Resource Acquisition Is Initialization) paradigm where possible.
+  For example, by using `unique_ptr` for allocations in a function.
+  - _Rationale_: This avoids memory and resource leaks, and ensures exception
+    safety.
 
-- Use the RAII (Resource Acquisition Is Initialization) paradigm where possible. For example, by using
-  `unique_ptr` for allocations in a function.
+## C++ data structures
 
-  - *Rationale*: This avoids memory and resource leaks, and ensures exception safety.
+- Never use the `std::map []` syntax when reading from a map, but instead use
+  `.find()`.
+  - _Rationale_: `[]` does an insert (of the default element) if the item
+    doesn't exist in the map yet. This has resulted in memory leaks in the past,
+    as well as race conditions (expecting read-read behavior). Using `[]` is
+    fine for _writing_ to a map.
 
-C++ data structures
---------------------
-
-- Never use the `std::map []` syntax when reading from a map, but instead use `.find()`.
-
-  - *Rationale*: `[]` does an insert (of the default element) if the item doesn't
-    exist in the map yet. This has resulted in memory leaks in the past, as well as
-    race conditions (expecting read-read behavior). Using `[]` is fine for *writing* to a map.
-
-- Do not compare an iterator from one data structure with an iterator of
-  another data structure (even if of the same type).
-
-  - *Rationale*: Behavior is undefined. In C++ parlor this means "may reformat
-    the universe", in practice this has resulted in at least one hard-to-debug crash bug.
+- Do not compare an iterator from one data structure with an iterator of another
+  data structure (even if of the same type).
+  - _Rationale_: Behavior is undefined. In C++ parlor this means "may reformat
+    the universe", in practice this has resulted in at least one hard-to-debug
+    crash bug.
 
 - Watch out for out-of-bounds vector access. `&vch[vch.size()]` is illegal,
-  including `&vch[0]` for an empty vector. Use `vch.data()` and `vch.data() +
-  vch.size()` instead.
+  including `&vch[0]` for an empty vector. Use `vch.data()` and
+  `vch.data() + vch.size()` instead.
 
 - Vector bounds checking is only enabled in debug mode. Do not rely on it.
 
-- Initialize all non-static class members where they are defined.
-  If this is skipped for a good reason (i.e., optimization on the critical
-  path), add an explicit comment about this.
-
-  - *Rationale*: Ensure determinism by avoiding accidental use of uninitialized
-    values. Also, static analyzers balk about this.
-    Initializing the members in the declaration makes it easy to
-    spot uninitialized ones.
+- Initialize all non-static class members where they are defined. If this is
+  skipped for a good reason (i.e., optimization on the critical path), add an
+  explicit comment about this.
+  - _Rationale_: Ensure determinism by avoiding accidental use of uninitialized
+    values. Also, static analyzers balk about this. Initializing the members in
+    the declaration makes it easy to spot uninitialized ones.
 
 ```cpp
 class A
@@ -838,8 +835,7 @@ class A
 ```
 
 - By default, declare constructors `explicit`.
-
-  - *Rationale*: This is a precaution to avoid unintended
+  - _Rationale_: This is a precaution to avoid unintended
     [conversions](https://en.cppreference.com/w/cpp/language/converting_constructor).
 
 - Use explicitly signed or unsigned `char`s, or even better `uint8_t` and
@@ -848,16 +844,17 @@ class A
   lead to interoperability problems or dangerous conditions such as
   out-of-bounds array accesses.
 
-- Prefer explicit constructions over implicit ones that rely on 'magical' C++ behavior.
+- Prefer explicit constructions over implicit ones that rely on 'magical' C++
+  behavior.
+  - _Rationale_: Easier to understand what is happening, thus easier to spot
+    mistakes, even for those that are not language lawyers.
 
-  - *Rationale*: Easier to understand what is happening, thus easier to spot mistakes, even for those
-  that are not language lawyers.
-
-- Use `Span` as function argument when it can operate on any range-like container.
-
-  - *Rationale*: Compared to `Foo(const vector<int>&)` this avoids the need for a (potentially expensive)
-    conversion to vector if the caller happens to have the input stored in another type of container.
-    However, be aware of the pitfalls documented in [span.h](../src/span.h).
+- Use `Span` as function argument when it can operate on any range-like
+  container.
+  - _Rationale_: Compared to `Foo(const vector<int>&)` this avoids the need for
+    a (potentially expensive) conversion to vector if the caller happens to have
+    the input stored in another type of container. However, be aware of the
+    pitfalls documented in [span.h](../src/span.h).
 
 ```cpp
 void Foo(Span<const int> data);
@@ -866,9 +863,11 @@ std::vector<int> vec{1,2,3};
 Foo(vec);
 ```
 
-- Prefer `enum class` (scoped enumerations) over `enum` (traditional enumerations) where possible.
-
-  - *Rationale*: Scoped enumerations avoid two potential pitfalls/problems with traditional C++ enumerations: implicit conversions to `int`, and name clashes due to enumerators being exported to the surrounding scope.
+- Prefer `enum class` (scoped enumerations) over `enum` (traditional
+  enumerations) where possible.
+  - _Rationale_: Scoped enumerations avoid two potential pitfalls/problems with
+    traditional C++ enumerations: implicit conversions to `int`, and name
+    clashes due to enumerators being exported to the surrounding scope.
 
 - `switch` statement on an enumeration example:
 
@@ -892,110 +891,115 @@ int GetInt(Tabs tab)
 }
 ```
 
-*Rationale*: The comment documents skipping `default:` label, and it complies with `clang-format` rules. The assertion prevents firing of `-Wreturn-type` warning on some compilers.
+_Rationale_: The comment documents skipping `default:` label, and it complies
+with `clang-format` rules. The assertion prevents firing of `-Wreturn-type`
+warning on some compilers.
 
-Strings and formatting
-------------------------
+## Strings and formatting
 
 - Use `std::string`, avoid C string manipulation functions.
+  - _Rationale_: C++ string handling is marginally safer, less scope for buffer
+    overflows, and surprises with `\0` characters. Also, some C string
+    manipulations tend to act differently depending on platform, or even the
+    user locale.
 
-  - *Rationale*: C++ string handling is marginally safer, less scope for
-    buffer overflows, and surprises with `\0` characters. Also, some C string manipulations
-    tend to act differently depending on platform, or even the user locale.
-
-- Use `ToIntegral` from [`strencodings.h`](/src/util/strencodings.h) for number parsing. In legacy code you might also find `ParseInt*` family of functions, `ParseDouble` or `LocaleIndependentAtoi`.
-
-  - *Rationale*: These functions do overflow checking and avoid pesky locale issues.
+- Use `ToIntegral` from [`strencodings.h`](/src/util/strencodings.h) for number
+  parsing. In legacy code you might also find `ParseInt*` family of functions,
+  `ParseDouble` or `LocaleIndependentAtoi`.
+  - _Rationale_: These functions do overflow checking and avoid pesky locale
+    issues.
 
 - Avoid using locale dependent functions if possible. You can use the provided
-  [`lint-locale-dependence.py`](/test/lint/lint-locale-dependence.py)
-  to check for accidental use of locale dependent functions.
+  [`lint-locale-dependence.py`](/test/lint/lint-locale-dependence.py) to check
+  for accidental use of locale dependent functions.
+  - _Rationale_: Unnecessary locale dependence can cause bugs that are very
+    tricky to isolate and fix.
 
-  - *Rationale*: Unnecessary locale dependence can cause bugs that are very tricky to isolate and fix.
-
-  - These functions are known to be locale dependent:
-    `alphasort`, `asctime`, `asprintf`, `atof`, `atoi`, `atol`, `atoll`, `atoq`,
-    `btowc`, `ctime`, `dprintf`, `fgetwc`, `fgetws`, `fprintf`, `fputwc`,
-    `fputws`, `fscanf`, `fwprintf`, `getdate`, `getwc`, `getwchar`, `isalnum`,
-    `isalpha`, `isblank`, `iscntrl`, `isdigit`, `isgraph`, `islower`, `isprint`,
-    `ispunct`, `isspace`, `isupper`, `iswalnum`, `iswalpha`, `iswblank`,
-    `iswcntrl`, `iswctype`, `iswdigit`, `iswgraph`, `iswlower`, `iswprint`,
-    `iswpunct`, `iswspace`, `iswupper`, `iswxdigit`, `isxdigit`, `mblen`,
-    `mbrlen`, `mbrtowc`, `mbsinit`, `mbsnrtowcs`, `mbsrtowcs`, `mbstowcs`,
-    `mbtowc`, `mktime`, `putwc`, `putwchar`, `scanf`, `snprintf`, `sprintf`,
-    `sscanf`, `stoi`, `stol`, `stoll`, `strcasecmp`, `strcasestr`, `strcoll`,
-    `strfmon`, `strftime`, `strncasecmp`, `strptime`, `strtod`, `strtof`,
-    `strtoimax`, `strtol`, `strtold`, `strtoll`, `strtoq`, `strtoul`,
-    `strtoull`, `strtoumax`, `strtouq`, `strxfrm`, `swprintf`, `tolower`,
-    `toupper`, `towctrans`, `towlower`, `towupper`, `ungetwc`, `vasprintf`,
-    `vdprintf`, `versionsort`, `vfprintf`, `vfscanf`, `vfwprintf`, `vprintf`,
-    `vscanf`, `vsnprintf`, `vsprintf`, `vsscanf`, `vswprintf`, `vwprintf`,
-    `wcrtomb`, `wcscasecmp`, `wcscoll`, `wcsftime`, `wcsncasecmp`, `wcsnrtombs`,
+  - These functions are known to be locale dependent: `alphasort`, `asctime`,
+    `asprintf`, `atof`, `atoi`, `atol`, `atoll`, `atoq`, `btowc`, `ctime`,
+    `dprintf`, `fgetwc`, `fgetws`, `fprintf`, `fputwc`, `fputws`, `fscanf`,
+    `fwprintf`, `getdate`, `getwc`, `getwchar`, `isalnum`, `isalpha`, `isblank`,
+    `iscntrl`, `isdigit`, `isgraph`, `islower`, `isprint`, `ispunct`, `isspace`,
+    `isupper`, `iswalnum`, `iswalpha`, `iswblank`, `iswcntrl`, `iswctype`,
+    `iswdigit`, `iswgraph`, `iswlower`, `iswprint`, `iswpunct`, `iswspace`,
+    `iswupper`, `iswxdigit`, `isxdigit`, `mblen`, `mbrlen`, `mbrtowc`,
+    `mbsinit`, `mbsnrtowcs`, `mbsrtowcs`, `mbstowcs`, `mbtowc`, `mktime`,
+    `putwc`, `putwchar`, `scanf`, `snprintf`, `sprintf`, `sscanf`, `stoi`,
+    `stol`, `stoll`, `strcasecmp`, `strcasestr`, `strcoll`, `strfmon`,
+    `strftime`, `strncasecmp`, `strptime`, `strtod`, `strtof`, `strtoimax`,
+    `strtol`, `strtold`, `strtoll`, `strtoq`, `strtoul`, `strtoull`,
+    `strtoumax`, `strtouq`, `strxfrm`, `swprintf`, `tolower`, `toupper`,
+    `towctrans`, `towlower`, `towupper`, `ungetwc`, `vasprintf`, `vdprintf`,
+    `versionsort`, `vfprintf`, `vfscanf`, `vfwprintf`, `vprintf`, `vscanf`,
+    `vsnprintf`, `vsprintf`, `vsscanf`, `vswprintf`, `vwprintf`, `wcrtomb`,
+    `wcscasecmp`, `wcscoll`, `wcsftime`, `wcsncasecmp`, `wcsnrtombs`,
     `wcsrtombs`, `wcstod`, `wcstof`, `wcstoimax`, `wcstol`, `wcstold`,
     `wcstoll`, `wcstombs`, `wcstoul`, `wcstoull`, `wcstoumax`, `wcswidth`,
     `wcsxfrm`, `wctob`, `wctomb`, `wctrans`, `wctype`, `wcwidth`, `wprintf`
 
-- For `strprintf`, `LogInfo`, `LogDebug`, etc formatting characters don't need size specifiers.
+- For `strprintf`, `LogInfo`, `LogDebug`, etc formatting characters don't need
+  size specifiers.
+  - _Rationale_: Navio Core uses tinyformat, which is type safe. Leave them out
+    to avoid confusion.
 
-  - *Rationale*: Navio Core uses tinyformat, which is type safe. Leave them out to avoid confusion.
+- Use `.c_str()` sparingly. Its only valid use is to pass C++ strings to C
+  functions that take NULL-terminated strings.
+  - Do not use it when passing a sized array (so along with `.size()`). Use
+    `.data()` instead to get a pointer to the raw data.
+    - _Rationale_: Although this is guaranteed to be safe starting with C++11,
+      `.data()` communicates the intent better.
 
-- Use `.c_str()` sparingly. Its only valid use is to pass C++ strings to C functions that take NULL-terminated
-  strings.
-
-  - Do not use it when passing a sized array (so along with `.size()`). Use `.data()` instead to get a pointer
-    to the raw data.
-
-    - *Rationale*: Although this is guaranteed to be safe starting with C++11, `.data()` communicates the intent better.
-
-  - Do not use it when passing strings to `tfm::format`, `strprintf`, `LogInfo`, `LogDebug`, etc.
-
-    - *Rationale*: This is redundant. Tinyformat handles strings.
+  - Do not use it when passing strings to `tfm::format`, `strprintf`, `LogInfo`,
+    `LogDebug`, etc.
+    - _Rationale_: This is redundant. Tinyformat handles strings.
 
   - Do not use it to convert to `QString`. Use `QString::fromStdString()`.
-
-    - *Rationale*: Qt has built-in functionality for converting their string
+    - _Rationale_: Qt has built-in functionality for converting their string
       type from/to C++. No need to roll your own.
 
-  - In cases where do you call `.c_str()`, you might want to additionally check that the string does not contain embedded '\0' characters, because
-    it will (necessarily) truncate the string. This might be used to hide parts of the string from logging or to circumvent
-    checks. If a use of strings is sensitive to this, take care to check the string for embedded NULL characters first
-    and reject it if there are any (see `ParsePrechecks` in `strencodings.cpp` for an example).
+  - In cases where do you call `.c_str()`, you might want to additionally check
+    that the string does not contain embedded '\0' characters, because it will
+    (necessarily) truncate the string. This might be used to hide parts of the
+    string from logging or to circumvent checks. If a use of strings is
+    sensitive to this, take care to check the string for embedded NULL
+    characters first and reject it if there are any (see `ParsePrechecks` in
+    `strencodings.cpp` for an example).
 
-Shadowing
---------------
+## Shadowing
 
-Although the shadowing warning (`-Wshadow`) is not enabled by default (it prevents issues arising
-from using a different variable with the same name),
-please name variables so that their names do not shadow variables defined in the source code.
+Although the shadowing warning (`-Wshadow`) is not enabled by default (it
+prevents issues arising from using a different variable with the same name),
+please name variables so that their names do not shadow variables defined in the
+source code.
 
 When using nested cycles, do not name the inner cycle variable the same as in
 the outer cycle, etc.
 
-Lifetimebound
---------------
+## Lifetimebound
 
-The [Clang `lifetimebound`
-attribute](https://clang.llvm.org/docs/AttributeReference.html#lifetimebound)
+The
+[Clang `lifetimebound` attribute](https://clang.llvm.org/docs/AttributeReference.html#lifetimebound)
 can be used to tell the compiler that a lifetime is bound to an object and
 potentially see a compile-time warning if the object has a shorter lifetime from
-the invalid use of a temporary. You can use the attribute by adding a `LIFETIMEBOUND`
-annotation defined in `src/attributes.h`; please grep the codebase for examples.
+the invalid use of a temporary. You can use the attribute by adding a
+`LIFETIMEBOUND` annotation defined in `src/attributes.h`; please grep the
+codebase for examples.
 
-Threads and synchronization
-----------------------------
+## Threads and synchronization
 
 - Prefer `Mutex` type to `RecursiveMutex` one.
 
-- Consistently use [Clang Thread Safety Analysis](https://clang.llvm.org/docs/ThreadSafetyAnalysis.html) annotations to
-  get compile-time warnings about potential race conditions or deadlocks in code.
-
+- Consistently use
+  [Clang Thread Safety Analysis](https://clang.llvm.org/docs/ThreadSafetyAnalysis.html)
+  annotations to get compile-time warnings about potential race conditions or
+  deadlocks in code.
   - In functions that are declared separately from where they are defined, the
     thread safety annotations should be added exclusively to the function
     declaration. Annotations on the definition could lead to false positives
     (lack of compile failure) at call sites between the two.
 
-  - Prefer locks that are in a class rather than global, and that are
-    internal to a class (private or protected) rather than public.
+  - Prefer locks that are in a class rather than global, and that are internal
+    to a class (private or protected) rather than public.
 
   - Combine annotations in function declarations with run-time asserts in
     function definitions (`AssertLockNotHeld()` can be omitted if `LOCK()` is
@@ -1068,6 +1072,7 @@ bool Chainstate::PreciousBlock(BlockValidationState& state, CBlockIndex* pindex)
   with braces.
 
   OK:
+
 ```c++
 {
     TRY_LOCK(cs_vNodes, lockNodes);
@@ -1075,7 +1080,8 @@ bool Chainstate::PreciousBlock(BlockValidationState& state, CBlockIndex* pindex)
 }
 ```
 
-  Wrong:
+Wrong:
+
 ```c++
 TRY_LOCK(cs_vNodes, lockNodes);
 {
@@ -1083,56 +1089,57 @@ TRY_LOCK(cs_vNodes, lockNodes);
 }
 ```
 
-Scripts
---------------------------
+## Scripts
 
 Write scripts in Python rather than bash, when possible.
 
 ### Shebang
 
 - Use `#!/usr/bin/env bash` instead of obsolete `#!/bin/bash`.
+  - [_Rationale_](https://github.com/dylanaraps/pure-bash-bible#shebang):
 
-  - [*Rationale*](https://github.com/dylanaraps/pure-bash-bible#shebang):
-
-    `#!/bin/bash` assumes it is always installed to /bin/ which can cause issues;
+    `#!/bin/bash` assumes it is always installed to /bin/ which can cause
+    issues;
 
     `#!/usr/bin/env bash` searches the user's PATH to find the bash binary.
 
   OK:
+
 ```bash
 #!/usr/bin/env bash
 ```
 
-  Wrong:
+Wrong:
+
 ```bash
 #!/bin/bash
 ```
 
-Source code organization
---------------------------
+## Source code organization
 
-- Implementation code should go into the `.cpp` file and not the `.h`, unless necessary due to template usage or
-  when performance due to inlining is critical.
+- Implementation code should go into the `.cpp` file and not the `.h`, unless
+  necessary due to template usage or when performance due to inlining is
+  critical.
+  - _Rationale_: Shorter and simpler header files are easier to read and reduce
+    compile time.
 
-  - *Rationale*: Shorter and simpler header files are easier to read and reduce compile time.
+- Use only the lowercase alphanumerics (`a-z0-9`), underscore (`_`) and hyphen
+  (`-`) in source code filenames.
+  - _Rationale_: `grep`:ing and auto-completing filenames is easier when using a
+    consistent naming pattern. Potential problems when building on
+    case-insensitive filesystems are avoided when using only lowercase
+    characters in source code filenames.
 
-- Use only the lowercase alphanumerics (`a-z0-9`), underscore (`_`) and hyphen (`-`) in source code filenames.
-
-  - *Rationale*: `grep`:ing and auto-completing filenames is easier when using a consistent
-    naming pattern. Potential problems when building on case-insensitive filesystems are
-    avoided when using only lowercase characters in source code filenames.
-
-- Every `.cpp` and `.h` file should `#include` every header file it directly uses classes, functions or other
-  definitions from, even if those headers are already included indirectly through other headers.
-
-  - *Rationale*: Excluding headers because they are already indirectly included results in compilation
-    failures when those indirect dependencies change. Furthermore, it obscures what the real code
-    dependencies are.
+- Every `.cpp` and `.h` file should `#include` every header file it directly
+  uses classes, functions or other definitions from, even if those headers are
+  already included indirectly through other headers.
+  - _Rationale_: Excluding headers because they are already indirectly included
+    results in compilation failures when those indirect dependencies change.
+    Furthermore, it obscures what the real code dependencies are.
 
 - Don't import anything into the global namespace (`using namespace ...`). Use
   fully specified types such as `std::string`.
-
-  - *Rationale*: Avoids symbol conflicts.
+  - _Rationale_: Avoids symbol conflicts.
 
 - Terminate namespaces with a comment (`// namespace mynamespace`). The comment
   should be placed on the same line as the brace closing the namespace, e.g.
@@ -1147,12 +1154,11 @@ namespace {
 } // namespace
 ```
 
-  - *Rationale*: Avoids confusion about the namespace context.
+- _Rationale_: Avoids confusion about the namespace context.
 
 - Use `#include <primitives/transaction.h>` bracket syntax instead of
   `#include "primitives/transactions.h"` quote syntax.
-
-  - *Rationale*: Bracket syntax is less ambiguous because the preprocessor
+  - _Rationale_: Bracket syntax is less ambiguous because the preprocessor
     searches a fixed list of include directories without taking location of the
     source file into account. This allows quoted includes to stand out more when
     the location of the source file actually is relevant.
@@ -1167,14 +1173,13 @@ namespace {
 #endif // BITCOIN_FOO_BAR_H
 ```
 
-GUI
------
+## GUI
 
 - Do not display or manipulate dialogs in model code (classes `*Model`).
-
-  - *Rationale*: Model classes pass through events and data from the core, they
-    should not interact with the user. That's where View classes come in. The converse also
-    holds: try to not directly access core data structures from Views.
+  - _Rationale_: Model classes pass through events and data from the core, they
+    should not interact with the user. That's where View classes come in. The
+    converse also holds: try to not directly access core data structures from
+    Views.
 
 - Avoid adding slow or blocking code in the GUI thread. In particular, do not
   add new `interfaces::Node` and `interfaces::Wallet` method calls, even if they
@@ -1185,52 +1190,56 @@ GUI
   `RPCExecutor` in console code as an example) or take other steps (see
   https://doc.qt.io/archives/qq/qq27-responsive-guis.html) to keep the GUI
   responsive.
+  - _Rationale_: Blocking the GUI thread can increase latency, and lead to hangs
+    and deadlocks.
 
-  - *Rationale*: Blocking the GUI thread can increase latency, and lead to
-    hangs and deadlocks.
-
-Subtrees
-----------
+## Subtrees
 
 Several parts of the repository are subtrees of software maintained elsewhere.
 
 Some of these are maintained by active developers of Navio Core, in which case
-changes should go directly upstream without being PRed directly against the project.
-They will be merged back in the next subtree merge.
+changes should go directly upstream without being PRed directly against the
+project. They will be merged back in the next subtree merge.
 
-Others are external projects without a tight relationship with our project. Changes
-to these should also be sent upstream, but bugfixes may also be prudent to PR against
-a Navio Core subtree, so that they can be integrated quickly. Cosmetic changes
-should be taken upstream.
+Others are external projects without a tight relationship with our project.
+Changes to these should also be sent upstream, but bugfixes may also be prudent
+to PR against a Navio Core subtree, so that they can be integrated quickly.
+Cosmetic changes should be taken upstream.
 
-There is a tool in `test/lint/git-subtree-check.sh` ([instructions](../test/lint#git-subtree-checksh))
-to check a subtree directory for consistency with its upstream repository.
+There is a tool in `test/lint/git-subtree-check.sh`
+([instructions](../test/lint#git-subtree-checksh)) to check a subtree directory
+for consistency with its upstream repository.
 
 Current subtrees include:
 
 - src/leveldb
-  - Subtree at https://github.com/bitcoin-core/leveldb-subtree ; maintained by Core contributors.
+  - Subtree at https://github.com/bitcoin-core/leveldb-subtree ; maintained by
+    Core contributors.
   - Upstream at https://github.com/google/leveldb ; maintained by Google. Open
     important PRs to the subtree to avoid delay.
-  - **Note**: Follow the instructions in [Upgrading LevelDB](#upgrading-leveldb) when
-    merging upstream changes to the LevelDB subtree.
+  - **Note**: Follow the instructions in [Upgrading LevelDB](#upgrading-leveldb)
+    when merging upstream changes to the LevelDB subtree.
 
 - src/crc32c
-  - Used by leveldb for hardware acceleration of CRC32C checksums for data integrity.
-  - Subtree at https://github.com/bitcoin-core/crc32c-subtree ; maintained by Core contributors.
+  - Used by leveldb for hardware acceleration of CRC32C checksums for data
+    integrity.
+  - Subtree at https://github.com/bitcoin-core/crc32c-subtree ; maintained by
+    Core contributors.
   - Upstream at https://github.com/google/crc32c ; maintained by Google.
 
 - src/secp256k1
-  - Upstream at https://github.com/bitcoin-core/secp256k1/ ; maintained by Core contributors.
+  - Upstream at https://github.com/bitcoin-core/secp256k1/ ; maintained by Core
+    contributors.
 
 - src/crypto/ctaes
-  - Upstream at https://github.com/bitcoin-core/ctaes ; maintained by Core contributors.
+  - Upstream at https://github.com/bitcoin-core/ctaes ; maintained by Core
+    contributors.
 
 - src/minisketch
-  - Upstream at https://github.com/sipa/minisketch ; maintained by Core contributors.
+  - Upstream at https://github.com/sipa/minisketch ; maintained by Core
+    contributors.
 
-Upgrading LevelDB
----------------------
+## Upgrading LevelDB
 
 Extra care must be taken when upgrading LevelDB. This section explains issues
 you must be aware of.
@@ -1246,8 +1255,9 @@ uses `mmap()` + `close()` to open table files without actually retaining
 references to the table file descriptors. If you are upgrading LevelDB, you must
 sanity check the changes to make sure that this assumption remains valid.
 
-In addition to reviewing the upstream changes in `env_posix.cc`, you can use `lsof` to
-check this. For example, on Linux this command will show open `.ldb` file counts:
+In addition to reviewing the upstream changes in `env_posix.cc`, you can use
+`lsof` to check this. For example, on Linux this command will show open `.ldb`
+file counts:
 
 ```bash
 $ lsof -p $(pidof naviod) |\
@@ -1265,39 +1275,44 @@ details.
 ### Consensus Compatibility
 
 It is possible for LevelDB changes to inadvertently change consensus
-compatibility between nodes. This happened in Navio 0.8 (when LevelDB was
-first introduced). When upgrading LevelDB, you should review the upstream changes
-to check for issues affecting consensus compatibility.
+compatibility between nodes. This happened in Navio 0.8 (when LevelDB was first
+introduced). When upgrading LevelDB, you should review the upstream changes to
+check for issues affecting consensus compatibility.
 
 For example, if LevelDB had a bug that accidentally prevented a key from being
 returned in an edge case, and that bug was fixed upstream, the bug "fix" would
 be an incompatible consensus change. In this situation, the correct behavior
-would be to revert the upstream fix before applying the updates to Navio's
-copy of LevelDB. In general, you should be wary of any upstream changes affecting
+would be to revert the upstream fix before applying the updates to Navio's copy
+of LevelDB. In general, you should be wary of any upstream changes affecting
 what data is returned from LevelDB queries.
 
-Scripted diffs
---------------
+## Scripted diffs
 
-For reformatting and refactoring commits where the changes can be easily automated using a bash script, we use
-scripted-diff commits. The bash script is included in the commit message and our CI job checks that
-the result of the script is identical to the commit. This aids reviewers since they can verify that the script
-does exactly what it is supposed to do. It is also helpful for rebasing (since the same script can just be re-run
-on the new master commit).
+For reformatting and refactoring commits where the changes can be easily
+automated using a bash script, we use scripted-diff commits. The bash script is
+included in the commit message and our CI job checks that the result of the
+script is identical to the commit. This aids reviewers since they can verify
+that the script does exactly what it is supposed to do. It is also helpful for
+rebasing (since the same script can just be re-run on the new master commit).
 
 To create a scripted-diff:
 
-- start the commit message with `scripted-diff:` (and then a description of the diff on the same line)
-- in the commit message include the bash script between lines containing just the following text:
-    - `-BEGIN VERIFY SCRIPT-`
-    - `-END VERIFY SCRIPT-`
+- start the commit message with `scripted-diff:` (and then a description of the
+  diff on the same line)
+- in the commit message include the bash script between lines containing just
+  the following text:
+  - `-BEGIN VERIFY SCRIPT-`
+  - `-END VERIFY SCRIPT-`
 
-The scripted-diff is verified by the tool `test/lint/commit-script-check.sh`. The tool's default behavior, when supplied
-with a commit is to verify all scripted-diffs from the beginning of time up to said commit. Internally, the tool passes
-the first supplied argument to `git rev-list --reverse` to determine which commits to verify script-diffs for, ignoring
-commits that don't conform to the commit message format described above.
+The scripted-diff is verified by the tool `test/lint/commit-script-check.sh`.
+The tool's default behavior, when supplied with a commit is to verify all
+scripted-diffs from the beginning of time up to said commit. Internally, the
+tool passes the first supplied argument to `git rev-list --reverse` to determine
+which commits to verify script-diffs for, ignoring commits that don't conform to
+the commit message format described above.
 
-For development, it might be more convenient to verify all scripted-diffs in a range `A..B`, for example:
+For development, it might be more convenient to verify all scripted-diffs in a
+range `A..B`, for example:
 
 ```bash
 test/lint/commit-script-check.sh origin/master..HEAD
@@ -1305,27 +1320,31 @@ test/lint/commit-script-check.sh origin/master..HEAD
 
 ### Suggestions and examples
 
-If you need to replace in multiple files, prefer `git ls-files` to `find` or globbing, and `git grep` to `grep`, to
-avoid changing files that are not under version control.
+If you need to replace in multiple files, prefer `git ls-files` to `find` or
+globbing, and `git grep` to `grep`, to avoid changing files that are not under
+version control.
 
-For efficient replacement scripts, reduce the selection to the files that potentially need to be modified, so for
-example, instead of a blanket `git ls-files src | xargs sed -i s/apple/orange/`, use
+For efficient replacement scripts, reduce the selection to the files that
+potentially need to be modified, so for example, instead of a blanket
+`git ls-files src | xargs sed -i s/apple/orange/`, use
 `git grep -l apple src | xargs sed -i s/apple/orange/`.
 
-Also, it is good to keep the selection of files as specific as possible — for example, replace only in directories where
-you expect replacements — because it reduces the risk that a rebase of your commit by re-running the script will
+Also, it is good to keep the selection of files as specific as possible — for
+example, replace only in directories where you expect replacements — because it
+reduces the risk that a rebase of your commit by re-running the script will
 introduce accidental changes.
 
 Some good examples of scripted-diff:
 
 - [scripted-diff: Rename InitInterfaces to NodeContext](https://github.com/bitcoin/bitcoin/commit/301bd41a2e6765b185bd55f4c541f9e27aeea29d)
-uses an elegant script to replace occurrences of multiple terms in all source files.
+  uses an elegant script to replace occurrences of multiple terms in all source
+  files.
 
 - [scripted-diff: Remove g_connman, g_banman globals](https://github.com/bitcoin/bitcoin/commit/8922d7f6b751a3e6b3b9f6fb7961c442877fb65a)
-replaces specific terms in a list of specific source files.
+  replaces specific terms in a list of specific source files.
 
 - [scripted-diff: Replace fprintf with tfm::format](https://github.com/bitcoin/bitcoin/commit/fac03ec43a15ad547161e37e53ea82482cc508f9)
-does a global replacement but excludes certain directories.
+  does a global replacement but excludes certain directories.
 
 To find all previous uses of scripted diffs in the repository, do:
 
@@ -1333,8 +1352,7 @@ To find all previous uses of scripted diffs in the repository, do:
 git log --grep="-BEGIN VERIFY SCRIPT-"
 ```
 
-Release notes
--------------
+## Release notes
 
 Release notes should be written for any PR that:
 
@@ -1344,124 +1362,115 @@ Release notes should be written for any PR that:
 - makes any other visible change to the end-user experience.
 
 Release notes should be added to a PR-specific release note file at
-`/doc/release-notes-<PR number>.md` to avoid conflicts between multiple PRs.
-All `release-notes*` files are merged into a single
+`/doc/release-notes-<PR number>.md` to avoid conflicts between multiple PRs. All
+`release-notes*` files are merged into a single
 [/doc/release-notes.md](/doc/release-notes.md) file prior to the release.
 
-RPC interface guidelines
---------------------------
+## RPC interface guidelines
 
 A few guidelines for introducing and reviewing new RPC interfaces:
 
-- Method naming: use consecutive lower-case names such as `getrawtransaction` and `submitblock`.
-
-  - *Rationale*: Consistency with the existing interface.
+- Method naming: use consecutive lower-case names such as `getrawtransaction`
+  and `submitblock`.
+  - _Rationale_: Consistency with the existing interface.
 
 - Argument and field naming: please consider whether there is already a naming
   style or spelling convention in the API for the type of object in question
   (`blockhash`, for example), and if so, try to use that. If not, use snake case
   `fee_delta` (and not, e.g. `feedelta` or camel case `feeDelta`).
-
-  - *Rationale*: Consistency with the existing interface.
+  - _Rationale_: Consistency with the existing interface.
 
 - Use the JSON parser for parsing, don't manually parse integers or strings from
   arguments unless absolutely necessary.
+  - _Rationale_: Introduces hand-rolled string manipulation code at both the
+    caller and callee sites, which is error-prone, and it is easy to get things
+    such as escaping wrong. JSON already supports nested data structures, no
+    need to re-invent the wheel.
 
-  - *Rationale*: Introduces hand-rolled string manipulation code at both the caller and callee sites,
-    which is error-prone, and it is easy to get things such as escaping wrong.
-    JSON already supports nested data structures, no need to re-invent the wheel.
+  - _Exception_: AmountFromValue can parse amounts as string. This was
+    introduced because many JSON parsers and formatters hard-code handling
+    decimal numbers as floating-point values, resulting in potential loss of
+    precision. This is unacceptable for monetary values. **Always** use
+    `AmountFromValue` and `ValueFromAmount` when inputting or outputting
+    monetary values. The only exceptions to this are `prioritisetransaction` and
+    `getblocktemplate` because their interface is specified as-is in BIP22.
 
-  - *Exception*: AmountFromValue can parse amounts as string. This was introduced because many JSON
-    parsers and formatters hard-code handling decimal numbers as floating-point
-    values, resulting in potential loss of precision. This is unacceptable for
-    monetary values. **Always** use `AmountFromValue` and `ValueFromAmount` when
-    inputting or outputting monetary values. The only exceptions to this are
-    `prioritisetransaction` and `getblocktemplate` because their interface
-    is specified as-is in BIP22.
+- Missing arguments and 'null' should be treated the same: as default values. If
+  there is no default value, both cases should fail in the same way. The easiest
+  way to follow this guideline is to detect unspecified arguments with
+  `params[x].isNull()` instead of `params.size() <= x`. The former returns true
+  if the argument is either null or missing, while the latter returns true if is
+  missing, and false if it is null.
+  - _Rationale_: Avoids surprises when switching to name-based arguments.
+    Missing name-based arguments are passed as 'null'.
 
-- Missing arguments and 'null' should be treated the same: as default values. If there is no
-  default value, both cases should fail in the same way. The easiest way to follow this
-  guideline is to detect unspecified arguments with `params[x].isNull()` instead of
-  `params.size() <= x`. The former returns true if the argument is either null or missing,
-  while the latter returns true if is missing, and false if it is null.
+- Try not to overload methods on argument type. E.g. don't make `getblock(true)`
+  and `getblock("hash")` do different things.
+  - _Rationale_: This is impossible to use with `navio-cli`, and can be
+    surprising to users.
 
-  - *Rationale*: Avoids surprises when switching to name-based arguments. Missing name-based arguments
-  are passed as 'null'.
-
-- Try not to overload methods on argument type. E.g. don't make `getblock(true)` and `getblock("hash")`
-  do different things.
-
-  - *Rationale*: This is impossible to use with `navio-cli`, and can be surprising to users.
-
-  - *Exception*: Some RPC calls can take both an `int` and `bool`, most notably when a bool was switched
-    to a multi-value, or due to other historical reasons. **Always** have false map to 0 and
-    true to 1 in this case.
+  - _Exception_: Some RPC calls can take both an `int` and `bool`, most notably
+    when a bool was switched to a multi-value, or due to other historical
+    reasons. **Always** have false map to 0 and true to 1 in this case.
 
 - Don't forget to fill in the argument names correctly in the RPC command table.
+  - _Rationale_: If not, the call cannot be used with name-based arguments.
 
-  - *Rationale*: If not, the call cannot be used with name-based arguments.
-
-- Add every non-string RPC argument `(method, idx, name)` to the table `vRPCConvertParams` in `rpc/client.cpp`.
-
-  - *Rationale*: `navio-cli` and the GUI debug console use this table to determine how to
-    convert a plaintext command line to JSON. If the types don't match, the method can be unusable
-    from there.
+- Add every non-string RPC argument `(method, idx, name)` to the table
+  `vRPCConvertParams` in `rpc/client.cpp`.
+  - _Rationale_: `navio-cli` and the GUI debug console use this table to
+    determine how to convert a plaintext command line to JSON. If the types
+    don't match, the method can be unusable from there.
 
 - A RPC method must either be a wallet method or a non-wallet method. Do not
-  introduce new methods that differ in behavior based on the presence of a wallet.
-
-  - *Rationale*: As well as complicating the implementation and interfering
-    with the introduction of multi-wallet, wallet and non-wallet code should be
+  introduce new methods that differ in behavior based on the presence of a
+  wallet.
+  - _Rationale_: As well as complicating the implementation and interfering with
+    the introduction of multi-wallet, wallet and non-wallet code should be
     separated to avoid introducing circular dependencies between code units.
 
 - Try to make the RPC response a JSON object.
-
-  - *Rationale*: If a RPC response is not a JSON object, then it is harder to avoid API breakage if
-    new data in the response is needed.
+  - _Rationale_: If a RPC response is not a JSON object, then it is harder to
+    avoid API breakage if new data in the response is needed.
 
 - Wallet RPCs call BlockUntilSyncedToCurrentChain to maintain consistency with
   `getblockchaininfo`'s state immediately prior to the call's execution. Wallet
-  RPCs whose behavior does *not* depend on the current chainstate may omit this
+  RPCs whose behavior does _not_ depend on the current chainstate may omit this
   call.
-
-  - *Rationale*: In previous versions of Navio Core, the wallet was always
-    in-sync with the chainstate (by virtue of them all being updated in the
-    same cs_main lock). In order to maintain the behavior that wallet RPCs
-    return results as of at least the highest best-known block an RPC
-    client may be aware of prior to entering a wallet RPC call, we must block
-    until the wallet is caught up to the chainstate as of the RPC call's entry.
-    This also makes the API much easier for RPC clients to reason about.
+  - _Rationale_: In previous versions of Navio Core, the wallet was always
+    in-sync with the chainstate (by virtue of them all being updated in the same
+    cs_main lock). In order to maintain the behavior that wallet RPCs return
+    results as of at least the highest best-known block an RPC client may be
+    aware of prior to entering a wallet RPC call, we must block until the wallet
+    is caught up to the chainstate as of the RPC call's entry. This also makes
+    the API much easier for RPC clients to reason about.
 
 - Be aware of RPC method aliases and generally avoid registering the same
   callback function pointer for different RPCs.
+  - _Rationale_: RPC methods registered with the same function pointer will be
+    considered aliases and only the first method name will show up in the `help`
+    RPC command list.
 
-  - *Rationale*: RPC methods registered with the same function pointer will be
-    considered aliases and only the first method name will show up in the
-    `help` RPC command list.
-
-  - *Exception*: Using RPC method aliases may be appropriate in cases where a
+  - _Exception_: Using RPC method aliases may be appropriate in cases where a
     new RPC is replacing a deprecated RPC, to avoid both RPCs confusingly
     showing up in the command list.
 
-- Use *invalid* bech32 addresses (e.g. in the constant array `EXAMPLE_ADDRESS`) for
-  `RPCExamples` help documentation.
-
-  - *Rationale*: Prevent accidental transactions by users and encourage the use
+- Use _invalid_ bech32 addresses (e.g. in the constant array `EXAMPLE_ADDRESS`)
+  for `RPCExamples` help documentation.
+  - _Rationale_: Prevent accidental transactions by users and encourage the use
     of bech32 addresses by default.
 
 - Use the `UNIX_EPOCH_TIME` constant when describing UNIX epoch time or
   timestamps in the documentation.
+  - _Rationale_: User-facing consistency.
 
-  - *Rationale*: User-facing consistency.
+- Use `fs::path::u8string()`/`fs::path::utf8string()` and `fs::u8path()`
+  functions when converting path to JSON strings, not `fs::PathToString` and
+  `fs::PathFromString`
+  - _Rationale_: JSON strings are Unicode strings, not byte strings, and RFC8259
+    requires JSON to be encoded as UTF-8.
 
-- Use `fs::path::u8string()`/`fs::path::utf8string()` and `fs::u8path()` functions when converting path
-  to JSON strings, not `fs::PathToString` and `fs::PathFromString`
-
-  - *Rationale*: JSON strings are Unicode strings, not byte strings, and
-    RFC8259 requires JSON to be encoded as UTF-8.
-
-Internal interface guidelines
------------------------------
+## Internal interface guidelines
 
 Internal interfaces between parts of the codebase that are meant to be
 independent (node, wallet, GUI), are defined in
@@ -1469,19 +1478,18 @@ independent (node, wallet, GUI), are defined in
 there are [`interfaces::Chain`](../src/interfaces/chain.h), used by wallet to
 access the node's latest chain state, and
 [`interfaces::Wallet`](../src/interfaces/wallet.h), used by the GUI to control
-an individual wallet. There are also more specialized interface
-types like [`interfaces::Handler`](../src/interfaces/handler.h)
+an individual wallet. There are also more specialized interface types like
+[`interfaces::Handler`](../src/interfaces/handler.h)
 [`interfaces::ChainClient`](../src/interfaces/chain.h) passed to and from
 various interface methods.
 
 Interface classes are written in a particular style so node, wallet, and GUI
-code doesn't need to run in the same process, and so the class declarations
-work more easily with tools and libraries supporting interprocess
-communication:
+code doesn't need to run in the same process, and so the class declarations work
+more easily with tools and libraries supporting interprocess communication:
 
-- Interface classes should be abstract and have methods that are [pure
-  virtual](https://en.cppreference.com/w/cpp/language/abstract_class). This
-  allows multiple implementations to inherit from the same interface class,
+- Interface classes should be abstract and have methods that are
+  [pure virtual](https://en.cppreference.com/w/cpp/language/abstract_class).
+  This allows multiple implementations to inherit from the same interface class,
   particularly so one implementation can execute functionality in the local
   process, and other implementations can forward calls to remote processes.
 
@@ -1489,8 +1497,8 @@ communication:
   implementing new functionality. Any substantial new node or wallet
   functionality should be implemented in [`src/node/`](../src/node/) or
   [`src/wallet/`](../src/wallet/) and just exposed in
-  [`src/interfaces/`](../src/interfaces/) instead of being implemented there,
-  so it can be more modular and accessible to unit tests.
+  [`src/interfaces/`](../src/interfaces/) instead of being implemented there, so
+  it can be more modular and accessible to unit tests.
 
 - Interface method parameter and return types should either be serializable or
   be other interface classes. Interface methods shouldn't pass references to
@@ -1527,7 +1535,7 @@ communication:
 
 - Interface methods should not be overloaded.
 
-  *Rationale*: consistency and friendliness to code generation tools.
+  _Rationale_: consistency and friendliness to code generation tools.
 
   Example:
 
@@ -1543,10 +1551,10 @@ communication:
 
 ### Internal interface naming style
 
-- Interface method names should be `lowerCamelCase` and standalone function names should be
-  `UpperCamelCase`.
+- Interface method names should be `lowerCamelCase` and standalone function
+  names should be `UpperCamelCase`.
 
-  *Rationale*: consistency and friendliness to code generation tools.
+  _Rationale_: consistency and friendliness to code generation tools.
 
   Examples:
 
