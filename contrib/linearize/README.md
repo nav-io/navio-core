@@ -1,5 +1,5 @@
 # Linearize
-Construct a linear, no-fork, best version of the Bitcoin blockchain.
+Construct a linear, no-fork, best version of the Navio blockchain.
 
 ## Step 1: Download hash list
 
@@ -11,7 +11,7 @@ Required configuration file settings for linearize-hashes:
 
 Optional config file setting for linearize-hashes:
 * RPC: `host`  (Default: `127.0.0.1`)
-* RPC: `port`  (Default: `8332`)
+* RPC: `port`  (Default: `48471`)
 * Blockchain: `min_height`, `max_height`
 * `rev_hash_bytes`: If true, the written block hash list will be
 byte-reversed. (In other words, the hash returned by getblockhash will have its
@@ -20,7 +20,7 @@ standalone hash lists but safe to use with linearize-data.py, which will output
 the same data no matter which byte format is chosen.
 
 The `linearize-hashes` script requires a connection, local or remote, to a
-JSON-RPC server. Running `naviod` or `bitcoin-qt -server` will be sufficient.
+JSON-RPC server. Running `naviod` will be sufficient.
 
 ## Step 2: Copy local block data
 
