@@ -71,7 +71,6 @@ the development process and automated testing.
 - [Productivity Notes](productivity.md)
 - [Release Process](release-process.md)
 - [Source Code Documentation (External Link)](https://doxygen.bitcoincore.org/)
-- [Translation Strings Policy](translation_strings_policy.md)
 - [JSON-RPC Interface](JSON-RPC-interface.md)
 - [Unauthenticated REST Interface](REST-interface.md)
 - [BIPS](bips.md)
@@ -90,7 +89,7 @@ the development process and automated testing.
 ### Miscellaneous
 
 - [Assets Attribution](assets-attribution.md)
-- [navio.conf Configuration File](bitcoin-conf.md)
+- [navio.conf Configuration File](navio-conf.md)
 - [CJDNS Support](cjdns.md)
 - [Files](files.md)
 - [Fuzz-testing](fuzzing.md)
