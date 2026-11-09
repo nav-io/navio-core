@@ -113,7 +113,6 @@ the pull request affects. Valid areas as:
 
 - `consensus` for changes to consensus critical code
 - `doc` for changes to the documentation
-- `qt` or `gui` for changes to bitcoin-qt
 - `log` for changes to log messages
 - `staking` for changes to the staking code
 - `net` or `p2p` for changes to the peer-to-peer network code
@@ -123,14 +122,13 @@ the pull request affects. Valid areas as:
 - `test`, `qa` or `ci` for changes to the unit tests, QA tests or CI code
 - `util` or `lib` for changes to the utils or libraries
 - `wallet` for changes to the wallet code
-- `build` for changes to the GNU Autotools or MSVC builds
+- `build` for changes to the CMake build system
 - `guix` for changes to the GUIX reproducible builds
 
 Examples:
 
     consensus: Add new opcode for OP_CHECKAWESOMESIG
     net: Automatically create onion service, listen on Tor
-    qt: Add feed bump button
     log: Fix typo in log message
 
 The body of the pull request should contain sufficient description of _what_ the
@@ -200,7 +198,7 @@ pull request to pull request.
 When a pull request conflicts with the target branch, you may be asked to rebase
 it on top of the current target branch.
 
-    git fetch https://github.com/bitcoin/bitcoin  # Fetch the latest upstream commit
+    git fetch https://github.com/nav-io/navio-core  # Fetch the latest upstream commit
     git rebase FETCH_HEAD  # Rebuild commits on top of the new base
 
 This project aims to have a clean git history, where code changes are only made
@@ -395,9 +393,6 @@ A backport should contain the following metadata in the commit body:
 Github-Pull: #<PR number>
 Rebased-From: <commit hash of the original commit>
 ```
-
-Also see the bitcoin's
-[backport.py script](https://github.com/bitcoin-core/bitcoin-maintainer-tools#backport).
 
 ## Copyright
 
