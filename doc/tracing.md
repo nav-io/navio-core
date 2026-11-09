@@ -49,6 +49,9 @@ be found in [contrib/tracing].
 [BPF Compiler Collection (BCC)]: https://github.com/iovisor/bcc
 [contrib/tracing]: ../contrib/tracing/
 
+The tracepoints are compiled in only when configured with `-DWITH_USDT=ON`
+(off by default), which needs the `systemtap-sdt-dev` headers on Linux.
+
 ## Tracepoint documentation
 
 The currently available tracepoints are listed here.
@@ -366,13 +369,13 @@ USDT support.
 To list probes in Bitcoin Core, use `info probes` in `gdb`:
 
 ```
-$ gdb ./src/naviod
+$ gdb ./build/bin/naviod
 …
 (gdb) info probes
 Type Provider   Name             Where              Semaphore Object
-stap net        inbound_message  0x000000000014419e /src/naviod
-stap net        outbound_message 0x0000000000107c05 /src/naviod
-stap validation block_connected  0x00000000002fb10c /src/naviod
+stap net        inbound_message  0x000000000014419e /build/bin/naviod
+stap net        outbound_message 0x0000000000107c05 /build/bin/naviod
+stap validation block_connected  0x00000000002fb10c /build/bin/naviod
 …
 ```
 
@@ -382,7 +385,7 @@ The `readelf` tool can be used to display the USDT tracepoints in Bitcoin Core.
 Look for the notes with the description `NT_STAPSDT`.
 
 ```
-$ readelf -n ./src/naviod | grep NT_STAPSDT -A 4 -B 2
+$ readelf -n ./build/bin/naviod | grep NT_STAPSDT -A 4 -B 2
 Displaying notes found in: .note.stapsdt
   Owner                 Data size	Description
   stapsdt              0x0000005d	NT_STAPSDT (SystemTap probe descriptors)
@@ -406,7 +409,7 @@ between distributions. For example, on
 [ubuntu binary]: https://github.com/iovisor/bcc/blob/master/INSTALL.md#ubuntu---binary
 
 ```
-$ tplist -l ./src/naviod -v
+$ tplist -l ./build/bin/naviod -v
 b'net':b'outbound_message' [sema 0x0]
   1 location(s)
   6 argument(s)

@@ -8,14 +8,16 @@ thread queue, wallet balance.
 Running
 ---------------------
 
-For benchmarking, you only need to compile `bench_navio`. The bench runner
+For benchmarking, you only need to compile `bench_navio`, which is built only
+when configured with `-DBUILD_BENCH=ON`. The bench runner
 warns if you configure with `-DCMAKE_BUILD_TYPE=Debug`, but consider if
 building without it will impact the benchmark(s) you are interested in by
 unlatching log printers and lock analysis.
 
+    cmake -B build -DBUILD_BENCH=ON
     cmake --build build --target bench_navio
 
-After compiling bitcoin-core, the benchmarks can be run with:
+After compiling, the benchmarks can be run with:
 
     build/bin/bench_navio
 
