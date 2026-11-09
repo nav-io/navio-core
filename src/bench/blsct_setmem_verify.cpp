@@ -14,6 +14,7 @@
 #include <blsct/set_mem_proof/set_mem_proof_setup.h>
 #include <util/string.h>
 
+#include <cassert>
 #include <stdexcept>
 #include <string>
 #include <vector>
@@ -67,7 +68,7 @@ void BenchSetMemVerify(benchmark::Bench& bench, size_t n)
 
     bench.unit("setmem-verify").run([&] {
         bool ok = Prover::Verify(setup, fx.Ys, fx.eta_fiat_shamir, fx.eta_phi, fx.proof);
-        ankerl::nanobench::doNotOptimizeAway(ok);
+        assert(ok);
     });
 }
 
@@ -92,11 +93,9 @@ void BenchSetMemProve(benchmark::Bench& bench, size_t n)
 // threshold from outside the wallet/chain machinery requires either grinding
 // `nTime` (production approach) or wiring the full CCoinsViewCache /
 // CBlockIndex stack. We deliberately skip both: with `next_target=0` the
-// derived `min_value` is 0, so the staker side is trivially satisfiable, and
-// the verifier still performs the *complete* cryptographic work (set-mem MSM
-// + range-proof MSM + Σ-check) regardless of whether the final equality holds.
-// In other words, the wall-clock cost reported here is representative of a
-// successful verification on the same input shape.
+// derived `min_value` is 0, so the staker side is trivially satisfiable and
+// the proof verifies (the benchmark asserts it), doing the complete
+// cryptographic work (set-mem MSM + range-proof MSM + Σ-check).
 struct PoPSFixture {
     Points staked_commitments;
     Scalar eta_fiat_shamir;
@@ -139,7 +138,7 @@ void BenchPoPSVerify(benchmark::Bench& bench, size_t n)
     bench.unit("pops-verify").run([&] {
         auto res = fx.proof.Verify(fx.staked_commitments, fx.eta_fiat_shamir,
                                    fx.eta_phi, fx.kernel_hash, fx.next_target);
-        ankerl::nanobench::doNotOptimizeAway(res);
+        assert(res == blsct::ProofOfStake::VALID);
     });
 }
 

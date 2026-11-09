@@ -14,6 +14,7 @@
 #include <ctokens/tokenid.h>
 #include <uint256.h>
 
+#include <cassert>
 #include <cstdint>
 #include <vector>
 
@@ -68,7 +69,7 @@ static void BLSCTVerify(benchmark::Bench& bench)
     auto sig = sk.Sign(msg);
     bench.unit("verify").run([&] {
         bool ok = pk.Verify(msg, sig);
-        ankerl::nanobench::doNotOptimizeAway(ok);
+        assert(ok);
     });
 }
 
@@ -97,7 +98,7 @@ static void BLSCTAggregateSignVerify4(benchmark::Bench& bench)
     auto aggr = blsct::Signature::Aggregate(sigs);
     bench.batch(4).unit("verify").run([&] {
         bool ok = pks.VerifyBatch(msgs, aggr);
-        ankerl::nanobench::doNotOptimizeAway(ok);
+        assert(ok);
     });
 }
 
@@ -127,7 +128,7 @@ static void BLSCTRangeProofVerify(benchmark::Bench& bench)
     std::vector<RangeProofWithSeed> proofs{RangeProofWithSeed(proof, token_id)};
     bench.unit("verify").run([&] {
         bool ok = rpl.Verify(proofs);
-        ankerl::nanobench::doNotOptimizeAway(ok);
+        assert(ok);
     });
 }
 
@@ -146,7 +147,7 @@ static void BLSCTRangeProofVerifyBatch4(benchmark::Bench& bench)
     }
     bench.batch(4).unit("verify").run([&] {
         bool ok = rpl.Verify(proofs);
-        ankerl::nanobench::doNotOptimizeAway(ok);
+        assert(ok);
     });
 }
 
@@ -182,7 +183,7 @@ static void BLSCTPointDeserialize(benchmark::Bench& bench)
     bench.unit("deserialize").run([&] {
         Point q;
         bool ok = q.SetVch(vch);
-        ankerl::nanobench::doNotOptimizeAway(ok);
+        assert(ok);
         ankerl::nanobench::doNotOptimizeAway(q);
     });
 }

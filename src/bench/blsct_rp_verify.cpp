@@ -10,6 +10,7 @@
 #include <blsct/range_proof/bulletproofs_plus/range_proof_logic.h>
 #include <ctokens/tokenid.h>
 
+#include <cassert>
 #include <vector>
 
 using Arith = Blst;
@@ -59,7 +60,7 @@ void BenchVerify(benchmark::Bench& bench, size_t n)
 
     bench.batch(n).unit("rp-verify").run([&] {
         bool ok = rp.Verify(proofs);
-        ankerl::nanobench::doNotOptimizeAway(ok);
+        assert(ok);
     });
 }
 
