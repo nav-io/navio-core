@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/arith/blst/blst_strconv.h>
 #include <test/util/setup_common.h>
 
 #include <streams.h>
@@ -612,6 +613,30 @@ BOOST_AUTO_TEST_CASE(test_destructor_wipes_value)
     bool wiped{true};
     for (size_t i = 0; i < sizeof(storage); ++i) wiped &= bytes[i] == 0;
     BOOST_CHECK(wiped);
+}
+
+
+BOOST_AUTO_TEST_CASE(test_radix_string_to_bytes)
+{
+    using blst_arith::RadixStringToBytes;
+    const std::vector<uint8_t> ab{0x00, 0xab};
+    BOOST_CHECK(RadixStringToBytes("ab", 16, 2) == ab);
+    BOOST_CHECK(RadixStringToBytes("0xAB", 16, 2) == ab);
+    BOOST_CHECK(RadixStringToBytes("171", 10, 2) == ab);
+    BOOST_CHECK(RadixStringToBytes("10101011", 2, 2) == ab);
+    BOOST_CHECK(RadixStringToBytes("ffff", 16, 2) == (std::vector<uint8_t>{0xff, 0xff}));
+
+    const auto throws = [](const std::string& s, int radix, const std::string& what) {
+        BOOST_CHECK_EXCEPTION(RadixStringToBytes(s, radix, 2), std::runtime_error,
+                              [&](const std::runtime_error& e) { return e.what() == "RadixStringToBytes: " + what; });
+    };
+    throws("", 16, "empty string");
+    throws("0x", 16, "bad digit");
+    throws("0x0", 10, "bad digit");
+    throws("ag", 16, "bad digit");
+    throws("12", 2, "digit out of radix");
+    throws("1ffff", 16, "overflow");
+    throws("ab", 8, "unsupported radix");
 }
 
 BOOST_AUTO_TEST_SUITE_END()
