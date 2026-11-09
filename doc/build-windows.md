@@ -41,11 +41,6 @@ packages need to build host utilities that are used in the build process.
 
 See [dependencies.md](dependencies.md) for a complete overview.
 
-If you want to build the windows installer you need
-[NSIS](https://nsis.sourceforge.io/Main_Page):
-
-    sudo apt install nsis
-
 Acquire the source in the usual way:
 
     git clone https://github.com/nav-io/navio-core.git

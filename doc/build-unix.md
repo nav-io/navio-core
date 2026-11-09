@@ -105,9 +105,6 @@ be compiled in disable-wallet mode:
 
 In this case there is no dependency on SQLite.
 
-Mining is also possible in disable-wallet mode using the `getblocktemplate` RPC
-call.
-
 ## Additional CMake Options
 
 A list of available CMake options can be displayed with:
