@@ -172,7 +172,6 @@ MAGIC_BYTES = {
     "testnet3": b"\xe2\xbe\x8d\xb7",  # testnet3
     "regtest": b"\xfd\xbf\x9f\xfb",   # regtest
     "blsctregtest": b"\xfd\xbf\x9f\xfb",  # blsctregtest (same magic as regtest)
-    "signet": b"\x0a\x03\xcf\x40",    # signet
 }
 
 

@@ -802,8 +802,8 @@ struct ArgsMergeTestingSetup : public BasicTestingSetup {
             ForEachNoDup(conf_actions, SET, SECTION_NEGATE, [&] {
                 for (bool soft_set : {false, true}) {
                     for (bool force_set : {false, true}) {
-                        for (const std::string& section : {ChainTypeToString(ChainType::MAIN), ChainTypeToString(ChainType::TESTNET), ChainTypeToString(ChainType::SIGNET)}) {
-                            for (const std::string& network : {ChainTypeToString(ChainType::MAIN), ChainTypeToString(ChainType::TESTNET), ChainTypeToString(ChainType::SIGNET)}) {
+                        for (const std::string& section : {ChainTypeToString(ChainType::MAIN), ChainTypeToString(ChainType::TESTNET), ChainTypeToString(ChainType::REGTEST)}) {
+                            for (const std::string& network : {ChainTypeToString(ChainType::MAIN), ChainTypeToString(ChainType::TESTNET), ChainTypeToString(ChainType::REGTEST)}) {
                                 for (bool net_specific : {false, true}) {
                                     fn(arg_actions, conf_actions, soft_set, force_set, section, network, net_specific);
                                 }
@@ -957,7 +957,7 @@ BOOST_FIXTURE_TEST_CASE(util_ArgsMerge, ArgsMergeTestingSetup)
     // Results file is formatted like:
     //
     //   <input> || <IsArgSet/IsArgNegated/GetArg output> | <GetArgs output> | <GetUnsuitable output>
-    BOOST_CHECK_EQUAL(out_sha_hex, "d1e436c1cd510d0ec44d5205d4b4e3bee6387d316e0075c58206cb16603f3d82");
+    BOOST_CHECK_EQUAL(out_sha_hex, "35ceda6e82a9886e50974188e761f0d793141cd814e1d25644793b75d7abb92c");
 }
 
 // Similar test as above, but for ArgsManager::GetChainTypeString function.
@@ -1060,7 +1060,7 @@ BOOST_FIXTURE_TEST_CASE(util_ChainMerge, ChainMergeTestingSetup)
     // Results file is formatted like:
     //
     //   <input> || <output>
-    BOOST_CHECK_EQUAL(out_sha_hex, "1951c528b4397734f48215514fc6b76c26bebc2410d6bbb448c7387fd944279f");
+    BOOST_CHECK_EQUAL(out_sha_hex, "637dc25572537cb3a1fdb049f1194762556e9bce0d5bf1efa4a8082ff46f3460");
 }
 
 BOOST_AUTO_TEST_CASE(util_ReadWriteSettings)

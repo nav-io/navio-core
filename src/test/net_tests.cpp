@@ -606,7 +606,7 @@ BOOST_AUTO_TEST_CASE(fixed_seeds_use_default_port)
     // A fixed seed on another port is a node of some other network (the
     // testnet list used to be Bitcoin's testnet3 nodes), so dialing it can
     // never find a peer.
-    for (const auto chain : {ChainType::MAIN, ChainType::TESTNET, ChainType::SIGNET, ChainType::REGTEST, ChainType::BLSCTREGTEST}) {
+    for (const auto chain : {ChainType::MAIN, ChainType::TESTNET, ChainType::REGTEST, ChainType::BLSCTREGTEST}) {
         const auto params{CreateChainParams(ArgsManager{}, chain)};
         // Decode the same way ConvertSeeds() in net.cpp does.
         DataStream underlying_stream{params->FixedSeeds()};
@@ -629,7 +629,7 @@ BOOST_AUTO_TEST_CASE(dns_seeds_are_navio_seeds)
 {
     // Seeds left over from Bitcoin Core lead a node to another network's
     // peers. Regtest's placeholder can never resolve.
-    for (const auto chain : {ChainType::MAIN, ChainType::TESTNET, ChainType::SIGNET, ChainType::REGTEST, ChainType::BLSCTREGTEST}) {
+    for (const auto chain : {ChainType::MAIN, ChainType::TESTNET, ChainType::REGTEST, ChainType::BLSCTREGTEST}) {
         const auto params{CreateChainParams(ArgsManager{}, chain)};
         for (const std::string& seed : params->DNSSeeds()) {
             BOOST_CHECK_MESSAGE(seed.ends_with(".nav.io.") || seed == "dummySeed.invalid.",

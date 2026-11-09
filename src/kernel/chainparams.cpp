@@ -410,126 +410,6 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
     };
 
     /**
-     * Signet: test network with an additional consensus parameter (see BIP325).
-     */
-    class SigNetParams : public CChainParams
-    {
-    public:
-        explicit SigNetParams(const SigNetOptions& options)
-        {
-            std::vector<uint8_t> bin;
-            vSeeds.clear();
-
-            if (!options.challenge) {
-                bin = ParseHex("512103ad5e0edad18cb1f0fc0d28a3d4f1f3e445640337489abb10404f2d1e086be430210359ef5021964fe22d6f8e05b2463c9540ce96883fe3b278760f048f5189f2e6c452ae");
-                consensus.nMinimumChainWork = uint256S("0x000000000000000000000000000000000000000000000000000001899d8142b0");
-                consensus.defaultAssumeValid = uint256S("0x0000004429ef154f7e00b4f6b46bfbe2d2678ecd351d95bbfca437ab9a5b84ec"); // 138000
-
-                // See mainnet comment above. Testnet checkpoints are cut per
-                // testnet release; populate from agreed hashes.
-                consensus.finalityCheckpoints = {
-                    // {height, uint256S("0x...")},
-                };
-                m_assumed_blockchain_size = 1;
-                m_assumed_chain_state_size = 0;
-                chainTxData = ChainTxData{
-                    // Data from RPC: getchaintxstats 4096 0000004429ef154f7e00b4f6b46bfbe2d2678ecd351d95bbfca437ab9a5b84ec
-                    .nTime = 1681127428,
-                    .nTxCount = 2226359,
-                    .dTxRate = 0.006424463050600656,
-                };
-            } else {
-                bin = *options.challenge;
-                consensus.nMinimumChainWork = uint256{};
-                consensus.defaultAssumeValid = uint256{};
-                m_assumed_blockchain_size = 0;
-                m_assumed_chain_state_size = 0;
-                chainTxData = ChainTxData{
-                    0,
-                    0,
-                    0,
-                };
-                LogPrintf("Signet with challenge %s\n", HexStr(bin));
-            }
-
-            if (options.seeds) {
-                vSeeds = *options.seeds;
-            }
-
-            m_chain_type = ChainType::SIGNET;
-            consensus.signet_blocks = true;
-            consensus.signet_challenge.assign(bin.begin(), bin.end());            consensus.BIP34Height = 1;
-            consensus.BIP65Height = 1;
-            consensus.BIP66Height = 1;
-            consensus.CSVHeight = 1;
-            consensus.SegwitHeight = 1;
-            consensus.fBLSCT = false;
-            consensus.fPoPSHardened = true;
-            consensus.nPoPSKernelV2Height = 0; // active from genesis
-            consensus.nPePoSMinStakeAmount = 10000 * COIN;
-            consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
-            consensus.nStakedCommitmentLimit = 16;
-            // Dormant until an activation height is chosen; see Params::nBLSCTProofV2Height.
-            consensus.nBLSCTProofV2Height = std::numeric_limits<int>::max();
-            consensus.nLastPOWHeight = 1000;
-            consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
-            consensus.nPowTargetSpacing = 10 * 60;
-            consensus.nPosTargetTimespan = 30 * 60;
-            consensus.nPosTargetSpacing = 1 * 60;
-            consensus.nBLSCTBlockReward = 2 * COIN * (consensus.nPosTargetSpacing / 30);
-            consensus.nBLSCTFirstBlockReward = 75000000 * COIN;
-            consensus.nModifierInterval = 10 * 60;
-            consensus.fPowAllowMinDifficultyBlocks = false;
-            consensus.fPowNoRetargeting = false;
-            consensus.fPosNoRetargeting = false;
-            consensus.nRuleChangeActivationThreshold = 1815; // 90% of 2016
-            consensus.nMinerConfirmationWindow = 2016;       // nPowTargetTimespan / nPowTargetSpacing
-            consensus.MinBIP9WarningHeight = 0;
-            consensus.powLimit = uint256S("00000377ae000000000000000000000000000000000000000000000000000000");
-            consensus.posLimit = uint256S("0000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
-            consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].bit = 28;
-            consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nStartTime = Consensus::BIP9Deployment::NEVER_ACTIVE;
-            consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
-            consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].min_activation_height = 0; // No activation delay
-
-            // Activation of Taproot (BIPs 340-342)
-            consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].bit = 2;
-            consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nStartTime = Consensus::BIP9Deployment::ALWAYS_ACTIVE;
-            consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].nTimeout = Consensus::BIP9Deployment::NO_TIMEOUT;
-            consensus.vDeployments[Consensus::DEPLOYMENT_TAPROOT].min_activation_height = 0; // No activation delay
-
-            // message start is defined as the first 4 bytes of the sha256d of the block script
-            HashWriter h{};
-            h << consensus.signet_challenge;
-            uint256 hash = h.GetHash();
-            std::copy_n(hash.begin(), 4, pchMessageStart.begin());
-
-            nDefaultPort = 38333;
-            nPruneAfterHeight = 1000;
-
-            genesis = CreateGenesisBlock(1598918400, 52613770, 0x1e0377ae, 1, 50 * COIN);
-            consensus.hashGenesisBlock = genesis.GetHash();
-            assert(consensus.hashGenesisBlock == uint256S("0xc08b381a6fed30e99acd83ddc273c5cf317d2e4c57ec98416c3e06d4970eb6ab"));
-            assert(genesis.hashMerkleRoot == uint256S("0x923b312af9f8bafa4c0e3269ee492bf09b66ced16c19bfbc9e536fc11455a1b3"));
-
-            vFixedSeeds.clear();
-
-            base58Prefixes[PUBKEY_ADDRESS] = std::vector<unsigned char>(1, 111);
-            base58Prefixes[BLSCT_ADDRESS] = {73, 33};
-            base58Prefixes[SCRIPT_ADDRESS] = std::vector<unsigned char>(1, 196);
-            base58Prefixes[SECRET_KEY] = std::vector<unsigned char>(1, 239);
-            base58Prefixes[EXT_PUBLIC_KEY] = {0x04, 0x35, 0x87, 0xCF};
-            base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
-
-            bech32_hrp = "tb";
-            bech32_mod_hrp = "nav";
-
-            fDefaultConsistencyChecks = false;
-            m_is_mockable_chain = false;
-        }
-    };
-
-    /**
      * Regression test: intended for private networks only. Has minimal difficulty to ensure that
      * blocks can be found instantly.
      */
@@ -785,11 +665,6 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             bech32_mod_hrp = "rnv";
         }
     };
-
-    std::unique_ptr<const CChainParams> CChainParams::SigNet(const SigNetOptions& options)
-    {
-        return std::make_unique<const SigNetParams>(options);
-    }
 
     std::unique_ptr<const CChainParams> CChainParams::RegTest(const RegTestOptions& options)
     {

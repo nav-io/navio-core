@@ -158,7 +158,6 @@ std::list<SectionInfo> ArgsManager::GetUnrecognizedSections() const
     static const std::set<std::string> available_sections{
         ChainTypeToString(ChainType::REGTEST),
         ChainTypeToString(ChainType::BLSCTREGTEST),
-        ChainTypeToString(ChainType::SIGNET),
         ChainTypeToString(ChainType::TESTNET),
         ChainTypeToString(ChainType::MAIN),
     };
@@ -754,12 +753,11 @@ std::variant<ChainType, std::string> ArgsManager::GetChainArg() const
 
     const bool fBLSCTRegTest = get_net("-blsctregtest");
     const bool fRegTest = get_net("-regtest");
-    const bool fSigNet  = get_net("-signet");
     const bool fTestNet = get_net("-testnet");
     const auto chain_arg = GetArg("-chain");
 
-    if ((int)chain_arg.has_value() + (int)fRegTest + (int)fBLSCTRegTest + (int)fSigNet + (int)fTestNet > 1) {
-        throw std::runtime_error("Invalid combination of -blsctregtest, -regtest, -signet, -testnet and -chain. Can use at most one.");
+    if ((int)chain_arg.has_value() + (int)fRegTest + (int)fBLSCTRegTest + (int)fTestNet > 1) {
+        throw std::runtime_error("Invalid combination of -blsctregtest, -regtest, -testnet and -chain. Can use at most one.");
     }
     if (chain_arg) {
         if (auto parsed = ChainTypeFromString(*chain_arg)) return *parsed;
@@ -768,7 +766,6 @@ std::variant<ChainType, std::string> ArgsManager::GetChainArg() const
     }
     if (fBLSCTRegTest) return ChainType::BLSCTREGTEST;
     if (fRegTest) return ChainType::REGTEST;
-    if (fSigNet) return ChainType::SIGNET;
     if (fTestNet) return ChainType::TESTNET;
     return ChainType::MAIN;
 }

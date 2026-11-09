@@ -141,7 +141,7 @@ class V2TransportTest(BitcoinTestFramework):
             self.wait_until(lambda: self.nodes[0].getpeerinfo()[-1]["transport_protocol_type"] == "v1")
 
         # Check wrong network prefix detection (hits if the next 12 bytes correspond to a v1 version message)
-        wrong_network_magic_prefix = MAGIC_BYTES["signet"] + V1_PREFIX[4:]
+        wrong_network_magic_prefix = MAGIC_BYTES["mainnet"] + V1_PREFIX[4:]
         with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
             with self.nodes[0].wait_for_new_peer():
                 s.connect(("127.0.0.1", p2p_port(0)))
