@@ -28,9 +28,6 @@ Utility to generate the pnSeed[] array that is compiled into the client.
 
 The [Debian](/contrib/debian) subfolder contains the copyright file.
 
-All other packaging related files can be found in the
-[bitcoin-core/packaging](https://github.com/bitcoin-core/packaging) repository.
-
 ### [MacDeploy](/contrib/macdeploy)
 
 Scripts and notes for Mac builds.
@@ -39,7 +36,7 @@ Scripts and notes for Mac builds.
 
 ### [TestGen](/contrib/testgen)
 
-Utilities to generate test vectors for the data-driven Bitcoin tests.
+Utilities to generate test vectors for the data-driven Navio tests.
 
 ### [Release-Keys](/contrib/release-keys)
 
