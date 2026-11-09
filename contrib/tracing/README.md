@@ -1,5 +1,4 @@
-Example scripts for User-space, Statically Defined Tracing (USDT)
-=================================================================
+# Example scripts for User-space, Statically Defined Tracing (USDT)
 
 This directory contains scripts showcasing User-space, Statically Defined
 Tracing (USDT) support for Bitcoin Core on Linux using. For more information on
@@ -7,37 +6,39 @@ USDT support in Bitcoin Core see the [USDT documentation].
 
 [USDT documentation]: ../../doc/tracing.md
 
-
-Examples for the two main eBPF front-ends, [bpftrace] and
-[BPF Compiler Collection (BCC)], with support for USDT, are listed. BCC is used
-for complex tools and daemons and `bpftrace` is preferred for one-liners and
-shorter scripts.
+Examples for the two main eBPF front-ends, [bpftrace] and [BPF Compiler
+Collection (BCC)], with support for USDT, are listed. BCC is used for complex
+tools and daemons and `bpftrace` is preferred for one-liners and shorter
+scripts.
 
 [bpftrace]: https://github.com/iovisor/bpftrace
 [BPF Compiler Collection (BCC)]: https://github.com/iovisor/bcc
 
-
 To develop and run bpftrace and BCC scripts you need to install the
 corresponding packages. See [installing bpftrace] and [installing BCC] for more
-information. For development there exist a [bpftrace Reference Guide], a
-[BCC Reference Guide], and a [bcc Python Developer Tutorial].
+information. For development there exist a [bpftrace Reference Guide], a [BCC
+Reference Guide], and a [bcc Python Developer Tutorial].
 
-[installing bpftrace]: https://github.com/iovisor/bpftrace/blob/master/INSTALL.md
+[installing bpftrace]:
+  https://github.com/iovisor/bpftrace/blob/master/INSTALL.md
 [installing BCC]: https://github.com/iovisor/bcc/blob/master/INSTALL.md
-[bpftrace Reference Guide]: https://github.com/iovisor/bpftrace/blob/master/docs/reference_guide.md
-[BCC Reference Guide]: https://github.com/iovisor/bcc/blob/master/docs/reference_guide.md
-[bcc Python Developer Tutorial]: https://github.com/iovisor/bcc/blob/master/docs/tutorial_bcc_python_developer.md
+[bpftrace Reference Guide]:
+  https://github.com/iovisor/bpftrace/blob/master/docs/reference_guide.md
+[BCC Reference Guide]:
+  https://github.com/iovisor/bcc/blob/master/docs/reference_guide.md
+[bcc Python Developer Tutorial]:
+  https://github.com/iovisor/bcc/blob/master/docs/tutorial_bcc_python_developer.md
 
 ## Examples
 
 The bpftrace examples contain a relative path to the `naviod` binary. By
 default, the scripts should be run from the repository-root and assume a
 self-compiled `naviod` binary. The paths in the examples can be changed, for
-example, to point to release builds if needed. See the
-[Bitcoin Core USDT documentation] on how to list available tracepoints in your
-`naviod` binary.
+example, to point to release builds if needed. See the [Bitcoin Core USDT
+documentation] on how to list available tracepoints in your `naviod` binary.
 
-[Bitcoin Core USDT documentation]: ../../doc/tracing.md#listing-available-tracepoints
+[Bitcoin Core USDT documentation]:
+  ../../doc/tracing.md#listing-available-tracepoints
 
 **WARNING: eBPF programs require root privileges to be loaded into a Linux
 kernel VM. This means the bpftrace and BCC examples must be executed with root
@@ -61,6 +62,7 @@ $ bpftrace contrib/tracing/log_p2p_traffic.bt
 ```
 
 Output
+
 ```
 outbound 'ping' msg to peer 11 (outbound-full-relay, [2a02:b10c:f747:1:ef:fake:ipv6:addr]:8333) with 8 bytes
 inbound 'pong' msg from peer 11 (outbound-full-relay, [2a02:b10c:f747:1:ef:fake:ipv6:addr]:8333) with 8 bytes
@@ -86,6 +88,7 @@ $ python3 contrib/tracing/p2p_monitor.py ./src/naviod
 ```
 
 Lists selectable peers and traffic and connection information.
+
 ```
  P2P Message Monitor
  Navigate with UP/DOWN or J/K and select a peer with ENTER or SPACE to see individual P2P messages
@@ -134,20 +137,19 @@ A BCC Python script showcasing eBPF and USDT limitations when passing data
 larger than about 32kb. Based on the `net:inbound_message` and
 `net:outbound_message` tracepoints.
 
-Bitcoin P2P messages can be larger than 32kb (e.g. `tx`, `block`, ...). The
-eBPF VM's stack is limited to 512 bytes, and we can't allocate more than about
-32kb for a P2P message in the eBPF VM. The **message data is cut off** when the
-message is larger than MAX_MSG_DATA_LENGTH (see script). This can be detected
-in user-space by comparing the data length to the message length variable. The
-message is cut off when the data length is smaller than the message length.
-A warning is included with the printed message data.
+Bitcoin P2P messages can be larger than 32kb (e.g. `tx`, `block`, ...). The eBPF
+VM's stack is limited to 512 bytes, and we can't allocate more than about 32kb
+for a P2P message in the eBPF VM. The **message data is cut off** when the
+message is larger than MAX_MSG_DATA_LENGTH (see script). This can be detected in
+user-space by comparing the data length to the message length variable. The
+message is cut off when the data length is smaller than the message length. A
+warning is included with the printed message data.
 
 Data is submitted to user-space (i.e. to this script) via a ring buffer. The
 throughput of the ring buffer is limited. Each p2p_message is about 32kb in
-size. In- or outbound messages submitted to the ring buffer in rapid
-succession fill the ring buffer faster than it can be read. Some messages are
-lost. BCC prints: `Possibly lost 2 samples` on lost messages.
-
+size. In- or outbound messages submitted to the ring buffer in rapid succession
+fill the ring buffer faster than it can be read. Some messages are lost. BCC
+prints: `Possibly lost 2 samples` on lost messages.
 
 ```
 $ python3 contrib/tracing/log_raw_p2p_msgs.py ./src/naviod
@@ -192,6 +194,7 @@ $ ./src/naviod -signet -reindex
 ```
 
 This produces the following output.
+
 ```
 Attaching 5 probes...
 ConnectBlock Benchmark between height 20000 and 38000 inclusive
@@ -263,12 +266,13 @@ $ bpftrace contrib/tracing/log_utxos.bt
 ```
 
 This should produce an output similar to the following. If you see bpftrace
-warnings like `Lost 24 events`, the eBPF perf ring-buffer is filled faster
-than it is being read. You can increase the ring-buffer size by setting the
-ENV variable `BPFTRACE_PERF_RB_PAGES` (default 64) at a cost of higher
-memory usage. See the [bpftrace reference guide] for more information.
+warnings like `Lost 24 events`, the eBPF perf ring-buffer is filled faster than
+it is being read. You can increase the ring-buffer size by setting the ENV
+variable `BPFTRACE_PERF_RB_PAGES` (default 64) at a cost of higher memory usage.
+See the [bpftrace reference guide] for more information.
 
-[bpftrace reference guide]: https://github.com/iovisor/bpftrace/blob/master/docs/reference_guide.md#98-bpftrace_perf_rb_pages
+[bpftrace reference guide]:
+  https://github.com/iovisor/bpftrace/blob/master/docs/reference_guide.md#98-bpftrace_perf_rb_pages
 
 ```bash
 Attaching 4 probes...

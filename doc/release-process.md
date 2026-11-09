@@ -1,5 +1,4 @@
-Release Process
-====================
+# Release Process
 
 Navio Core releases are built by the guix workflow when a `v*` tag is pushed,
 and signed and published by navio-signer. The Linux tarballs and `SHA256SUMS`
@@ -308,7 +307,6 @@ cat "$VERSION"/*/all.SHA256SUMS.asc > SHA256SUMS.asc
   file for bitcoincore.org.
 
 - Update other repositories and websites for new version
-
   - bitcoincore.org blog post
 
   - bitcoincore.org maintained versions update:
@@ -323,12 +321,10 @@ cat "$VERSION"/*/all.SHA256SUMS.asc > SHA256SUMS.asc
     for non-existing branches.
 
   - bitcoincore.org RPC documentation update
-
     - See
       https://github.com/bitcoin-core/bitcoincore.org/blob/master/contrib/doc-gen/
 
   - Update packaging repo
-
     - Push the flatpak to flathub, e.g.
       https://github.com/flathub/org.bitcoincore.navio-qt/pull/2
 
@@ -336,7 +332,6 @@ cat "$VERSION"/*/all.SHA256SUMS.asc > SHA256SUMS.asc
       https://github.com/bitcoin-core/packaging/blob/main/snap/local/build.md
 
   - This repo
-
     - Archive the release notes for the new version to `doc/release-notes/`
       (branch `master` and branch of the release)
 
@@ -345,7 +340,6 @@ cat "$VERSION"/*/all.SHA256SUMS.asc > SHA256SUMS.asc
       a link to the archived release notes
 
 - Announce the release:
-
   - bitcoin-dev and bitcoin-core-dev mailing list
 
   - Bitcoin Core announcements list
