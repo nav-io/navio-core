@@ -9,7 +9,7 @@ simple question: "Can I see what messages my node is sending and receiving?"
 
 - Run `naviod` with the `-capturemessages` option.
 - Look in the `message_capture` folder in your datadir.
-  - Typically this will be `~/.bitcoin/message_capture`.
+  - Typically this will be `~/.navio/message_capture`.
   - See that there are many folders inside, one for each peer names with its IP
     address and port.
   - Inside each peer's folder there are two `.dat` files: one is for received
@@ -21,7 +21,7 @@ simple question: "Can I see what messages my node is sending and receiving?"
   - To see all messages, both sent and received, for all peers use:
     ```
     ./contrib/message-capture/message-capture-parser.py -o out.json \
-    ~/.bitcoin/message_capture/**/*.dat
+    ~/.navio/message_capture/**/*.dat
     ```
   - Note: The messages in the given `.dat` files will be interleaved in
     chronological order. So, giving both received and sent `.dat` files (as
