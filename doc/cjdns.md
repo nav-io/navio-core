@@ -32,8 +32,7 @@ https://github.com/cjdelisle/cjdns#how-to-install-cjdns.
 You need to initiate an outbound connection to a peer on the CJDNS network
 before it will work with your Bitcoin Core node. This is described in steps
 ["2. Find a friend"](https://github.com/cjdelisle/cjdns#2-find-a-friend) and
-["3. Connect your node to your friend's
-node"](https://github.com/cjdelisle/cjdns#3-connect-your-node-to-your-friends-node)
+["3. Connect your node to your friend's node"](https://github.com/cjdelisle/cjdns#3-connect-your-node-to-your-friends-node)
 in the CJDNS documentation.
 
 One quick way to accomplish these two steps is to query for available public
@@ -50,16 +49,16 @@ credentials followed by the ping result.
 
 Choose one or several peers, copy their credentials from their respective files,
 paste them into the relevant IPv4 or IPv6 "connectTo" JSON object in the
-`cjdroute.conf` file you created in step ["1. Generate a new configuration
-file"](https://github.com/cjdelisle/cjdns#1-generate-a-new-configuration-file),
+`cjdroute.conf` file you created in step
+["1. Generate a new configuration file"](https://github.com/cjdelisle/cjdns#1-generate-a-new-configuration-file),
 and save the file.
 
 ## Launching CJDNS
 
 Typically, CJDNS might be launched from its directory with
 `sudo ./cjdroute < cjdroute.conf` and it sheds permissions after setting up the
-[TUN](https://en.wikipedia.org/wiki/TUN/TAP) interface. You may also [launch it as an
-unprivileged user](https://github.com/cjdelisle/cjdns/blob/master/doc/non-root-user.md)
+[TUN](https://en.wikipedia.org/wiki/TUN/TAP) interface. You may also
+[launch it as an unprivileged user](https://github.com/cjdelisle/cjdns/blob/master/doc/non-root-user.md)
 with some additional setup.
 
 The network connection can be checked by running `./tools/peerStats` from the
@@ -76,12 +75,14 @@ configuration option makes CJDNS peers automatically reachable:
 
 When enabled, this option tells Bitcoin Core that it is running in an
 environment where a connection to an `fc00::/8` address will be to the CJDNS
-network instead of to an [RFC4193](https://datatracker.ietf.org/doc/html/rfc4193)
-IPv6 local network. This helps Bitcoin Core perform better address management:
-  - Your node can consider incoming `fc00::/8` connections to be from the CJDNS
-    network rather than from an IPv6 private one.
-  - If one of your node's local addresses is `fc00::/8`, then it can choose to
-    gossip that address to peers.
+network instead of to an
+[RFC4193](https://datatracker.ietf.org/doc/html/rfc4193) IPv6 local network.
+This helps Bitcoin Core perform better address management:
+
+- Your node can consider incoming `fc00::/8` connections to be from the CJDNS
+  network rather than from an IPv6 private one.
+- If one of your node's local addresses is `fc00::/8`, then it can choose to
+  gossip that address to peers.
 
 ## Additional configuration options related to CJDNS
 
@@ -106,10 +107,12 @@ details.
 ## CJDNS-related information in Bitcoin Core
 
 There are several ways to see your CJDNS address in Bitcoin Core:
+
 - in the "Local addresses" output of CLI `-netinfo`
 - in the "localaddresses" output of RPC `getnetworkinfo`
 
 To see which CJDNS peers your node is connected to, use `navio-cli -netinfo 4`
 or the `getpeerinfo` RPC (i.e. `navio-cli getpeerinfo`).
 
-You can use the `getnodeaddresses` RPC to fetch a number of CJDNS peers known to your node; run `bitcoin-cli help getnodeaddresses` for details.
+You can use the `getnodeaddresses` RPC to fetch a number of CJDNS peers known to
+your node; run `bitcoin-cli help getnodeaddresses` for details.
