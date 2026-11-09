@@ -2,8 +2,7 @@
 
 **Updated for OpenBSD [7.3](https://www.openbsd.org/73.html)**
 
-This guide describes how to build naviod, command-line utilities, and GUI on
-OpenBSD.
+This guide describes how to build naviod and command-line utilities on OpenBSD.
 
 ## Preparation
 
@@ -47,15 +46,6 @@ pkg_add sqlite3
 ### 1. Configuration
 
 There are many ways to configure Navio Core, here are a few common examples:
-
-##### Descriptor Wallet and GUI:
-
-This enables the GUI and descriptor wallet support, assuming `sqlite` and `qt5`
-are installed.
-
-```bash
-cmake -B build -G Ninja
-```
 
 ##### Wallet:
 
