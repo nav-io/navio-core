@@ -204,13 +204,6 @@ struct Params {
     /** By default assume that the signatures in ancestors of this block are valid */
     uint256 defaultAssumeValid;
 
-    /**
-     * If true, witness commitments contain a payload equal to a Bitcoin Script solution
-     * to the signet challenge. See BIP325.
-     */
-    bool signet_blocks{false};
-    std::vector<uint8_t> signet_challenge;
-
     int DeploymentHeight(BuriedDeployment dep) const
     {
         switch (dep) {

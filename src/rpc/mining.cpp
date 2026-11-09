@@ -638,7 +638,6 @@ static RPCHelpMan getblocktemplate()
                                                                      {RPCResult::Type::NUM_TIME, "curtime", "current timestamp in " + UNIX_EPOCH_TIME},
                                                                      {RPCResult::Type::STR, "bits", "compressed target of next block"},
                                                                      {RPCResult::Type::NUM, "height", "The height of the next block"},
-                                                                     {RPCResult::Type::STR_HEX, "signet_challenge", /*optional=*/true, "Only on signet"},
                                                                      {RPCResult::Type::STR_HEX, "eta_phi", /*optional=*/true, "Only on Proof of Stake"},
                                                                      {RPCResult::Type::STR_HEX, "eta_fiat_shamir", /*optional=*/true, "Only on Proof of Stake"},
                                                                      {RPCResult::Type::NUM, "modifier", /*optional=*/true, "Only on Proof of Stake"},
@@ -773,11 +772,6 @@ static RPCHelpMan getblocktemplate()
             }
 
             const Consensus::Params& consensusParams = chainman.GetParams().GetConsensus();
-
-            // GBT must be called with 'signet' set in the rules for signet chains
-            if (consensusParams.signet_blocks && setClientRules.count("signet") != 1) {
-                throw JSONRPCError(RPC_INVALID_PARAMETER, "getblocktemplate must be called with the signet rule set (call with {\"rules\": [\"segwit\", \"signet\"]})");
-            }
 
             // GBT must be called with 'segwit' set in the rules
             if (setClientRules.count("segwit") != 1 && !consensusParams.fBLSCT) {
@@ -929,11 +923,6 @@ static RPCHelpMan getblocktemplate()
             UniValue aRules(UniValue::VARR);
             aRules.push_back("csv");
             if (!fPreSegWit) aRules.push_back("!segwit");
-            if (consensusParams.signet_blocks) {
-                // indicate to miner that they must understand signet rules
-                // when attempting to mine with this template
-                aRules.push_back("!signet");
-            }
 
             UniValue vbavailable(UniValue::VOBJ);
             for (int j = 0; j < (int)Consensus::MAX_VERSION_BITS_DEPLOYMENTS; ++j) {
@@ -1045,10 +1034,6 @@ static RPCHelpMan getblocktemplate()
                 // process stakers MUST match this; a v1 proof at/above the
                 // height is rejected as bad-blsct-pos-proof.
                 result.pushKV("pops_transcript_v2", (pindexPrev->nHeight + 1) >= consensusParams.nBLSCTProofV2Height);
-            }
-
-            if (consensusParams.signet_blocks) {
-                result.pushKV("signet_challenge", HexStr(consensusParams.signet_challenge));
             }
 
             if (!pblocktemplate->vchCoinbaseCommitment.empty()) {

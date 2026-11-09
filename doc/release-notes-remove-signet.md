@@ -6,3 +6,5 @@
   `-signetchallenge` and `-signetseednode` options, which are now invalid
   parameters; a `[signet]` section in the configuration file is reported as an
   unrecognized section.
+- `getblocktemplate` no longer accepts or reports the `signet` rule and no
+  longer returns the `signet_challenge` field.

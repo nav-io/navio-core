@@ -394,7 +394,6 @@ if(NOT BUILD_LIBBLSCT_ONLY)
     rpc/signmessage.cpp
     rpc/txoutproof.cpp
     script/sigcache.cpp
-    signet.cpp
     timedata.cpp
     torcontrol.cpp
     txdb.cpp

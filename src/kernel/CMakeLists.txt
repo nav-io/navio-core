@@ -96,7 +96,6 @@ add_library(naviokernel
   ../script/script_error.cpp
   ../script/sigcache.cpp
   ../script/solver.cpp
-  ../signet.cpp
   ../streams.cpp
   ../support/cleanse.cpp
   ../support/lockedpool.cpp

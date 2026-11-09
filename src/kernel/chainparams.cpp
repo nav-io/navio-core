@@ -143,8 +143,6 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         explicit CMainParams(std::optional<int> blsct_proof_v2_height = std::nullopt)
         {
         m_chain_type = ChainType::MAIN;
-        consensus.signet_blocks = false;
-        consensus.signet_challenge.clear();
         // BIP34 (height-in-coinbase), BIP65 (CLTV), BIP66 (DERSIG), BIP68/112/113
         // (CSV) and BIP141/143/147 (segwit) are all active from genesis on
         // this network; there is no legacy chain history that predates them.
@@ -313,8 +311,6 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         explicit CTestNetParams(std::optional<int> blsct_proof_v2_height = std::nullopt)
         {
         m_chain_type = ChainType::TESTNET;
-        consensus.signet_blocks = false;
-        consensus.signet_challenge.clear();
         // BIP34 (height-in-coinbase), BIP65 (CLTV), BIP66 (DERSIG), BIP68/112/113
         // (CSV) and BIP141/143/147 (segwit) are all active from genesis on
         // this network; there is no legacy chain history that predates them.
@@ -419,8 +415,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         explicit CRegTestParams(const RegTestOptions& opts)
         {
             m_chain_type = ChainType::REGTEST;
-            consensus.signet_blocks = false;
-            consensus.signet_challenge.clear();            consensus.BIP34Height = 1; // Always active unless overridden
+            consensus.BIP34Height = 1; // Always active unless overridden
             consensus.BIP65Height = 1;  // Always active unless overridden
             consensus.BIP66Height = 1;  // Always active unless overridden
             consensus.CSVHeight = 1;    // Always active unless overridden
@@ -556,8 +551,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
         explicit CBLSCTRegTestParams(const BLSCTRegTestOptions& opts)
         {
             m_chain_type = ChainType::BLSCTREGTEST;
-            consensus.signet_blocks = false;
-            consensus.signet_challenge.clear();            consensus.BIP34Height = 1; // Always active unless overridden
+            consensus.BIP34Height = 1; // Always active unless overridden
             consensus.BIP65Height = 1;  // Always active unless overridden
             consensus.BIP66Height = 1;  // Always active unless overridden
             consensus.CSVHeight = 1;    // Always active unless overridden
