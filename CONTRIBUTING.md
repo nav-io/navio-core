@@ -1,5 +1,4 @@
-Contributing to Navio Core
-============================
+# Contributing to Navio Core
 
 The Navio Core project operates an open contributor model where anyone is
 welcome to contribute towards development in the form of peer review, testing
@@ -14,8 +13,7 @@ purposes. As such, there are repository maintainers who are responsible for
 merging pull requests, the [release cycle](/doc/release-process.md), and
 moderation.
 
-Getting Started
----------------
+## Getting Started
 
 New contributors are very welcome and needed.
 
@@ -49,8 +47,7 @@ are encouraged to leave a comment if you are planning to work on it. This will
 help other contributors monitor which issues are actively being addressed and is
 also an effective way to request assistance if and when you need it.
 
-Communication Channels
-----------------------
+## Communication Channels
 
 Most communication about Navio Core development happens on Discord, in the
 `#development` channel. You can join the server using
@@ -59,8 +56,7 @@ Most communication about Navio Core development happens on Discord, in the
 Discussion about codebase improvements happens in GitHub issues and pull
 requests.
 
-Contributor Workflow
---------------------
+## Contributor Workflow
 
 The codebase is maintained using the "contributor workflow" where everyone
 without exception contributes patch proposals using "pull requests" (PRs). This
@@ -219,8 +215,7 @@ the
 To avoid needless review churn, maintainers will generally merge pull requests
 that received the most review attention first.
 
-Pull Request Philosophy
------------------------
+## Pull Request Philosophy
 
 Patchsets should always be focused. For example, a pull request could add a
 feature, fix a bug, or refactor code; but not a mixture. Please also avoid super
@@ -258,8 +253,7 @@ Trivial pull requests or pull requests that refactor the code with no clear
 benefits may be immediately closed by the maintainers to reduce unnecessary
 workload on reviewing.
 
-"Decision Making" Process
--------------------------
+## "Decision Making" Process
 
 The following applies to code changes to the Navio Core project (and related
 projects such as libsecp256k1), and is not to be confused with overall Navio
@@ -386,8 +380,7 @@ do something about:
 - Remember that the best thing you can do while waiting is give review to
   others!
 
-Backporting
------------
+## Backporting
 
 Security and bug fixes can be backported from `master` to release branches. If
 the backport is non-trivial, it may be appropriate to open an additional PR to
@@ -406,8 +399,7 @@ Rebased-From: <commit hash of the original commit>
 Also see the bitcoin's
 [backport.py script](https://github.com/bitcoin-core/bitcoin-maintainer-tools#backport).
 
-Copyright
----------
+## Copyright
 
 By contributing to this repository, you agree to license your work under the MIT
 license unless specified otherwise in `contrib/debian/copyright` or at the top
