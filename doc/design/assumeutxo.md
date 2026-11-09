@@ -8,6 +8,10 @@ instance.
 There is currently no canonical source for snapshots, but any downloaded
 snapshot will be checked against a hash that's been hardcoded in source code.
 
+Mainnet has no hardcoded snapshot yet: `m_assumeutxo_data` in `CMainParams`
+([`src/kernel/chainparams.cpp`](../../src/kernel/chainparams.cpp)) is empty, so
+`loadtxoutset` rejects every mainnet snapshot until an entry is added there.
+
 Once you've obtained the snapshot, you can use the RPC command `loadtxoutset` to
 load it.
 
