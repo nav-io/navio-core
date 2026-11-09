@@ -7,6 +7,7 @@
 #include <blsct/pos/pos.h>
 #include <chain.h>
 #include <chainparams.h>
+#include <common/signet.h>
 #include <common/system.h>
 #include <consensus/amount.h>
 #include <consensus/consensus.h>
@@ -96,7 +97,7 @@ static UniValue generateBlocks(ChainstateManager& chainman, const CTxMemPool& me
     return blockHashes;
 }
 
-static UniValue generateBlsctBlocks(ChainstateManager& chainman, const CTxMemPool& mempool, const CTxDestination& destination, int nGenerate, uint64_t nMaxTries)
+static UniValue generateBlsctBlocks(ChainstateManager& chainman, const CTxMemPool& mempool, const CTxDestination& destination, int nGenerate, uint64_t nMaxTries, const FlatSigningProvider* signet_keys)
 {
     const Consensus::Params& consensusParams = chainman.GetParams().GetConsensus();
     UniValue blockHashes(UniValue::VARR);
@@ -108,6 +109,14 @@ static UniValue generateBlsctBlocks(ChainstateManager& chainman, const CTxMemPoo
         std::unique_ptr<CBlockTemplate> pblocktemplate(BlockAssembler{chainman.ActiveChainstate(), &mempool}.CreateNewBLSCTBlock(blsct::SubAddress(destination), blockReward, {}));
         if (!pblocktemplate.get())
             throw JSONRPCError(RPC_INTERNAL_ERROR, "Couldn't create new block");
+
+        if (consensusParams.signet_blocks) {
+            const CScript challenge(consensusParams.signet_challenge.begin(), consensusParams.signet_challenge.end());
+            std::string error;
+            if (!SignSignetBlock(pblocktemplate->block, challenge, *Assert(signet_keys), error)) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Cannot sign the signet block: %s", error));
+            }
+        }
 
         std::shared_ptr<const CBlock> block_out;
         if (!GenerateBlock(chainman, pblocktemplate->block, nMaxTries, block_out, /*process_new_block=*/true)) {
@@ -236,6 +245,7 @@ static RPCHelpMan generatetoblsctaddress()
             {"nblocks", RPCArg::Type::NUM, RPCArg::Optional::NO, "How many blocks are generated."},
             {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The address to send the newly generated nav to."},
             {"maxtries", RPCArg::Type::NUM, RPCArg::Default{DEFAULT_MAX_TRIES}, GENERATE_MAXTRIES_HELP},
+            {"signetkey", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "Signet only, and required there: the private key, as 32 bytes of hex, that signs each block to satisfy -signetchallenge."},
         },
         RPCResult{
             RPCResult::Type::ARR, "", GENERATE_RESULT_HELP, {
@@ -254,7 +264,20 @@ static RPCHelpMan generatetoblsctaddress()
             const CTxMemPool& mempool = EnsureMemPool(node);
             ChainstateManager& chainman = EnsureChainman(node);
 
-            return generateBlsctBlocks(chainman, mempool, destination, num_blocks, max_tries);
+            std::optional<FlatSigningProvider> signet_keys;
+            if (chainman.GetConsensus().signet_blocks) {
+                if (request.params[3].isNull()) {
+                    throw JSONRPCError(RPC_INVALID_PARAMETER, "Signet blocks must be signed: pass the signetkey argument");
+                }
+                signet_keys = SignetKeyProvider(request.params[3].get_str());
+                if (!signet_keys) {
+                    throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, "Invalid signetkey");
+                }
+            } else if (!request.params[3].isNull()) {
+                throw JSONRPCError(RPC_INVALID_PARAMETER, "signetkey is only used on signet");
+            }
+
+            return generateBlsctBlocks(chainman, mempool, destination, num_blocks, max_tries, signet_keys ? &*signet_keys : nullptr);
         },
     };
 }

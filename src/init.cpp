@@ -985,6 +985,12 @@ bool AppInitParameterInteraction(const ArgsManager& args)
     // on the command line or in this chain's section of the config file.
     ChainType chain = args.GetChainType();
     if (chain == ChainType::SIGNET) {
+        // An empty challenge is what SigNetParams uses without
+        // -signetchallenge. No block can satisfy it, so a node started that
+        // way could never sync anything.
+        if (chainparams.GetConsensus().signet_challenge.empty()) {
+            return InitError(_("There is no default signet network yet: set -signetchallenge to the challenge of the signet to join."));
+        }
         LogPrintf("Signet derived magic (message start): %s\n", HexStr(chainparams.MessageStart()));
     }
     bilingual_str errors;

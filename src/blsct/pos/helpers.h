@@ -8,6 +8,9 @@
 #include <blsct/arith/blst/blst.h>
 #include <uint256.h>
 #include <arith_uint256.h>
+#include <primitives/transaction.h>
+
+#include <vector>
 
 #define MODIFIER_INTERVAL_RATIO 3
 
@@ -57,6 +60,13 @@ uint256 CalculateKernelHashWithChainWork(const uint32_t& prevTime, const uint64_
 // (`block.posProof.setMemProof.phi`) into the kernel hash. Activated by block
 // height (Consensus::Params::nPoPSKernelV2Height).
 uint256 CalculateKernelHashWithChainWork(const uint32_t& prevTime, const uint64_t& stakeModifier, const arith_uint256& prevChainWork, const uint32_t& time, const BlstG1Point& phi, bool hardened = true);
+
+// V2 set-membership Fiat-Shamir randomness (eta_fiat_shamir) from the
+// previous block's hash and stake modifier and the block's transactions.
+// CalculateSetMemProofRandomnessV2 in pos.h memoises it per block index; this
+// form needs no index, so navio-staker can recompute it after changing the
+// coinbase (signet signing).
+std::vector<unsigned char> CalculateSetMemProofRandomnessV2(const uint256& prevBlockHash, uint64_t prevStakeModifier, const std::vector<CTransactionRef>& vtx);
 } // namespace blsct
 
 #endif // NAVIO_BLSCT_POS_HELPERS_H

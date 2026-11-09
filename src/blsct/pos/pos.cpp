@@ -157,10 +157,7 @@ std::vector<unsigned char> CalculateSetMemProofRandomnessV2(const CBlockIndex* p
         }
     }
 
-    HashWriter ss{};
-    ss << pindexPrev->GetBlockHash() << pindexPrev->nStakeModifier << TX_NO_WITNESS(block.vtx);
-    auto hash = ss.GetHash();
-    std::vector<unsigned char> value(hash.begin(), hash.end());
+    std::vector<unsigned char> value{CalculateSetMemProofRandomnessV2(pindexPrev->GetBlockHash(), pindexPrev->nStakeModifier, block.vtx)};
 
     {
         LOCK(s_mutex);

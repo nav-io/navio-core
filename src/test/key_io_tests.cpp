@@ -5,6 +5,9 @@
 #include <test/data/key_io_invalid.json.h>
 #include <test/data/key_io_valid.json.h>
 
+#include <blsct/double_public_key.h>
+#include <blsct/key_io.h>
+#include <chainparams.h>
 #include <key.h>
 #include <key_io.h>
 #include <script/script.h>
@@ -170,6 +173,27 @@ BOOST_AUTO_TEST_CASE(key_io_double_public_key_decode_encode)
     auto act = EncodeDestination(DecodeDestination(dpk_bech32_mod));
 
     BOOST_CHECK(act == dpk_bech32_mod);
+}
+
+BOOST_AUTO_TEST_CASE(key_io_blsct_hrp_matches_c_api)
+{
+    // The libblsct C API derives each chain's BLSCT addresses from
+    // blsct::bech32_hrp, so it must agree with the node's chain params, or
+    // the daemon and the bindings produce addresses the other cannot decode.
+    const std::vector<std::pair<ChainType, std::string>> chains{
+        {ChainType::MAIN, blsct::bech32_hrp::Mainnet},
+        {ChainType::TESTNET, blsct::bech32_hrp::Testnet},
+        {ChainType::SIGNET, blsct::bech32_hrp::Signet},
+        {ChainType::REGTEST, blsct::bech32_hrp::Regtest},
+        {ChainType::BLSCTREGTEST, blsct::bech32_hrp::Regtest},
+    };
+    const blsct::DoublePublicKey dpk{blsct::PublicKey{BlstG1Point::Rand()}, blsct::PublicKey{BlstG1Point::Rand()}};
+    for (const auto& [chain, hrp] : chains) {
+        SelectParams(chain);
+        BOOST_CHECK_EQUAL(Params().Bech32ModHRP(), hrp);
+        BOOST_CHECK_EQUAL(EncodeDestination(CTxDestination(dpk)).substr(0, hrp.size() + 1), hrp + "1");
+    }
+    SelectParams(ChainType::MAIN);
 }
 
 BOOST_AUTO_TEST_SUITE_END()

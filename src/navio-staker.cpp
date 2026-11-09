@@ -7,18 +7,21 @@
 #endif
 
 #include <blsct/arith/blst/blst_init.h>
+#include <blsct/pos/helpers.h>
 #include <blsct/range_proof/generators.h>
 #include <blsct/tokens/predicate_parser.h>
 #include <blsct/wallet/delegation.h>
 #include <chainparamsbase.h>
 #include <clientversion.h>
 #include <common/args.h>
+#include <common/signet.h>
 #include <common/system.h>
 #include <common/url.h>
 #include <compat/compat.h>
 #include <compat/stdin.h>
 #include <consensus/merkle.h>
 #include <core_io.h>
+#include <key.h>
 #include <logging.h>
 #include <policy/feerate.h>
 #include <primitives/block.h>
@@ -27,6 +30,8 @@
 #include <rpc/mining.h>
 #include <rpc/protocol.h>
 #include <rpc/request.h>
+#include <script/script.h>
+#include <script/signingprovider.h>
 #include <tinyformat.h>
 #include <univalue.h>
 #include <util/chaintype.h>
@@ -108,6 +113,7 @@ static void SetupCliArgs(ArgsManager& argsman)
     argsman.AddArg("-delegationkey=<hex>", "The operator's delegation private key as a 32-byte hex scalar. Required with -delegated (alternatively use -delegationkeyfile). Generate one with -gendelegationkey", ArgsManager::ALLOW_ANY | ArgsManager::SENSITIVE, OptionsCategory::OPTIONS);
     argsman.AddArg("-delegationkeyfile=<path>", "Read the operator's delegation private key from the first line of <path> instead of passing it with -delegationkey, which is visible to other users in the process list", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-statsfile=<path>", "In -delegated mode, write per-delegation accounting (blocks produced per delegation, last block, reward address) as JSON to <path> after every accepted block and delegation refresh", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
+    argsman.AddArg("-signetblockkey=<hex>", "Signet only, and required there: the private key, as 32 bytes of hex, that signs each staked block to satisfy the node's -signetchallenge", ArgsManager::ALLOW_ANY | ArgsManager::SENSITIVE, OptionsCategory::OPTIONS);
     argsman.AddArg("-gendelegationkey", "Generate a new delegation key pair, print it and exit. Publish the public key so wallet owners can delegate to you with delegatestake", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
     argsman.AddArg("-operatoraddress=<address>", "BLSCT address that receives the -operatorfee share of delegated block rewards", ArgsManager::ALLOW_ANY | ArgsManager::NETWORK_ONLY, OptionsCategory::OPTIONS);
     argsman.AddArg("-operatorfee=<bps>", "Operator fee taken from delegated block rewards, in basis points [0, 10000] (default: 0)", ArgsManager::ALLOW_ANY, OptionsCategory::OPTIONS);
@@ -475,6 +481,8 @@ static bool mustUnlockWallet = false;
 static arith_uint256 currentDifficulty;
 static bool fDelegated = false;
 static BlstScalar delegationPrivKey;
+//! Signs staked blocks on signet; set by -signetblockkey.
+static std::optional<FlatSigningProvider> signetBlockKeys;
 static std::string operatorAddress;
 static int64_t operatorFeeBps = 0;
 
@@ -547,6 +555,15 @@ void Setup()
         coinbase_dest = gArgs.GetArg("-coinbasedest", {});
 
     if (gArgs.IsArgSet("-wallet")) walletName = gArgs.GetArg("-wallet", {});
+
+    if (gArgs.IsArgSet("-signetblockkey")) {
+        signetBlockKeys = SignetKeyProvider(gArgs.GetArg("-signetblockkey", ""));
+        if (!signetBlockKeys) {
+            throw std::runtime_error("-signetblockkey must be a valid private key as 32 bytes of hex");
+        }
+    } else if (gArgs.GetChainType() == ChainType::SIGNET) {
+        throw std::runtime_error("signet only accepts signed blocks: set -signetblockkey");
+    }
 
     fDelegated = gArgs.GetBoolArg("-delegated", false);
 
@@ -1066,7 +1083,9 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
     try {
         CBlock proposal;
 
-        std::string template_request = "{\"rules\": [\"\"], \"coinbasedest\": \"" + coinbaseDest + "\"";
+        // getblocktemplate refuses a signet node's template unless the
+        // request says it understands the signet rule; other chains ignore it.
+        std::string template_request = "{\"rules\": [\"signet\"], \"coinbasedest\": \"" + coinbaseDest + "\"";
         if (fDelegated && operatorFeeBps > 0) {
             template_request += ", \"coinbasefeedest\": \"" + operatorAddress + "\", \"coinbasefeebps\": " + ToString(operatorFeeBps);
         }
@@ -1166,6 +1185,32 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
         proposal.hashPrevBlock = uint256S(result.find_value("previousblockhash").get_str());
         proposal.vtx = UniValueArrayToTransactions(result.find_value("transactions").get_array());
 
+        const UniValue& signet_challenge = result.find_value("signet_challenge");
+        if (signet_challenge.isNull()) {
+            proposal.hashMerkleRoot = BlockMerkleRoot(proposal);
+        } else {
+            // A signet block must also carry a signature satisfying the
+            // challenge. It commits to nVersion, nTime and the transactions,
+            // all final by now, but not to the proof of stake. The proof
+            // commits to the transactions instead (eta_fiat_shamir), so sign
+            // first, then build the proof over the signed coinbase.
+            if (!signetBlockKeys) {
+                LogPrintf("%s: [%s] the node is on signet, which only accepts signed blocks; set -signetblockkey. Not staking.\n", __func__, walletName);
+                return std::nullopt;
+            }
+            if (!bind_phi) {
+                LogPrintf("%s: [%s] signet staking needs the V2 kernel (pops_bind_phi). Not staking.\n", __func__, walletName);
+                return std::nullopt;
+            }
+            const std::vector<uint8_t> challenge{ParseHex(signet_challenge.get_str())};
+            std::string error;
+            if (!SignSignetBlock(proposal, CScript(challenge.begin(), challenge.end()), *signetBlockKeys, error)) {
+                LogPrintf("%s: [%s] cannot sign the signet block: %s. Not staking.\n", __func__, walletName, error);
+                return std::nullopt;
+            }
+            eta_fiat_shamir = blsct::CalculateSetMemProofRandomnessV2(proposal.hashPrevBlock, modifier, proposal.vtx);
+        }
+
         if (bind_phi) {
             // V2: the V2 ctor builds the set-membership proof first, then the
             // phi-bound kernel hash, then the range proof.
@@ -1173,8 +1218,6 @@ std::optional<CBlock> GetBlockProposal(const std::unique_ptr<BaseRequestHandler>
         } else {
             proposal.posProof = blsct::ProofOfStake(staked_elements, eta_fiat_shamir, eta_phi, m, f, prev_time, modifier, prev_chainwork, proposal.nTime, next_target, hardened);
         }
-        proposal.hashMerkleRoot = BlockMerkleRoot(proposal);
-
         // Re-verify locally using the SAME kernel consensus will compute. For
         // V2, bind the just-built proof's phi (NOT a re-derived phi: that would
         // use a different generator factory and diverge from setMemProof.phi).
@@ -1589,6 +1632,13 @@ MAIN_FUNCTION
         tfm::format(std::cout, "Keep the private key secret (pass it to navio-staker with -delegated -delegationkey=<hex>).\nPublish the public key so wallet owners can delegate to you with the delegatestake RPC.\n");
         return EXIT_SUCCESS;
     }
+
+    // -signetblockkey is a secp256k1 key: parsing it and signing signet blocks
+    // need the secp256k1 context.
+    ECC_Start();
+    const struct EccStop {
+        ~EccStop() { ECC_Stop(); }
+    } ecc_stop;
 
     // Setup() reports every argument error by throwing, so it needs a handler
     // here: an exception escaping main aborts the process, and only libstdc++

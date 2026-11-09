@@ -19,7 +19,7 @@
 
 void initialize_signet()
 {
-    static const auto testing_setup = MakeNoLogFileContext<>(ChainType::SIGNET);
+    static const auto testing_setup = MakeNoLogFileContext<>(ChainType::SIGNET, {"-signetchallenge=51"});
 }
 
 FUZZ_TARGET(signet, .init = initialize_signet)
