@@ -3276,11 +3276,17 @@ void PeerManagerImpl::ProcessHeadersMessage(CNode& pfrom, Peer& peer,
     // Enough work is no evidence on a proof-of-stake chain, whose headers are
     // free to make: refuse a chain claiming work faster than an honest one can
     // (see HeadersWorkRateLimit). Headers from a presync were checked there.
-    if (!already_validated_work &&
-        !GetHeadersWorkRateLimit(*chain_start_header).Allows(chain_start_header->nChainWork + CalculateHeadersWork(headers),
-                                                             headers.back().nTime, TicksSinceEpoch<std::chrono::seconds>(GetAdjustedTime()))) {
-        LogPrint(BCLog::NET, "Ignoring headers whose chain work grows implausibly fast (height=%u) from peer=%d\n", chain_start_header->nHeight + headers.size(), pfrom.GetId());
-        return;
+    if (!already_validated_work) {
+        HeadersWorkRateLimit limit{GetHeadersWorkRateLimit(*chain_start_header)};
+        const int64_t now{TicksSinceEpoch<std::chrono::seconds>(GetAdjustedTime())};
+        arith_uint256 chain_work{chain_start_header->nChainWork};
+        for (const CBlockHeader& header : headers) {
+            chain_work += GetBlockProof(CBlockIndex{header});
+            if (!limit.Add(chain_work, header.nTime, now)) {
+                LogPrint(BCLog::NET, "Ignoring headers whose chain work grows implausibly fast (height=%u) from peer=%d\n", chain_start_header->nHeight + headers.size(), pfrom.GetId());
+                return;
+            }
+        }
     }
 
     // At this point, we have a set of headers with sufficient work on them

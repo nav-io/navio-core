@@ -226,7 +226,7 @@ FakeChain BuildFakeChain(CBlockIndex* fork, const CChain& active, const Consensu
                          int64_t now, TimeOf time_of, int max_headers, int64_t end_time)
 {
     const CBlockIndex& tip{*active.Tip()};
-    const HeadersWorkRateLimit limit{active, *fork, consensus};
+    HeadersWorkRateLimit limit{active, *fork, consensus};
     std::vector<std::unique_ptr<CBlockIndex>> store;
     const arith_uint256 tip_proof{GetBlockProof(tip)};
     const arith_uint256 threshold{tip.nChainWork - tip_proof * 144};
@@ -240,7 +240,7 @@ FakeChain BuildFakeChain(CBlockIndex* fork, const CChain& active, const Consensu
         const arith_uint256 work{last->nChainWork - fork->nChainWork};
         if (fake.passes_threshold_at < 0 && last->nChainWork >= threshold) fake.passes_threshold_at = i;
         if (fake.overtakes_at < 0 && last->nChainWork > tip.nChainWork) fake.overtakes_at = i;
-        if (fake.refused_at < 0 && !limit.Allows(last->nChainWork, last->nTime, now)) fake.refused_at = i;
+        if (!limit.Add(last->nChainWork, last->nTime, now) && fake.refused_at < 0) fake.refused_at = i;
         fake.claimed_tip_blocks = (work / tip_proof).getdouble();
     }
     return fake;
@@ -320,9 +320,75 @@ BOOST_AUTO_TEST_CASE(headers_work_rate_limit_per_chain)
             next.nTime = time_of(i);
             CBlockIndex* const chain_start{last};
             last = AddIndex(store, chain_start, next.nTime, blsct::GetNextTargetRequired(chain_start, &next, consensus));
-            if (!HeadersWorkRateLimit{active, *chain_start, consensus}.Allows(last->nChainWork, last->nTime, now)) refused_at = i;
+            if (!HeadersWorkRateLimit{active, *chain_start, consensus}.Add(last->nChainWork, last->nTime, now)) refused_at = i;
         }
         BOOST_CHECK_EQUAL(refused_at, batch.refused_at);
+    }
+}
+
+// A chain whose timestamps jump from its fork to the present, then pack, would
+// spend the whole allowance the fork's age gives it within a few hundred
+// headers. The windowed check refuses it before it overtakes our tip or passes
+// the anti-DoS threshold, however old the fork, and also when it arrives one
+// header per message.
+BOOST_AUTO_TEST_CASE(headers_work_rate_window)
+{
+    const auto consensus = CreateChainParams(*m_node.args, ChainType::MAIN)->GetConsensus();
+    for (const int pos_blocks : {2500, 50000}) {
+        std::vector<std::unique_ptr<CBlockIndex>> store;
+        CBlockIndex* tip{BuildMainnetLikeChain(store, consensus, pos_blocks)};
+        CChain active;
+        active.SetTip(*tip);
+        const int64_t now{tip->GetBlockTime()};
+        for (const int fork_height : {2, consensus.nLastPOWHeight, tip->nHeight - 2000}) {
+            CBlockIndex* fork{tip->GetAncestor(fork_height)};
+            const auto time_of = [&](int i) { return now - 3000 + i; };
+            const auto jumped{BuildFakeChain(fork, active, consensus, now, time_of, 3000, now + MAX_FUTURE_BLOCK_TIME)};
+            BOOST_TEST_MESSAGE(pos_blocks << " PoS blocks, fork at " << fork_height << ": threshold at " << jumped.passes_threshold_at
+                               << ", overtakes at " << jumped.overtakes_at << ", refused at " << jumped.refused_at);
+            BOOST_REQUIRE_GT(jumped.passes_threshold_at, 0);
+            BOOST_REQUIRE_GT(jumped.refused_at, 0);
+            BOOST_CHECK_LT(jumped.refused_at, jumped.passes_threshold_at);
+
+            // One header per message, each limit seeded from the stored ones.
+            int refused_at{-1};
+            CBlockIndex* last{fork};
+            for (int i = 1; i <= jumped.refused_at && refused_at < 0; ++i) {
+                CBlockHeader next;
+                next.nTime = time_of(i);
+                CBlockIndex* const chain_start{last};
+                last = AddIndex(store, chain_start, next.nTime, blsct::GetNextTargetRequired(chain_start, &next, consensus));
+                if (!HeadersWorkRateLimit{active, *chain_start, consensus}.Add(last->nChainWork, last->nTime, now)) refused_at = i;
+            }
+            BOOST_CHECK_EQUAL(refused_at, jumped.refused_at);
+        }
+    }
+}
+
+// Honest proof-of-stake headers pass the windowed check, at our pace and with
+// three retarget timespans' worth of blocks a second apart.
+BOOST_AUTO_TEST_CASE(headers_work_rate_window_honest)
+{
+    const auto consensus = CreateChainParams(*m_node.args, ChainType::MAIN)->GetConsensus();
+    std::vector<std::unique_ptr<CBlockIndex>> store;
+    CBlockIndex* tip{BuildMainnetLikeChain(store, consensus, 2500)};
+    CChain active;
+    active.SetTip(*tip);
+    const int64_t now{tip->GetBlockTime()};
+    const int64_t burst{consensus.nPosTargetTimespan / MAINNET_POS_SPACING * 3};
+
+    for (const int depth : {0, 144, 2000}) {
+        CBlockIndex* fork{tip->GetAncestor(tip->nHeight - depth)};
+        HeadersWorkRateLimit limit{active, *fork, consensus};
+        CBlockIndex* last{fork};
+        for (int i = 1; i <= 2000; ++i) {
+            // Our spacing, with `burst` blocks a second in the middle.
+            const int64_t time{i <= 1000 ? fork->GetBlockTime() + i * MAINNET_POS_SPACING :
+                               i <= 1000 + burst ? last->GetBlockTime() + 1 :
+                               last->GetBlockTime() + MAINNET_POS_SPACING};
+            last = AddIndex(store, last, time, MAINNET_POS_NBITS);
+            BOOST_REQUIRE_MESSAGE(limit.Add(last->nChainWork, last->nTime, std::max(now, time)), "depth " << depth << ": refused at " << i);
+        }
     }
 }
 
