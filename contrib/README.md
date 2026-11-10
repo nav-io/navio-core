@@ -1,5 +1,4 @@
-Repository Tools
----------------------
+## Repository Tools
 
 ### [Developer tools](/contrib/devtools)
 
@@ -23,34 +22,28 @@ connects to this node and receives blocks from it.
 
 Utility to generate the pnSeed[] array that is compiled into the client.
 
-Build Tools and Keys
----------------------
+## Build Tools and Keys
 
 ### Packaging
 
 The [Debian](/contrib/debian) subfolder contains the copyright file.
 
-All other packaging related files can be found in the
-[bitcoin-core/packaging](https://github.com/bitcoin-core/packaging) repository.
-
 ### [MacDeploy](/contrib/macdeploy)
 
 Scripts and notes for Mac builds.
 
-Test and Verify Tools
----------------------
+## Test and Verify Tools
 
 ### [TestGen](/contrib/testgen)
 
-Utilities to generate test vectors for the data-driven Bitcoin tests.
+Utilities to generate test vectors for the data-driven Navio tests.
 
 ### [Release-Keys](/contrib/release-keys)
 
 The public key that signs Navio Core release binaries, with steps for verifying
 a download.
 
-Command Line Tools
----------------------
+## Command Line Tools
 
 ### [Completions](/contrib/completions)
 
