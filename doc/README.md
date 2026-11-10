@@ -1,8 +1,6 @@
-Bitcoin Core
-=============
+# Bitcoin Core
 
-Setup
----------------------
+## Setup
 
 Bitcoin Core is the original Bitcoin client and it builds the backbone of the
 network. It downloads and, by default, stores the entire history of Bitcoin
@@ -13,8 +11,7 @@ can take anywhere from a few hours to a day or more.
 To download Bitcoin Core, visit
 [bitcoincore.org](https://bitcoincore.org/en/download/).
 
-Running
----------------------
+## Running
 
 The following are some helpful notes on how to run Bitcoin Core on your native
 platform.
@@ -45,8 +42,7 @@ Drag Bitcoin Core to your applications folder, and then run Bitcoin Core.
 - Ask for help on the [BitcoinTalk](https://bitcointalk.org/) forums, in the
   [Technical Support board](https://bitcointalk.org/index.php?board=4.0).
 
-Building
----------------------
+## Building
 
 The following are developer notes on how to build Bitcoin Core on your native
 platform. They are not complete guides, but include notes on the necessary
@@ -61,8 +57,7 @@ libraries, compile flags, etc.
 - [NetBSD Build Notes](build-netbsd.md)
 - [Android Build Notes](build-android.md)
 
-Development
----------------------
+## Development
 
 The Bitcoin repo's [root README](/README.md) contains relevant information on
 the development process and automated testing.
@@ -71,7 +66,6 @@ the development process and automated testing.
 - [Productivity Notes](productivity.md)
 - [Release Process](release-process.md)
 - [Source Code Documentation (External Link)](https://doxygen.bitcoincore.org/)
-- [Translation Strings Policy](translation_strings_policy.md)
 - [JSON-RPC Interface](JSON-RPC-interface.md)
 - [Unauthenticated REST Interface](REST-interface.md)
 - [BIPS](bips.md)
@@ -90,7 +84,7 @@ the development process and automated testing.
 ### Miscellaneous
 
 - [Assets Attribution](assets-attribution.md)
-- [navio.conf Configuration File](bitcoin-conf.md)
+- [navio.conf Configuration File](navio-conf.md)
 - [CJDNS Support](cjdns.md)
 - [Files](files.md)
 - [Fuzz-testing](fuzzing.md)
@@ -104,7 +98,6 @@ the development process and automated testing.
 - [Transaction Relay Policy](policy/README.md)
 - [ZMQ](zmq.md)
 
-License
----------------------
+## License
 
 Distributed under the [MIT software license](/COPYING).
