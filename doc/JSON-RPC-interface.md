@@ -1,9 +1,7 @@
 # JSON-RPC Interface
 
-The headless daemon `naviod` has the JSON-RPC API enabled by default, the GUI
-`navio-qt` has it disabled by default. This can be changed with the `-server`
-option. In the GUI it is possible to execute RPC methods in the Debug Console
-Dialog.
+The daemon `naviod` has the JSON-RPC API enabled by default. This can be
+changed with the `-server` option.
 
 ## Endpoints
 
@@ -23,7 +21,7 @@ This endpoint is only activated when the wallet component has been compiled in.
 It can service both wallet and non-wallet requests. It MUST be used for wallet
 requests when two or more wallets are loaded.
 
-This is the endpoint used by bitcoin-cli when a `-rpcwallet=` parameter is
+This is the endpoint used by `navio-cli` when a `-rpcwallet=` parameter is
 passed in.
 
 Best practice would dictate using the `/wallet/<walletname>/` endpoint for ALL
@@ -53,18 +51,18 @@ Examples:
 
 ```sh
 # "params": ["mywallet", false, false, "", false, false, true]
-bitcoin-cli createwallet mywallet false false "" false false true
+navio-cli createwallet mywallet false false "" false false true
 
 # "params": {"wallet_name": "mywallet", "load_on_startup": true}
-bitcoin-cli -named createwallet wallet_name=mywallet load_on_startup=true
+navio-cli -named createwallet wallet_name=mywallet load_on_startup=true
 
 # "params": {"args": ["mywallet"], "load_on_startup": true}
-bitcoin-cli -named createwallet mywallet load_on_startup=true
+navio-cli -named createwallet mywallet load_on_startup=true
 ```
 
 ## Versioning
 
-The RPC interface might change from one major version of Bitcoin Core to the
+The RPC interface might change from one major version of Navio Core to the
 next. This makes the RPC interface implicitly versioned on the major version.
 The version tuple can be retrieved by e.g. the `getnetworkinfo` RPC in
 `version`.
@@ -76,19 +74,19 @@ deprecated and how to re-enable them temporarily.
 
 ## Security
 
-The RPC interface allows other programs to control Bitcoin Core, including the
+The RPC interface allows other programs to control Navio Core, including the
 ability to spend funds from your wallets, affect consensus verification, read
 private data, and otherwise perform operations that can cause loss of money,
-data, or privacy. This section suggests how you should use and configure Bitcoin
+data, or privacy. This section suggests how you should use and configure Navio
 Core to reduce the risk that its RPC interface will be abused.
 
 - **Securing the executable:** Anyone with physical or remote access to the
-  computer, container, or virtual machine running Bitcoin Core can compromise
+  computer, container, or virtual machine running Navio Core can compromise
   either the whole program or just the RPC interface. This includes being able
   to record any passphrases you enter for unlocking your encrypted wallets or
-  changing settings so that your Bitcoin Core program tells you that certain
+  changing settings so that your Navio Core program tells you that certain
   transactions have multiple confirmations even when they aren't part of the
-  best block chain. For this reason, you should not use Bitcoin Core for
+  best block chain. For this reason, you should not use Navio Core for
   security sensitive operations on systems you do not exclusively control, such
   as shared computers or virtual private servers.
 
@@ -97,17 +95,17 @@ Core to reduce the risk that its RPC interface will be abused.
   provides a valid authentication credential (username and passphrase). Any
   program on your computer with access to the file system and local network can
   obtain this level of access. Additionally, other programs on your computer can
-  attempt to provide an RPC interface on the same port as used by Bitcoin Core
+  attempt to provide an RPC interface on the same port as used by Navio Core
   in order to trick you into revealing your authentication credentials. For this
-  reason, it is important to only use Bitcoin Core for security-sensitive
+  reason, it is important to only use Navio Core for security-sensitive
   operations on a computer whose other programs you trust.
 
 - **Securing remote network access:** You may optionally allow other computers
-  to remotely control Bitcoin Core by setting the `rpcallowip` and `rpcbind`
+  to remotely control Navio Core by setting the `rpcallowip` and `rpcbind`
   configuration parameters. These settings are only meant for enabling
   connections over secure private networks or connections that have been
   otherwise secured (e.g. using a VPN or port forwarding with SSH or stunnel).
-  **Do not enable RPC connections over the public Internet.** Although Bitcoin
+  **Do not enable RPC connections over the public Internet.** Although Navio
   Core's RPC interface does use authentication, it does not use encryption, so
   your login credentials are sent as clear text that can be read by anyone on
   your network path. Additionally, the RPC interface has not been hardened to
@@ -117,19 +115,19 @@ Core to reduce the risk that its RPC interface will be abused.
   information about these settings and other settings described in this
   document.
 
-  Related, if you use Bitcoin Core inside a Docker container, you may need to
+  Related, if you use Navio Core inside a Docker container, you may need to
   expose the RPC port to the host system. The default way to do this in Docker
   also exposes the port to the public Internet. Instead, expose it only on the
   host system's localhost, for example: `-p 127.0.0.1:48471:48471`
 
 - **Secure authentication:** By default, when no `rpcpassword` is specified,
-  Bitcoin Core generates unique login credentials each time it restarts and puts
-  them into a file readable only by the user that started Bitcoin Core, allowing
+  Navio Core generates unique login credentials each time it restarts and puts
+  them into a file readable only by the user that started Navio Core, allowing
   any of that user's RPC clients with read access to the file to login
-  automatically. The file is `.cookie` in the Bitcoin Core configuration
+  automatically. The file is `.cookie` in the Navio Core configuration
   directory, and using these credentials is the preferred RPC authentication
   method. If you need to generate static login credentials for your programs,
-  you can use the script in the `share/rpcauth` directory in the Bitcoin Core
+  you can use the script in the `share/rpcauth` directory in the Navio Core
   source tree. As a final fallback, you can directly use manually-chosen
   `rpcuser` and `rpcpassword` configuration parameters---but you must ensure
   that you choose a strong and unique passphrase (and still don't use insecure

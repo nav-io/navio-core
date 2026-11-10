@@ -113,27 +113,28 @@ the mempool is also taken into account. See
 [BIP64](https://github.com/bitcoin/bips/blob/master/bip-0064.mediawiki) for
 input and output serialization (relevant for `bin` and `hex` output formats).
 
-Example:
+Example, on blsctregtest, for the BLSCT coinbase output of block 1. A BLSCT
+output's amount is blinded, so `value` reads 0, and its `scriptPubKey` is
+`OP_TRUE`:
 
 ```
-$ curl localhost:33677/rest/getutxos/checkmempool/b2cdfd7b89def827ff8af7cd9bff7627ff72e5e8b0f71210f92ea7a4000c5d75.json 2>/dev/null | json_pp
+$ curl localhost:48484/rest/getutxos/checkmempool/c3f5ed6c44fa01048a82be1c4fbb411a1703cc98a43b1c4e218b82e7564aa76a.json 2>/dev/null | python3 -m json.tool
 {
-   "chainHeight" : 325347,
-   "chaintipHash" : "00000000fb01a7f3745a717f8caebee056c484e6e0bfe4a9591c235bb70506fb",
-   "bitmap": "1",
-   "utxos" : [
-      {
-         "height" : 2147483647,
-         "value" : 8.8687,
-         "scriptPubKey" : {
-            "asm" : "OP_DUP OP_HASH160 1c7cebb529b86a04c683dfa87be49de35bcf589e OP_EQUALVERIFY OP_CHECKSIG",
-            "desc" : "addr(mi7as51dvLJsizWnTMurtRmrP8hG2m1XvD)#gj9tznmy"
-            "hex" : "76a9141c7cebb529b86a04c683dfa87be49de35bcf589e88ac",
-            "type" : "pubkeyhash",
-            "address" : "mi7as51dvLJsizWnTMurtRmrP8hG2m1XvD"
-         }
-      }
-   ]
+    "chainHeight": 1,
+    "chaintipHash": "0e5c740534beaa15efbe0d99725f37c2f682ec969bc4034af3dc3e80f5d3fb86",
+    "bitmap": "1",
+    "utxos": [
+        {
+            "height": 1,
+            "value": 0.0,
+            "scriptPubKey": {
+                "asm": "1",
+                "desc": "raw(51)#8lvh9jxk",
+                "hex": "51",
+                "type": "nonstandard"
+            }
+        }
+    ]
 }
 ```
 
