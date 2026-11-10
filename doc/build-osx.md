@@ -2,8 +2,7 @@
 
 **Updated for MacOS [11.2](https://www.apple.com/macos/big-sur/)**
 
-This guide describes how to build naviod, command-line utilities, and GUI on
-macOS
+This guide describes how to build naviod and command-line utilities on macOS
 
 ## Preparation
 
@@ -111,13 +110,6 @@ installed:
 ```bash
 brew install python
 ```
-
----
-
-#### Deploy Dependencies
-
-You can deploy a `.zip` containing the Navio Core application using the deploy
-target. It is required that you have `python` installed.
 
 ## Building Navio Core
 
