@@ -6,8 +6,8 @@ This directory contains the following sets of tests:
 
 - [fuzz](/test/fuzz) A runner to execute all fuzz targets from
   [/src/test/fuzz](/src/test/fuzz).
-- [functional](/test/functional) which test the functionality of naviod and
-  bitcoin-qt by interacting with them through the RPC and P2P interfaces.
+- [functional](/test/functional) which test the functionality of naviod and the
+  wallet by interacting with them through the RPC and P2P interfaces.
 - [util](/test/util) which tests the utilities (navio-util, navio-tx, ...).
 - [lint](/test/lint/) which perform various static analysis checks.
 
@@ -16,7 +16,7 @@ functional tests and lint scripts can be run as explained in the sections below.
 
 # Running tests locally
 
-Before tests can be run locally, Bitcoin Core must be built. See the
+Before tests can be run locally, Navio Core must be built. See the
 [building instructions](/doc#building) for help.
 
 ## Fuzz tests
@@ -188,13 +188,14 @@ pkill -9 naviod
 ##### Data directory cache
 
 A pre-mined blockchain with 200 blocks is generated the first time a functional
-test is run and is stored in test/cache. This speeds up test startup times since
-new blockchains don't need to be generated for each test. However, the cache may
-get into a bad state, in which case tests will fail. If this happens, remove the
-cache directory (and make sure naviod processes are stopped as above):
+test is run and is stored in build/test/cache. This speeds up test startup times
+since new blockchains don't need to be generated for each test. However, the
+cache may get into a bad state, in which case tests will fail. If this happens,
+remove the cache directory (and make sure naviod processes are stopped as
+above):
 
 ```bash
-rm -rf test/cache
+rm -rf build/test/cache
 killall naviod
 ```
 
@@ -205,7 +206,7 @@ and CRITICAL). From within your functional tests you can log to these different
 levels using the logger included in the test_framework, e.g.
 `self.log.debug(object)`. By default:
 
-- when run through the test_runner harness, _all_ logs are written to
+- when run through the `test_runner` harness, _all_ logs are written to
   `test_framework.log` and no logs are output to the console.
 - when run directly, _all_ logs are written to `test_framework.log` and INFO
   level and above are output to the console.

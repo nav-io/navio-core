@@ -47,8 +47,9 @@ Platform-specific instructions live in [`doc/build-*.md`](/doc).
 The BLS12-381 arithmetic behind BLSCT comes from the vendored
 [supranational/blst](https://github.com/supranational/blst) (`src/blst`), built
 by CMake with no extra dependencies. On x86_64 both the ADX and the non-ADX code
-paths are compiled and selected at runtime (`BLST_PORTABLE=ON`, the default);
-other architectures use blst's portable C implementation.
+paths are compiled and selected at runtime (`BLST_PORTABLE=ON`, the default).
+ARM64 also uses blst's assembly; other architectures use its portable C
+implementation.
 
 The contribution workflow is described in [CONTRIBUTING.md](CONTRIBUTING.md) and
 useful hints for developers can be found in
