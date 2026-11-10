@@ -15,6 +15,7 @@
 #include <util/hasher.h>
 
 #include <deque>
+#include <utility>
 #include <vector>
 
 // A compressed CBlockHeader, which leaves out the prevhash
@@ -98,6 +99,92 @@ struct CompressedHeader {
  * sync (temporary, per-peer storage).
  */
 
+/** Policy limit on how fast a proof-of-stake header chain may claim chain
+ * work, relative to the time its timestamps span.
+ *
+ * A proof-of-stake header carries no proof of work: its stake proof is in the
+ * block body, so anyone can make headers for free. Packing their timestamps
+ * together makes every proof-of-stake retarget raise the difficulty by the
+ * full 4x step, so a free chain can claim any amount of work within a few
+ * hundred headers, which defeats the work thresholds that bound how many
+ * headers a peer can make us store. Stake does not appear from nowhere, so an
+ * honest chain claims work at about the rate ours does: refuse a chain that
+ * claims more than MAX_RATE_FACTOR times our recent rate over its timespan,
+ * plus one retarget timespan of slack for short bursts of blocks.
+ *
+ * Measured from the fork alone, a fork's allowance grows with its age, and a
+ * chain could leave its timestamps near the fork's, then jump them to the
+ * present and spend that whole allowance in a few hundred packed headers. So
+ * the work within any one retarget timespan of the chain's timestamps is
+ * limited to MAX_RATE_FACTOR times our rate too: an honest chain spreads its
+ * work over its timespan, and the jump puts it all at the end.
+ */
+class HeadersWorkRateLimit
+{
+public:
+    //! How many times our own rate a chain may claim work at. A node on a
+    //! minority fork can still follow a heavier one as long as it holds at
+    //! least 1/MAX_RATE_FACTOR of the stake.
+    static constexpr uint32_t MAX_RATE_FACTOR{4};
+    //! Our rate is measured over this many proof-of-stake retarget intervals.
+    static constexpr int REFERENCE_INTERVALS{10};
+    //! Headers whose timestamps are within 1/WINDOW_SLOTS of the window apart
+    //! share one entry, which bounds the memory a chain can make us hold. It
+    //! errs strict: the window may count one slot's worth of work too much.
+    static constexpr int WINDOW_SLOTS{60};
+
+    //! No limit.
+    HeadersWorkRateLimit() = default;
+    //! The limit on headers built on `chain_start`, measured on `active`. The
+    //! work and time a chain claims are counted from where it forks from
+    //! `active`, not from `chain_start`, so delivering a chain in many small
+    //! batches buys no extra slack. No limit unless `active` is a BLSCT chain
+    //! with REFERENCE_INTERVALS proof-of-stake retarget intervals past
+    //! nLastPOWHeight. The stored headers from the fork up to `chain_start`
+    //! that the window needs are read from `chain_start`'s ancestors.
+    HeadersWorkRateLimit(const CChain& active, const CBlockIndex& chain_start, const Consensus::Params& params);
+
+    //! Whether a header chain whose last header has total chain work
+    //! `chain_work` and is timestamped `last_time` is allowed at adjusted time
+    //! `now`. A fork from the proof-of-work part is limited too: its blocks
+    //! may sit at the proof-of-work limit, as mainnet's do, which makes
+    //! forking there as free as forking later.
+    bool Allows(const arith_uint256& chain_work, int64_t last_time, int64_t now) const;
+
+    //! Records the next header of the chain, with total chain work
+    //! `chain_work` and timestamp `time`, and returns whether the chain up to
+    //! it is allowed at adjusted time `now`: Allows() holds, and the work of
+    //! its headers within the last window is within the rate too. Feed every
+    //! header in chain order; a refused chain stays refused.
+    bool Add(const arith_uint256& chain_work, int64_t time, int64_t now);
+
+    bool IsActive() const { return m_active; }
+
+private:
+    bool m_active{false};
+    //! MAX_RATE_FACTOR times our measured work per second.
+    arith_uint256 m_max_work_per_second;
+    int64_t m_slack_seconds{0};
+    //! Where the limited chain forks from ours.
+    arith_uint256 m_fork_chain_work;
+    int64_t m_fork_time{0};
+    //! The span of timestamps the windowed check covers.
+    int64_t m_window_seconds{0};
+    //! (timestamp, chain work) of the chain's latest headers, oldest first:
+    //! the newest one at or before the window's start, then those in it.
+    std::deque<std::pair<int64_t, arith_uint256>> m_window;
+    bool m_refused{false};
+
+    void Record(int64_t time, const arith_uint256& chain_work);
+};
+
+/** Whether headers built on `start` fork from `active` more than `depth`
+ * blocks below its tip, on a BLSCT chain. Proof-of-stake headers are free to
+ * make, and so are proof-of-work ones at the proof-of-work limit (mainnet's
+ * are), so only a peer we chose may lead us onto such a fork, wherever it
+ * starts. */
+bool IsDeepBlsctFork(const CChain& active, const CBlockIndex& start, const Consensus::Params& params, int depth);
+
 class HeadersSyncState {
 public:
     ~HeadersSyncState() = default;
@@ -134,9 +221,12 @@ public:
      * consensus_params: parameters needed for difficulty adjustment validation
      * chain_start: best known fork point that the peer's headers branch from
      * minimum_required_work: amount of chain work required to accept the chain
+     * work_rate_limit: how fast the peer's chain may claim work (presync aborts
+     *  at the first header that exceeds it)
      */
     HeadersSyncState(NodeId id, const Consensus::Params& consensus_params,
-            const CBlockIndex* chain_start, const arith_uint256& minimum_required_work);
+            const CBlockIndex* chain_start, const arith_uint256& minimum_required_work,
+            const HeadersWorkRateLimit& work_rate_limit = {});
 
     /** Result data structure for ProcessNextHeaders. */
     struct ProcessingResult {
@@ -219,6 +309,9 @@ private:
 
     /** Minimum work that we're looking for on this chain. */
     const arith_uint256 m_minimum_required_work;
+
+    /** How fast the peer's chain may claim work. */
+    HeadersWorkRateLimit m_work_rate_limit;
 
     /** Work that we've seen so far on the peer's chain */
     arith_uint256 m_current_chain_work;

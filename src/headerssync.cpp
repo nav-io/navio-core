@@ -9,6 +9,8 @@
 #include <util/check.h>
 #include <util/vector.h>
 
+#include <algorithm>
+
 // The two constants below are computed using the simulation script in
 // contrib/devtools/headerssync-params.py.
 
@@ -24,12 +26,87 @@ constexpr size_t REDOWNLOAD_BUFFER_SIZE{14441}; // 14441/606 = ~23.8 commitments
 // Commented since the SetMemProof has a dynamic size
 // static_assert(sizeof(CompressedHeader) == 2344);
 
+HeadersWorkRateLimit::HeadersWorkRateLimit(const CChain& active, const CBlockIndex& chain_start, const Consensus::Params& params)
+{
+    const CBlockIndex* tip{active.Tip()};
+    if (!params.fBLSCT || tip == nullptr) return;
+    const int window{REFERENCE_INTERVALS * static_cast<int>(params.DifficultyAdjustmentIntervalPos())};
+    if (tip->nHeight - window <= params.nLastPOWHeight) return;
+    const CBlockIndex* first{tip->GetAncestor(tip->nHeight - window)};
+    const int64_t seconds{tip->GetBlockTime() - first->GetBlockTime()};
+    if (seconds <= 0) return;
+    m_max_work_per_second = arith_uint256{tip->nChainWork - first->nChainWork} * MAX_RATE_FACTOR / arith_uint256{static_cast<uint64_t>(seconds)};
+    m_slack_seconds = params.nPosTargetTimespan;
+    const CBlockIndex* fork{active.FindFork(&chain_start)};
+    if (fork == nullptr) return;
+    m_fork_chain_work = fork->nChainWork;
+    m_fork_time = fork->GetBlockTime();
+    m_window_seconds = params.nPosTargetTimespan;
+    // Seed the window with the stored headers from the fork up to
+    // chain_start, so that a chain delivered in many messages is measured as
+    // one. Stored headers passed the median-time-past check, which bounds how
+    // many fit in one window.
+    std::vector<const CBlockIndex*> stored;
+    for (const CBlockIndex* index{&chain_start};; index = index->pprev) {
+        stored.push_back(index);
+        if (index == fork || index->GetBlockTime() <= chain_start.GetBlockTime() - m_window_seconds) break;
+    }
+    for (auto it{stored.rbegin()}; it != stored.rend(); ++it) Record((*it)->GetBlockTime(), (*it)->nChainWork);
+    m_active = true;
+}
+
+bool HeadersWorkRateLimit::Allows(const arith_uint256& chain_work, int64_t last_time, int64_t now) const
+{
+    if (!m_active || chain_work <= m_fork_chain_work) return true;
+    // A timestamp past MAX_FUTURE_BLOCK_TIME is invalid; it buys no time.
+    const int64_t end{std::min(last_time, now + MAX_FUTURE_BLOCK_TIME)};
+    const int64_t seconds{std::max<int64_t>(0, end - m_fork_time) + m_slack_seconds};
+    return chain_work - m_fork_chain_work <= m_max_work_per_second * arith_uint256{static_cast<uint64_t>(seconds)};
+}
+
+void HeadersWorkRateLimit::Record(int64_t time, const arith_uint256& chain_work)
+{
+    const int64_t slot{std::max<int64_t>(1, m_window_seconds / WINDOW_SLOTS)};
+    if (m_window.size() > 1 && time - m_window.back().first < slot) {
+        // Merging keeps the later timestamp, so the entry leaves the window
+        // no earlier than its last header would.
+        m_window.back() = {std::max(time, m_window.back().first), chain_work};
+    } else {
+        m_window.emplace_back(time, chain_work);
+    }
+    while (m_window.size() > 1 && m_window[1].first <= time - m_window_seconds) m_window.pop_front();
+}
+
+bool HeadersWorkRateLimit::Add(const arith_uint256& chain_work, int64_t time, int64_t now)
+{
+    if (!m_active) return true;
+    if (m_refused) return false;
+    if (!Allows(chain_work, time, now)) {
+        m_refused = true;
+        return false;
+    }
+    Record(time, chain_work);
+    const arith_uint256& start{m_window.front().second};
+    const arith_uint256 window_cap{m_max_work_per_second * arith_uint256{static_cast<uint64_t>(m_window_seconds)}};
+    if (chain_work > start && chain_work - start > window_cap) m_refused = true;
+    return !m_refused;
+}
+
+bool IsDeepBlsctFork(const CChain& active, const CBlockIndex& start, const Consensus::Params& params, int depth)
+{
+    if (!params.fBLSCT || active.Tip() == nullptr) return false;
+    const CBlockIndex* fork{active.FindFork(&start)};
+    return fork != nullptr && fork->nHeight + depth < active.Height();
+}
+
 HeadersSyncState::HeadersSyncState(NodeId id, const Consensus::Params& consensus_params,
-        const CBlockIndex* chain_start, const arith_uint256& minimum_required_work) :
+        const CBlockIndex* chain_start, const arith_uint256& minimum_required_work,
+        const HeadersWorkRateLimit& work_rate_limit) :
     m_commit_offset(GetRand<unsigned>(HEADER_COMMITMENT_PERIOD)),
     m_id(id), m_consensus_params(consensus_params),
     m_chain_start(chain_start),
     m_minimum_required_work(minimum_required_work),
+    m_work_rate_limit(work_rate_limit),
     m_current_chain_work(chain_start->nChainWork),
     m_last_header_received(m_chain_start->GetBlockHeader()),
     m_current_height(chain_start->nHeight)
@@ -208,6 +285,11 @@ bool HeadersSyncState::ValidateAndProcessSingleHeader(const CBlockHeader& curren
     }
 
     m_current_chain_work += GetBlockProof(CBlockIndex(current));
+    if (!m_work_rate_limit.Add(m_current_chain_work, current.nTime,
+                               TicksSinceEpoch<std::chrono::seconds>(GetAdjustedTime()))) {
+        LogPrint(BCLog::NET, "Initial headers sync aborted with peer=%d: chain work grows implausibly fast at height=%i (presync phase)\n", m_id, next_height);
+        return false;
+    }
     m_last_header_received = current;
     m_current_height = next_height;
 
