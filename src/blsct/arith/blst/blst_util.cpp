@@ -4,6 +4,8 @@
 
 #include <blsct/arith/blst/blst_util.h>
 
+#include <support/allocators/zeroafterfree.h>
+
 #include <algorithm>
 #include <thread>
 
@@ -54,7 +56,9 @@ BlstG1Point BlstUtil::MSM(const BlstG1Point* pts, const BlstScalar* scalars, siz
         const blst_p1* in[2] = {&pts[0].m_point, nullptr};
         blst_p1s_to_affine(aff.data(), in, n);
     }
-    std::vector<blst_scalar> sc(n);
+    // The scalars may be secret (blinding factors, keys); the buffer is wiped
+    // when freed, on every return path.
+    std::vector<blst_scalar, zero_after_free_allocator<blst_scalar>> sc(n);
     for (size_t i = 0; i < n; ++i) {
         blst_scalar_from_fr(&sc[i], &scalars[i].m_scalar);
     }

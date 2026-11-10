@@ -5,6 +5,7 @@
 #include <blsct/arith/blst/blst_g1point.h>
 #include <blsct/arith/blst/blst_strconv.h>
 #include <streams.h>
+#include <support/cleanse.h>
 #include <util/strencodings.h>
 
 #include <algorithm>
@@ -115,6 +116,7 @@ BlstG1Point BlstG1Point::operator*(const Scalar& rhs) const
     blst_scalar s{};
     blst_scalar_from_fr(&s, &rhs.m_scalar);
     blst_p1_mult(&ret.m_point, &m_point, s.b, 255);
+    memory_cleanse(&s, sizeof(s));
     return ret;
 }
 

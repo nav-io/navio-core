@@ -4,6 +4,7 @@
 
 #include <blsct/building_block/fixed_base_window.h>
 
+#include <support/allocators/zeroafterfree.h>
 #include <tinyformat.h>
 
 #include <stdexcept>
@@ -53,7 +54,8 @@ BlstG1Point FixedBaseWindow::MSMImpl(const BlstScalar* exps, size_t count) const
     if (count == 0 || m_nbases == 0) return BlstG1Point();
     if (count > m_nbases) count = m_nbases;
 
-    std::vector<blst_scalar> sc(count);
+    // The exponents may be secret; the buffer is wiped when freed.
+    std::vector<blst_scalar, zero_after_free_allocator<blst_scalar>> sc(count);
     for (size_t i = 0; i < count; ++i) {
         blst_scalar_from_fr(&sc[i], &exps[i].m_scalar);
     }
