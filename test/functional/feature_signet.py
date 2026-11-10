@@ -163,6 +163,9 @@ class SignetBasicTest(BitcoinTestFramework):
         assert node.getblock(node.getbestblockhash())["version"] & VERSION_BIT_POS
         self.sync_blocks([node, self.nodes[1]])
 
+        self.log.info("A proof-of-stake block signed for another challenge is rejected")
+        assert_equal(self.nodes[2].submitblock(node.getblock(node.getbestblockhash(), 0)), "bad-signet-blksig")
+
     def test_init_errors(self):
         self.log.info("test that signet logs the network magic on node start")
         with self.nodes[0].assert_debug_log(["Signet derived magic (message start)"]):
