@@ -2,8 +2,6 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
-#include <addrdb.h>
-#include <banman.h>
 #include <blockfilter.h>
 #include <chain.h>
 #include <chainparams.h>
@@ -13,12 +11,10 @@
 #include <init.h>
 #include <interfaces/chain.h>
 #include <interfaces/handler.h>
-#include <interfaces/node.h>
 #include <interfaces/wallet.h>
 #include <kernel/chain.h>
 #include <kernel/mempool_entry.h>
 #include <logging.h>
-#include <mapport.h>
 #include <net.h>
 #include <net_processing.h>
 #include <netaddress.h>
@@ -49,7 +45,6 @@
 #include <util/translation.h>
 #include <validation.h>
 #include <validationinterface.h>
-#include <warnings.h>
 
 #include <any>
 #include <memory>
@@ -58,316 +53,14 @@
 
 #include <btcsignals.h>
 
-using interfaces::BlockTip;
 using interfaces::Chain;
 using interfaces::FoundBlock;
 using interfaces::Handler;
-using interfaces::MakeSignalHandler;
-using interfaces::Node;
-using interfaces::WalletLoader;
 
 namespace node {
 // All members of the classes in this namespace are intentionally public, as the
 // classes themselves are private.
 namespace {
-class NodeImpl : public Node
-{
-public:
-    explicit NodeImpl(NodeContext& context) { setContext(&context); }
-    void initLogging() override { InitLogging(args()); }
-    void initParameterInteraction() override { InitParameterInteraction(args()); }
-    bilingual_str getWarnings() override { return GetWarnings(true); }
-    int getExitStatus() override { return Assert(m_context)->exit_status.load(); }
-    uint32_t getLogCategories() override { return LogInstance().GetCategoryMask(); }
-    bool baseInitialize() override
-    {
-        if (!AppInitBasicSetup(args(), Assert(context())->exit_status)) return false;
-        if (!AppInitParameterInteraction(args())) return false;
-
-        m_context->kernel = std::make_unique<kernel::Context>();
-        if (!AppInitSanityChecks(*m_context->kernel)) return false;
-
-        if (!AppInitLockDataDirectory()) return false;
-        if (!AppInitInterfaces(*m_context)) return false;
-
-        return true;
-    }
-    bool appInitMain(interfaces::BlockAndHeaderTipInfo* tip_info) override
-    {
-        if (AppInitMain(*m_context, tip_info)) return true;
-        // Error during initialization, set exit status before continue
-        m_context->exit_status.store(EXIT_FAILURE);
-        return false;
-    }
-    void appShutdown() override
-    {
-        Interrupt(*m_context);
-        Shutdown(*m_context);
-    }
-    void startShutdown() override
-    {
-        if (!(*Assert(Assert(m_context)->shutdown))()) {
-            LogPrintf("Error: failed to send shutdown signal\n");
-        }
-        // Stop RPC for clean shutdown if any of waitfor* commands is executed.
-        if (args().GetBoolArg("-server", false)) {
-            InterruptRPC();
-            StopRPC();
-        }
-    }
-    bool shutdownRequested() override { return ShutdownRequested(*Assert(m_context)); };
-    bool isSettingIgnored(const std::string& name) override
-    {
-        bool ignored = false;
-        args().LockSettings([&](common::Settings& settings) {
-            if (auto* options = common::FindKey(settings.command_line_options, name)) {
-                ignored = !options->empty();
-            }
-        });
-        return ignored;
-    }
-    common::SettingsValue getPersistentSetting(const std::string& name) override { return args().GetPersistentSetting(name); }
-    void updateRwSetting(const std::string& name, const common::SettingsValue& value) override
-    {
-        args().LockSettings([&](common::Settings& settings) {
-            if (value.isNull()) {
-                settings.rw_settings.erase(name);
-            } else {
-                settings.rw_settings[name] = value;
-            }
-        });
-        args().WriteSettingsFile();
-    }
-    void forceSetting(const std::string& name, const common::SettingsValue& value) override
-    {
-        args().LockSettings([&](common::Settings& settings) {
-            if (value.isNull()) {
-                settings.forced_settings.erase(name);
-            } else {
-                settings.forced_settings[name] = value;
-            }
-        });
-    }
-    void resetSettings() override
-    {
-        args().WriteSettingsFile(/*errors=*/nullptr, /*backup=*/true);
-        args().LockSettings([&](common::Settings& settings) {
-            settings.rw_settings.clear();
-        });
-        args().WriteSettingsFile();
-    }
-    void mapPort(bool use_natpmp) override { StartMapPort(use_natpmp); }
-    bool getProxy(Network net, Proxy& proxy_info) override { return GetProxy(net, proxy_info); }
-    size_t getNodeCount(ConnectionDirection flags) override
-    {
-        return m_context->connman ? m_context->connman->GetNodeCount(flags) : 0;
-    }
-    bool getNodesStats(NodesStats& stats) override
-    {
-        stats.clear();
-
-        if (m_context->connman) {
-            std::vector<CNodeStats> stats_temp;
-            m_context->connman->GetNodeStats(stats_temp);
-
-            stats.reserve(stats_temp.size());
-            for (auto& node_stats_temp : stats_temp) {
-                stats.emplace_back(std::move(node_stats_temp), false, CNodeStateStats());
-            }
-
-            // Try to retrieve the CNodeStateStats for each node.
-            if (m_context->peerman) {
-                TRY_LOCK(::cs_main, lockMain);
-                if (lockMain) {
-                    for (auto& node_stats : stats) {
-                        std::get<1>(node_stats) =
-                            m_context->peerman->GetNodeStateStats(std::get<0>(node_stats).nodeid, std::get<2>(node_stats));
-                    }
-                }
-            }
-            return true;
-        }
-        return false;
-    }
-    bool getBanned(banmap_t& banmap) override
-    {
-        if (m_context->banman) {
-            m_context->banman->GetBanned(banmap);
-            return true;
-        }
-        return false;
-    }
-    bool ban(const CNetAddr& net_addr, int64_t ban_time_offset) override
-    {
-        if (m_context->banman) {
-            m_context->banman->Ban(net_addr, ban_time_offset);
-            return true;
-        }
-        return false;
-    }
-    bool unban(const CSubNet& ip) override
-    {
-        if (m_context->banman) {
-            m_context->banman->Unban(ip);
-            return true;
-        }
-        return false;
-    }
-    bool disconnectByAddress(const CNetAddr& net_addr) override
-    {
-        if (m_context->connman) {
-            return m_context->connman->DisconnectNode(net_addr);
-        }
-        return false;
-    }
-    bool disconnectById(NodeId id) override
-    {
-        if (m_context->connman) {
-            return m_context->connman->DisconnectNode(id);
-        }
-        return false;
-    }
-    int64_t getTotalBytesRecv() override { return m_context->connman ? m_context->connman->GetTotalBytesRecv() : 0; }
-    int64_t getTotalBytesSent() override { return m_context->connman ? m_context->connman->GetTotalBytesSent() : 0; }
-    size_t getMempoolSize() override { return m_context->mempool ? m_context->mempool->size() : 0; }
-    size_t getMempoolDynamicUsage() override { return m_context->mempool ? m_context->mempool->DynamicMemoryUsage() : 0; }
-    bool getHeaderTip(int& height, int64_t& block_time) override
-    {
-        LOCK(::cs_main);
-        auto best_header = chainman().m_best_header;
-        if (best_header) {
-            height = best_header->nHeight;
-            block_time = best_header->GetBlockTime();
-            return true;
-        }
-        return false;
-    }
-    int getNumBlocks() override
-    {
-        LOCK(::cs_main);
-        return chainman().ActiveChain().Height();
-    }
-    uint256 getBestBlockHash() override
-    {
-        const CBlockIndex* tip = WITH_LOCK(::cs_main, return chainman().ActiveChain().Tip());
-        return tip ? tip->GetBlockHash() : chainman().GetParams().GenesisBlock().GetHash();
-    }
-    int64_t getLastBlockTime() override
-    {
-        LOCK(::cs_main);
-        if (chainman().ActiveChain().Tip()) {
-            return chainman().ActiveChain().Tip()->GetBlockTime();
-        }
-        return chainman().GetParams().GenesisBlock().GetBlockTime(); // Genesis block's time of current network
-    }
-    double getVerificationProgress() override
-    {
-        return GuessVerificationProgress(chainman().GetParams().TxData(), WITH_LOCK(::cs_main, return chainman().ActiveChain().Tip()));
-    }
-    bool isInitialBlockDownload() override
-    {
-        return chainman().IsInitialBlockDownload();
-    }
-    bool isLoadingBlocks() override { return chainman().m_blockman.LoadingBlocks(); }
-    void setNetworkActive(bool active) override
-    {
-        if (m_context->connman) {
-            m_context->connman->SetNetworkActive(active);
-        }
-    }
-    bool getNetworkActive() override { return m_context->connman && m_context->connman->GetNetworkActive(); }
-    CFeeRate getDustRelayFee() override
-    {
-        if (!m_context->mempool) return CFeeRate{DUST_RELAY_TX_FEE};
-        return m_context->mempool->m_dust_relay_feerate;
-    }
-    UniValue executeRpc(const std::string& command, const UniValue& params, const std::string& uri) override
-    {
-        JSONRPCRequest req;
-        req.context = m_context;
-        req.params = params;
-        req.strMethod = command;
-        req.URI = uri;
-        return ::tableRPC.execute(req);
-    }
-    std::vector<std::string> listRpcCommands() override { return ::tableRPC.listCommands(); }
-    void rpcSetTimerInterfaceIfUnset(RPCTimerInterface* iface) override { RPCSetTimerInterfaceIfUnset(iface); }
-    void rpcUnsetTimerInterface(RPCTimerInterface* iface) override { RPCUnsetTimerInterface(iface); }
-    std::optional<Coin> getUnspentOutput(const COutPoint& output) override
-    {
-        LOCK(::cs_main);
-        Coin coin;
-        if (chainman().ActiveChainstate().CoinsTip().GetCoin(output, coin)) return coin;
-        return {};
-    }
-    TransactionError broadcastTransaction(CTransactionRef tx, CAmount max_tx_fee, std::string& err_string) override
-    {
-        return BroadcastTransaction(*m_context, std::move(tx), err_string, max_tx_fee, /*relay=*/ true, /*wait_callback=*/ false);
-    }
-    WalletLoader& walletLoader() override
-    {
-        return *Assert(m_context->wallet_loader);
-    }
-    std::unique_ptr<Handler> handleInitMessage(InitMessageFn fn) override
-    {
-        return MakeSignalHandler(::uiInterface.InitMessage_connect(fn));
-    }
-    std::unique_ptr<Handler> handleMessageBox(MessageBoxFn fn) override
-    {
-        return MakeSignalHandler(::uiInterface.ThreadSafeMessageBox_connect(fn));
-    }
-    std::unique_ptr<Handler> handleQuestion(QuestionFn fn) override
-    {
-        return MakeSignalHandler(::uiInterface.ThreadSafeQuestion_connect(fn));
-    }
-    std::unique_ptr<Handler> handleShowProgress(ShowProgressFn fn) override
-    {
-        return MakeSignalHandler(::uiInterface.ShowProgress_connect(fn));
-    }
-    std::unique_ptr<Handler> handleInitWallet(InitWalletFn fn) override
-    {
-        return MakeSignalHandler(::uiInterface.InitWallet_connect(fn));
-    }
-    std::unique_ptr<Handler> handleNotifyNumConnectionsChanged(NotifyNumConnectionsChangedFn fn) override
-    {
-        return MakeSignalHandler(::uiInterface.NotifyNumConnectionsChanged_connect(fn));
-    }
-    std::unique_ptr<Handler> handleNotifyNetworkActiveChanged(NotifyNetworkActiveChangedFn fn) override
-    {
-        return MakeSignalHandler(::uiInterface.NotifyNetworkActiveChanged_connect(fn));
-    }
-    std::unique_ptr<Handler> handleNotifyAlertChanged(NotifyAlertChangedFn fn) override
-    {
-        return MakeSignalHandler(::uiInterface.NotifyAlertChanged_connect(fn));
-    }
-    std::unique_ptr<Handler> handleBannedListChanged(BannedListChangedFn fn) override
-    {
-        return MakeSignalHandler(::uiInterface.BannedListChanged_connect(fn));
-    }
-    std::unique_ptr<Handler> handleNotifyBlockTip(NotifyBlockTipFn fn) override
-    {
-        return MakeSignalHandler(::uiInterface.NotifyBlockTip_connect([fn](SynchronizationState sync_state, const CBlockIndex* block) {
-            fn(sync_state, BlockTip{block->nHeight, block->GetBlockTime(), block->GetBlockHash()},
-                GuessVerificationProgress(Params().TxData(), block));
-        }));
-    }
-    std::unique_ptr<Handler> handleNotifyHeaderTip(NotifyHeaderTipFn fn) override
-    {
-        return MakeSignalHandler(
-            ::uiInterface.NotifyHeaderTip_connect([fn](SynchronizationState sync_state, int64_t height, int64_t timestamp, bool presync) {
-                fn(sync_state, BlockTip{(int)height, timestamp, uint256{}}, presync);
-            }));
-    }
-    NodeContext* context() override { return m_context; }
-    void setContext(NodeContext* context) override
-    {
-        m_context = context;
-    }
-    ArgsManager& args() { return *Assert(Assert(m_context)->args); }
-    ChainstateManager& chainman() { return *Assert(m_context->chainman); }
-    NodeContext* m_context{nullptr};
-};
-
 // NOLINTNEXTLINE(misc-no-recursion)
 bool FillBlock(const CBlockIndex* index, const FoundBlock& block, UniqueLock<RecursiveMutex>& lock, const CChain& active, const BlockManager& blockman)
 {
@@ -798,6 +491,5 @@ public:
 } // namespace node
 
 namespace interfaces {
-std::unique_ptr<Node> MakeNode(node::NodeContext& context) { return std::make_unique<node::NodeImpl>(context); }
 std::unique_ptr<Chain> MakeChain(node::NodeContext& context) { return std::make_unique<node::ChainImpl>(context); }
 } // namespace interfaces

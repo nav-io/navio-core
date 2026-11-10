@@ -35,7 +35,6 @@
 #include <init/common.h>
 #include <interfaces/chain.h>
 #include <interfaces/init.h>
-#include <interfaces/node.h>
 #include <logging.h>
 #include <mapport.h>
 #include <net.h>
@@ -1231,7 +1230,7 @@ static std::optional<uint16_t> WsUrlPort(const std::string& url)
     return port != 0 ? port : default_port;
 }
 
-bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
+bool AppInitMain(NodeContext& node)
 {
     const ArgsManager& args = *Assert(node.args);
     const CChainParams& chainparams = Params();
@@ -2620,15 +2619,6 @@ bool AppInitMain(NodeContext& node, interfaces::BlockAndHeaderTipInfo* tip_info)
         LOCK(cs_main);
         LogPrintf("block tree size = %u\n", chainman.BlockIndex().size());
         chain_active_height = chainman.ActiveChain().Height();
-        if (tip_info) {
-            tip_info->block_height = chain_active_height;
-            tip_info->block_time = chainman.ActiveChain().Tip() ? chainman.ActiveChain().Tip()->GetBlockTime() : chainman.GetParams().GenesisBlock().GetBlockTime();
-            tip_info->verification_progress = GuessVerificationProgress(chainman.GetParams().TxData(), chainman.ActiveChain().Tip());
-        }
-        if (tip_info && chainman.m_best_header) {
-            tip_info->header_height = chainman.m_best_header->nHeight;
-            tip_info->header_time = chainman.m_best_header->GetBlockTime();
-        }
     }
     LogPrintf("nBestHeight = %d\n", chain_active_height);
     if (node.peerman) node.peerman->SetBestHeight(chain_active_height);

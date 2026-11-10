@@ -6,7 +6,6 @@
 #include <interfaces/chain.h>
 #include <interfaces/echo.h>
 #include <interfaces/init.h>
-#include <interfaces/node.h>
 #include <interfaces/wallet.h>
 #include <node/context.h>
 #include <util/check.h>
@@ -25,7 +24,6 @@ public:
         InitContext(m_node);
         m_node.init = this;
     }
-    std::unique_ptr<interfaces::Node> makeNode() override { return interfaces::MakeNode(m_node); }
     std::unique_ptr<interfaces::Chain> makeChain() override { return interfaces::MakeChain(m_node); }
     std::unique_ptr<interfaces::WalletLoader> makeWalletLoader(interfaces::Chain& chain) override
     {
