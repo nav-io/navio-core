@@ -150,7 +150,7 @@ refer to pull requests easier in the above `git worktree` commands.
 ### Format C/C++ diffs with `clang-format-diff.py`
 
 See
-[contrib/devtools/README.md](/contrib/devtools/README.md#clang-format-diff.py).
+[contrib/devtools/README.md](/contrib/devtools/README.md#clang-format-diffpy).
 
 ### Format Python diffs with `yapf-diff.py`
 

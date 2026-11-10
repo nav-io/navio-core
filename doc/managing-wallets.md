@@ -40,9 +40,11 @@ Wallet encryption may also not protect against more sophisticated attacks. An
 attacker can, for example, obtain the password by installing a keylogger on the
 user's machine.
 
-After encrypting the wallet or changing the passphrase, a new backup needs to be
-created immediately. The reason is that the keypool is flushed and a new HD seed
-is generated after encryption. Any coins received by the new seed cannot be
+After encrypting the wallet or changing the passphrase, create a new backup
+immediately. Encrypting a BLSCT wallet (the default) keeps its BLSCT keys, so
+its mnemonic and earlier backups still recover its BLSCT coins. Only a
+transparent HD seed, if the wallet has one, is replaced by a new one (as are a
+descriptor wallet's descriptors). Coins received by the new seed cannot be
 recovered from the previous backups.
 
 The wallet's private key may be encrypted with the following command:
