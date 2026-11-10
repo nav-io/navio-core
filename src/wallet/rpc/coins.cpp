@@ -735,6 +735,12 @@ RPCHelpMan listunspent()
     UniValue results(UniValue::VARR);
     std::vector<COutput> vecOutputs;
     std::vector<COutput> vecBlsctOutputs;
+    // maximumCount and minimumSumAmount limit the merged listing below, after
+    // the addresses filter, so a list gathered for the merge, or for that
+    // filter, is gathered without them.
+    CoinFilterParams unlimited_filter{filter_coins};
+    unlimited_filter.max_count = 0;
+    unlimited_filter.min_sum_amount = MAX_MONEY;
     {
         CCoinControl cctl;
         cctl.m_avoid_address_reuse = false;
@@ -742,7 +748,7 @@ RPCHelpMan listunspent()
         cctl.m_max_depth = nMaxDepth;
         cctl.m_include_unsafe_inputs = include_unsafe;
         LOCK(pwallet->cs_wallet);
-        vecOutputs = AvailableCoinsListUnspent(*pwallet, &cctl, filter_coins).All();
+        vecOutputs = AvailableCoinsListUnspent(*pwallet, &cctl, destinations.empty() ? filter_coins : unlimited_filter).All();
         if (pwallet->IsWalletFlagSet(WALLET_FLAG_BLSCT_OUTPUT_STORAGE)) {
             // Under BLSCT output storage, confirmed BLSCT coins live in
             // mapOutputs rather than mapWallet, so AvailableCoins() (used
@@ -750,12 +756,7 @@ RPCHelpMan listunspent()
             // mirrors how getbalance() adds GetBlsctBalance() on top of
             // GetBalance() to avoid under-reporting BLSCT funds; here we add
             // AvailableBlsctCoins() on top of AvailableCoins() instead.
-            // maximumCount and minimumSumAmount limit the merged listing
-            // below, so this list is gathered without them.
-            CoinFilterParams blsct_filter{filter_coins};
-            blsct_filter.max_count = 0;
-            blsct_filter.min_sum_amount = MAX_MONEY;
-            vecBlsctOutputs = AvailableBlsctCoins(*pwallet, &cctl, blsct_filter).All();
+            vecBlsctOutputs = AvailableBlsctCoins(*pwallet, &cctl, unlimited_filter).All();
         }
     }
 
@@ -764,7 +765,8 @@ RPCHelpMan listunspent()
     const bool avoid_reuse = pwallet->IsWalletFlagSet(WALLET_FLAG_AVOID_REUSE);
     blsct::KeyMan* blsct_km = pwallet->GetBLSCTKeyMan();
 
-    // Emits one listunspent entry for `out`. BLSCT coins are rendered using
+    // Emits one listunspent entry for `out`, unless the addresses filter
+    // drops it; returns whether it emitted one. BLSCT coins are rendered using
     // their recovered nv1... destination and amount (AvailableCoins and
     // AvailableBlsctCoins both substitute the recovered amount into
     // out.txout.nValue) and
@@ -786,7 +788,7 @@ RPCHelpMan listunspent()
         }
 
         if (destinations.size() && (!fValidAddress || !destinations.contains(address)))
-            return;
+            return false;
 
         UniValue entry(UniValue::VOBJ);
         entry.pushKV("outid", out.outpoint.hash.GetHex());
@@ -859,6 +861,7 @@ RPCHelpMan listunspent()
         if (avoid_reuse) entry.pushKV("reused", reused);
         entry.pushKV("safe", out.safe);
         results.push_back(entry);
+        return true;
     };
 
     // Under output storage the outputs of the wallet's own sends (their
@@ -869,16 +872,20 @@ RPCHelpMan listunspent()
     // A BLSCT output is rendered as one whichever list it came from.
     //
     // maximumCount and minimumSumAmount apply to the merged listing, checked
-    // after each coin as AvailableCoins() does. vecOutputs already stopped at
-    // them, so a wallet without output storage lists exactly what it did.
+    // after each listed coin as AvailableCoins() does; a coin the addresses
+    // filter drops counts toward neither. Without that filter vecOutputs
+    // already stopped at them, so a wallet without output storage lists
+    // exactly what it did.
     std::set<COutPoint> listed;
+    uint64_t listed_count{0};
     CAmount listed_sum{0};
     auto list = [&](const COutput& out, bool is_blsct) EXCLUSIVE_LOCKS_REQUIRED(pwallet->cs_wallet) {
         AssertLockHeld(pwallet->cs_wallet);
-        add_entry(out, is_blsct);
+        if (!add_entry(out, is_blsct)) return true;
+        ++listed_count;
         listed_sum += out.txout.nValue;
         const bool sum_reached{filter_coins.min_sum_amount != MAX_MONEY && listed_sum >= filter_coins.min_sum_amount};
-        const bool count_reached{filter_coins.max_count > 0 && listed.size() >= filter_coins.max_count};
+        const bool count_reached{filter_coins.max_count > 0 && listed_count >= filter_coins.max_count};
         return !sum_reached && !count_reached;
     };
     bool more{true};

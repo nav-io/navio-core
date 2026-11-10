@@ -86,6 +86,16 @@ class BlsctOutputStorageRpcListingTest(BitcoinTestFramework):
             filtered = wallet.listunspent(0, 9999999, [address])
             assert_equal(sorted(u["outid"] for u in filtered),
                          sorted(u["outid"] for u in unspent if u["address"] == address))
+            # The limits count only the coins the filter keeps: a coin at
+            # another address does not use up maximumCount or minimumSumAmount.
+            limited = wallet.listunspent(0, 9999999, [address], True, {"maximumCount": 1})
+            assert_equal(len(limited), 1)
+            assert_equal(limited[0]["address"], address)
+            smallest = min(to_dec(u["amount"]) for u in filtered)
+            limited = wallet.listunspent(0, 9999999, [address], True, {"minimumSumAmount": smallest})
+            assert_greater_than(len(limited), 0)
+            assert sum(to_dec(u["amount"]) for u in limited) >= smallest
+            assert all(u["address"] == address for u in limited)
 
         # Amount filters are applied to the recovered BLSCT amount.
         biggest = max(to_dec(u["amount"]) for u in unspent)
