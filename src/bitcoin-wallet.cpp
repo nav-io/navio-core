@@ -75,7 +75,7 @@ static std::optional<int> WalletAppInit(ArgsManager& args, int argc, char* argv[
             strUsage += FormatParagraph(LicenseInfo());
         } else {
             strUsage += "\n"
-                        "bitcoin-wallet is an offline tool for creating and interacting with " PACKAGE_NAME " wallet files.\n"
+                        "navio-wallet is an offline tool for creating and interacting with " PACKAGE_NAME " wallet files.\n"
                         "By default navio-wallet will act on wallets in the default mainnet wallet directory in the datadir.\n"
                         "To change the target wallet, use the -datadir, -wallet and -regtest/-blsctregtest/-signet/-testnet arguments.\n\n"
                         "Usage:\n"
