@@ -12,17 +12,11 @@ For example:
 
     make HOST=x86_64-w64-mingw32 -j4
 
-**Bitcoin Core's `configure` script by default will ignore the depends output.** In
-order for it to pick up libraries, tools, and settings from the depends build,
-you must set the `CONFIG_SITE` environment variable to point to a `config.site` settings file.
-Make sure that `CONFIG_SITE` is an absolute path.
-In the above example, a file named `depends/x86_64-w64-mingw32/share/config.site` will be
-created. To use it during compilation:
+**CMake by default ignores the depends output.** To pick up libraries, tools
+and settings from the depends build, pass the toolchain file it writes. In the
+above example, that is `depends/x86_64-w64-mingw32/toolchain.cmake`:
 
-    CONFIG_SITE=$PWD/depends/x86_64-w64-mingw32/share/config.site ./configure
-
-The default install prefix when using `config.site` is `--prefix=depends/<host-platform-triplet>`,
-so depends build outputs will be installed in that location.
+    cmake -B build --toolchain depends/x86_64-w64-mingw32/toolchain.cmake
 
 Common `host-platform-triplet`s for cross compilation are:
 
@@ -114,7 +108,7 @@ The following can be set when running make: `make FOO=bar`
 - `LOG`: Use file-based logging for individual packages. During a package build its log file
   resides in the `depends` directory, and the log file is printed out automatically in case
   of build error. After successful build log files are moved along with package archives
-- `LTO`: Enable options needed for LTO. Does not add `-flto` related options to *FLAGS.
+- `LTO`: Enable options needed for LTO. Does not add `-flto` related options to \*FLAGS.
 - `NO_HARDEN=1`: Don't use hardening options when building packages
 
 If some packages are not built, for example `make NO_WALLET=1`, the appropriate
@@ -126,7 +120,6 @@ options will be passed to bitcoin's configure. In this case, `--disable-wallet`.
     download-osx: run 'make download-osx' to fetch all sources needed for macOS builds
     download-win: run 'make download-win' to fetch all sources needed for win builds
     download-linux: run 'make download-linux' to fetch all sources needed for linux builds
-
 
 ### Other documentation
 
