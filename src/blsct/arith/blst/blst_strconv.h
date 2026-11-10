@@ -66,27 +66,35 @@ inline std::string BytesToRadixString(const uint8_t* be, size_t n, int radix)
     return ret;
 }
 
+// Wipe a partial parse result before reporting the error.
+[[noreturn]] inline void WipeAndThrow(std::vector<uint8_t>& partial, const char* what)
+{
+    memory_cleanse(partial.data(), partial.size());
+    throw std::runtime_error(what);
+}
+
 // Parse a radix-`radix` (2/10/16) digit string into a big-endian byte vector
 // of exactly `out_len` bytes (left-padded with zeros). Values that do not fit
-// are rejected. An optional "0x" prefix is accepted for radix 16. The working
-// copy of the digits is wiped on success.
-inline std::vector<uint8_t> RadixStringToBytes(const std::string& s_in, int radix, size_t out_len)
+// are rejected. An optional "0x" prefix is accepted for radix 16. The input
+// can be a secret scalar, so the partial result is wiped when parsing fails.
+inline std::vector<uint8_t> RadixStringToBytes(const std::string& s, int radix, size_t out_len)
 {
     if (radix != 2 && radix != 10 && radix != 16) {
         throw std::runtime_error("RadixStringToBytes: unsupported radix");
     }
-    std::string s = s_in;
-    if (radix == 16 && s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) s.erase(0, 2);
-    if (s.empty()) throw std::runtime_error("RadixStringToBytes: empty string");
+    size_t start = 0;
+    if (radix == 16 && s.size() > 2 && s[0] == '0' && (s[1] == 'x' || s[1] == 'X')) start = 2;
+    if (start == s.size()) throw std::runtime_error("RadixStringToBytes: empty string");
 
     std::vector<uint8_t> acc(out_len, 0);
-    for (char c : s) {
+    for (size_t pos = start; pos < s.size(); ++pos) {
+        const char c = s[pos];
         int d;
         if (c >= '0' && c <= '9') d = c - '0';
         else if (c >= 'a' && c <= 'f') d = c - 'a' + 10;
         else if (c >= 'A' && c <= 'F') d = c - 'A' + 10;
-        else throw std::runtime_error("RadixStringToBytes: bad digit");
-        if (d >= radix) throw std::runtime_error("RadixStringToBytes: digit out of radix");
+        else WipeAndThrow(acc, "RadixStringToBytes: bad digit");
+        if (d >= radix) WipeAndThrow(acc, "RadixStringToBytes: digit out of radix");
         // acc = acc * radix + d
         unsigned carry = static_cast<unsigned>(d);
         for (size_t i = acc.size(); i-- > 0;) {
@@ -94,9 +102,8 @@ inline std::vector<uint8_t> RadixStringToBytes(const std::string& s_in, int radi
             acc[i] = static_cast<uint8_t>(cur & 0xff);
             carry = cur >> 8;
         }
-        if (carry) throw std::runtime_error("RadixStringToBytes: overflow");
+        if (carry) WipeAndThrow(acc, "RadixStringToBytes: overflow");
     }
-    memory_cleanse(s.data(), s.size());
     return acc;
 }
 

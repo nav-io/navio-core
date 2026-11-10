@@ -450,7 +450,10 @@ uint256 BlstScalar::GetHashWithSalt(const uint64_t& salt) const
     HashWriter hasher{};
     hasher << *this;
     hasher << salt;
-    return hasher.GetHash();
+    const uint256 hash{hasher.GetHash()};
+    // The hasher's buffer and midstate are derived from the scalar.
+    memory_cleanse(&hasher, sizeof(hasher));
+    return hash;
 }
 
 std::string BlstScalar::GetString(const int8_t& radix) const

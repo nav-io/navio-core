@@ -360,8 +360,16 @@ std::vector<BlstG1Point> BlstG1Point::SubgroupCheckDeferralScope::Take()
 
 BlstG1Point::Scalar BlstG1Point::GetHashWithSalt(const uint64_t salt) const
 {
+    // The point is often a secret nonce, so wipe its encoding and the
+    // hasher state derived from it.
+    auto vch = GetVch();
     HashWriter hasher{};
-    hasher << *this;
+    hasher.write(MakeByteSpan(vch));
     hasher << salt;
-    return BlstScalar(hasher.GetHash());
+    uint256 hash{hasher.GetHash()};
+    BlstScalar ret(hash);
+    memory_cleanse(vch.data(), vch.size());
+    memory_cleanse(&hasher, sizeof(hasher));
+    memory_cleanse(hash.data(), hash.size());
+    return ret;
 }

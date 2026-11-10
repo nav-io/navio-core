@@ -220,8 +220,13 @@ uint16_t BirthdayCheckIndex(Span<const unsigned char> entropy, uint16_t week)
     msg[tag.size()] = static_cast<unsigned char>(week >> 8);
     msg[tag.size() + 1] = static_cast<unsigned char>(week & 0xFF);
     unsigned char mac[CHMAC_SHA256::OUTPUT_SIZE];
-    CHMAC_SHA256(entropy.data(), entropy.size()).Write(msg, sizeof(msg)).Finalize(mac);
-    return static_cast<uint16_t>(((mac[0] << 8) | mac[1]) >> 5);
+    CHMAC_SHA256 hmac(entropy.data(), entropy.size());
+    hmac.Write(msg, sizeof(msg)).Finalize(mac);
+    const auto index{static_cast<uint16_t>(((mac[0] << 8) | mac[1]) >> 5)};
+    // The HMAC's inner and outer states are keyed by the entropy.
+    memory_cleanse(&hmac, sizeof(hmac));
+    memory_cleanse(mac, sizeof(mac));
+    return index;
 }
 
 } // namespace
