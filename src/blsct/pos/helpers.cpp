@@ -63,4 +63,12 @@ CalculateKernelHashWithChainWork(const uint32_t& prevTime, const uint64_t& stake
 
     return ss.GetHash();
 }
+
+std::vector<unsigned char> CalculateSetMemProofRandomnessV2(const uint256& prevBlockHash, uint64_t prevStakeModifier, const std::vector<CTransactionRef>& vtx)
+{
+    HashWriter ss{};
+    ss << prevBlockHash << prevStakeModifier << TX_NO_WITNESS(vtx);
+    const uint256 hash{ss.GetHash()};
+    return std::vector<unsigned char>(hash.begin(), hash.end());
+}
 } // namespace blsct

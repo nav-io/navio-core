@@ -410,7 +410,13 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
     };
 
     /**
-     * Signet: test network with an additional consensus parameter (see BIP325).
+     * Signet: a BLSCT test network whose blocks must also carry a signature
+     * satisfying the network's challenge script (BIP325), so only the holders
+     * of the challenge keys can produce blocks, proof-of-work or proof-of-stake.
+     *
+     * There is no public navio signet yet, so there is no default challenge:
+     * without -signetchallenge the challenge is empty, which no block can
+     * satisfy, and init refuses to start (see AppInitParameterInteraction).
      */
     class SigNetParams : public CChainParams
     {
@@ -420,37 +426,19 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             std::vector<uint8_t> bin;
             vSeeds.clear();
 
-            if (!options.challenge) {
-                bin = ParseHex("512103ad5e0edad18cb1f0fc0d28a3d4f1f3e445640337489abb10404f2d1e086be430210359ef5021964fe22d6f8e05b2463c9540ce96883fe3b278760f048f5189f2e6c452ae");
-                consensus.nMinimumChainWork = uint256S("0x000000000000000000000000000000000000000000000000000001899d8142b0");
-                consensus.defaultAssumeValid = uint256S("0x0000004429ef154f7e00b4f6b46bfbe2d2678ecd351d95bbfca437ab9a5b84ec"); // 138000
-
-                // See mainnet comment above. Testnet checkpoints are cut per
-                // testnet release; populate from agreed hashes.
-                consensus.finalityCheckpoints = {
-                    // {height, uint256S("0x...")},
-                };
-                m_assumed_blockchain_size = 1;
-                m_assumed_chain_state_size = 0;
-                chainTxData = ChainTxData{
-                    // Data from RPC: getchaintxstats 4096 0000004429ef154f7e00b4f6b46bfbe2d2678ecd351d95bbfca437ab9a5b84ec
-                    .nTime = 1681127428,
-                    .nTxCount = 2226359,
-                    .dTxRate = 0.006424463050600656,
-                };
-            } else {
+            if (options.challenge) {
                 bin = *options.challenge;
-                consensus.nMinimumChainWork = uint256{};
-                consensus.defaultAssumeValid = uint256{};
-                m_assumed_blockchain_size = 0;
-                m_assumed_chain_state_size = 0;
-                chainTxData = ChainTxData{
-                    0,
-                    0,
-                    0,
-                };
                 LogPrintf("Signet with challenge %s\n", HexStr(bin));
             }
+            consensus.nMinimumChainWork = uint256{};
+            consensus.defaultAssumeValid = uint256{};
+            m_assumed_blockchain_size = 0;
+            m_assumed_chain_state_size = 0;
+            chainTxData = ChainTxData{
+                0,
+                0,
+                0,
+            };
 
             if (options.seeds) {
                 vSeeds = *options.seeds;
@@ -458,19 +446,19 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
 
             m_chain_type = ChainType::SIGNET;
             consensus.signet_blocks = true;
-            consensus.signet_challenge.assign(bin.begin(), bin.end());            consensus.BIP34Height = 1;
+            consensus.signet_challenge.assign(bin.begin(), bin.end());
+            consensus.BIP34Height = 1;
             consensus.BIP65Height = 1;
             consensus.BIP66Height = 1;
             consensus.CSVHeight = 1;
-            consensus.SegwitHeight = 1;
-            consensus.fBLSCT = false;
+            consensus.SegwitHeight = 0;
+            consensus.fBLSCT = true;
             consensus.fPoPSHardened = true;
             consensus.nPoPSKernelV2Height = 0; // active from genesis
             consensus.nPePoSMinStakeAmount = 10000 * COIN;
             consensus.nBLSCTDefaultFee = BLSCT_DEFAULT_FEE;
             consensus.nStakedCommitmentLimit = 16;
-            // Dormant until an activation height is chosen; see Params::nBLSCTProofV2Height.
-            consensus.nBLSCTProofV2Height = std::numeric_limits<int>::max();
+            consensus.nBLSCTProofV2Height = 0; // active from genesis
             consensus.nLastPOWHeight = 1000;
             consensus.nPowTargetTimespan = 14 * 24 * 60 * 60; // two weeks
             consensus.nPowTargetSpacing = 10 * 60;
@@ -479,13 +467,16 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             consensus.nBLSCTBlockReward = 2 * COIN * (consensus.nPosTargetSpacing / 30);
             consensus.nBLSCTFirstBlockReward = 75000000 * COIN;
             consensus.nModifierInterval = 10 * 60;
-            consensus.fPowAllowMinDifficultyBlocks = false;
-            consensus.fPowNoRetargeting = false;
+            // The challenge signature, not the hash rate, decides who can
+            // extend the chain, so the proof-of-work phase runs at minimum
+            // difficulty, as on testnet.
+            consensus.fPowAllowMinDifficultyBlocks = true;
+            consensus.fPowNoRetargeting = true;
             consensus.fPosNoRetargeting = false;
             consensus.nRuleChangeActivationThreshold = 1815; // 90% of 2016
             consensus.nMinerConfirmationWindow = 2016;       // nPowTargetTimespan / nPowTargetSpacing
             consensus.MinBIP9WarningHeight = 0;
-            consensus.powLimit = uint256S("00000377ae000000000000000000000000000000000000000000000000000000");
+            consensus.powLimit = uint256S("7fffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
             consensus.posLimit = uint256S("0000ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff");
             consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].bit = 28;
             consensus.vDeployments[Consensus::DEPLOYMENT_TESTDUMMY].nStartTime = Consensus::BIP9Deployment::NEVER_ACTIVE;
@@ -504,13 +495,16 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             uint256 hash = h.GetHash();
             std::copy_n(hash.begin(), 4, pchMessageStart.begin());
 
-            nDefaultPort = 38333;
+            nDefaultPort = 48488;
             nPruneAfterHeight = 1000;
 
-            genesis = CreateGenesisBlock(1598918400, 52613770, 0x1e0377ae, 1, 50 * COIN);
+            // Plain unspendable coinbase, as on mainnet: ConnectBlock skips the
+            // genesis block, so it needs no BLSCT output. Every signet shares
+            // this genesis; the challenge tells them apart.
+            genesis = CreateGenesisBlock("Navio signet", CScript() << OP_RETURN, 1794182400, 0, 0x207fffff, 0x40000000UL, 0);
             consensus.hashGenesisBlock = genesis.GetHash();
-            assert(consensus.hashGenesisBlock == uint256S("0xc08b381a6fed30e99acd83ddc273c5cf317d2e4c57ec98416c3e06d4970eb6ab"));
-            assert(genesis.hashMerkleRoot == uint256S("0x923b312af9f8bafa4c0e3269ee492bf09b66ced16c19bfbc9e536fc11455a1b3"));
+            assert(consensus.hashGenesisBlock == uint256S("0x15feb2bf6b105720fe5f4727ba5dd8d89ec2a7604cc310e0d7bc658c50bb09ea"));
+            assert(genesis.hashMerkleRoot == uint256S("0x6be273f8c5669a11e1e24e99b02a8fb33b56113bc8d80ec0634941619b8d887e"));
 
             vFixedSeeds.clear();
 
@@ -522,7 +516,7 @@ static CBlock CreateGenesisBlock(uint32_t nTime, uint32_t nNonce, uint32_t nBits
             base58Prefixes[EXT_SECRET_KEY] = {0x04, 0x35, 0x83, 0x94};
 
             bech32_hrp = "tb";
-            bech32_mod_hrp = "nav";
+            bech32_mod_hrp = "snv";
 
             fDefaultConsistencyChecks = false;
             m_is_mockable_chain = false;

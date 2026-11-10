@@ -23,8 +23,6 @@
 #include <uint256.h>
 #include <util/strencodings.h>
 
-static constexpr uint8_t SIGNET_HEADER[4] = {0xec, 0xc7, 0xda, 0xa2};
-
 static constexpr unsigned int BLOCK_SCRIPT_VERIFY_FLAGS = SCRIPT_VERIFY_P2SH | SCRIPT_VERIFY_WITNESS | SCRIPT_VERIFY_DERSIG | SCRIPT_VERIFY_NULLDUMMY;
 
 static bool FetchAndClearCommitmentSection(const Span<const uint8_t> header, CScript& witness_commitment, std::vector<uint8_t>& result)
@@ -115,7 +113,11 @@ std::optional<SignetTxs> SignetTxs::Create(const CBlock& block, const CScript& c
     writer << signet_merkle;
     writer << block.nTime;
     tx_to_spend.vin[0].scriptSig << block_data;
-    tx_spending.vin[0].prevout = COutPoint(tx_to_spend.vout[0].GetHash());
+    // Spend the txid of tx_to_spend, which covers the block data in its
+    // scriptSig. An outpoint names an output by its own hash on this chain,
+    // but that hash covers only the output (zero value and the challenge),
+    // so a signature over it would hold for every block.
+    tx_spending.vin[0].prevout = COutPoint(tx_to_spend.GetHash().ToUint256());
 
     return SignetTxs{tx_to_spend, tx_spending};
 }
