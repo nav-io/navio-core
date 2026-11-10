@@ -1,49 +1,44 @@
 # Unit tests
 
-The sources in this directory are unit test cases. Boost includes a
-unit testing framework, and since Bitcoin Core already uses Boost, it makes
-sense to simply use this framework rather than require developers to
-configure some other framework (we want as few impediments to creating
-unit tests as possible).
+The sources in this directory are unit test cases. Boost includes a unit testing
+framework, and since Navio already uses Boost, it makes sense to simply use this
+framework rather than require developers to configure some other framework (we
+want as few impediments to creating unit tests as possible).
 
-The build system is set up to compile an executable called `test_navio`
-that runs all of the unit tests. The main source file for the test library is found in
-`util/setup_common.cpp`.
+The build system is set up to compile an executable called `test_navio` that
+runs all of the unit tests. The main source file for the test library is found
+in `util/setup_common.cpp`.
 
 ### Compiling/running unit tests
 
-Unit tests will be automatically compiled if dependencies were met in `./configure`
-and tests weren't explicitly disabled.
+Unit tests are compiled by default; they can be disabled by configuring CMake
+with `-DBUILD_TESTS=OFF`.
 
-After configuring, they can be run with `make check`.
+After building, they can be run with `ctest --test-dir build`. Every Boost test
+suite is registered as its own CTest test, so
+`ctest --test-dir build -R getarg_tests` runs a single suite.
 
-To run the unit tests manually, launch `src/test/test_navio`. To recompile
-after a test file was modified, run `make` and then run the test again. If you
-modify a non-test file, use `make -C src/test` to recompile only what's needed
-to run the unit tests.
+To run the unit tests manually, launch `build/bin/test_navio`. To recompile
+after a test file was modified, run `cmake --build build` and then run the test
+again. If you only want to recompile what's needed to run the unit tests, use
+`cmake --build build --target test_navio`.
 
 To add more unit tests, add `BOOST_AUTO_TEST_CASE` functions to the existing
-.cpp files in the `test/` directory or add new .cpp files that
-implement new `BOOST_AUTO_TEST_SUITE` sections.
-
-To run the GUI unit tests manually, launch `src/qt/test/test_navio-qt`
-
-To add more GUI unit tests, add them to the `src/qt/test/` directory and
-the `src/qt/test/test_main.cpp` file.
+.cpp files in the `test/` directory or add new .cpp files that implement new
+`BOOST_AUTO_TEST_SUITE` sections.
 
 ### Running individual tests
 
-`test_navio` accepts the command line arguments from the boost framework.
-For example, to run just the `getarg_tests` suite of tests:
+`test_navio` accepts the command line arguments from the boost framework. For
+example, to run just the `getarg_tests` suite of tests:
 
 ```bash
 test_navio --log_level=all --run_test=getarg_tests
 ```
 
-`log_level` controls the verbosity of the test framework, which logs when a
-test case is entered, for example. `test_navio` also accepts the command
-line arguments accepted by `naviod`. Use `--` to separate both types of
-arguments:
+`log_level` controls the verbosity of the test framework, which logs when a test
+case is entered, for example. `test_navio` also accepts the command line
+arguments accepted by `naviod`. Use `--` to separate both types of arguments:
 
 ```bash
 test_navio --log_level=all --run_test=getarg_tests -- -printtoconsole=1
@@ -63,52 +58,53 @@ Run `test_navio --help` for the full list.
 
 ### Adding test cases
 
-To add a new unit test file to our test suite you need
-to add the file to `src/Makefile.test.include`. The pattern is to create
-one test file for each class or source file for which you want to create
-unit tests. The file naming convention is `<source_filename>_tests.cpp`
-and such files should wrap their tests in a test suite
-called `<source_filename>_tests`. For an example of this pattern,
-see `uint256_tests.cpp`.
+To add a new unit test file to our test suite you need to add the file to the
+`test_navio` source list in `src/test/CMakeLists.txt` (wallet tests go in
+`src/wallet/test/CMakeLists.txt`). The pattern is to create one test file for
+each class or source file for which you want to create unit tests. The file
+naming convention is `<source_filename>_tests.cpp` and such files should wrap
+their tests in a test suite called `<source_filename>_tests`. For an example of
+this pattern, see `uint256_tests.cpp`.
 
 ### Logging and debugging in unit tests
 
-`make check` will write to a log file `foo_tests.cpp.log` and display this file
-on failure. For running individual tests verbosely, refer to the section
+`ctest --test-dir build --output-on-failure` displays the output of a failing
+test suite. For running individual tests verbosely, refer to the section
 [above](#running-individual-tests).
 
 To write to logs from unit tests you need to use specific message methods
 provided by Boost. The simplest is `BOOST_TEST_MESSAGE`.
 
-For debugging you can launch the `test_navio` executable with `gdb` or `lldb` and
-start debugging, just like you would with any other program:
+For debugging you can launch the `test_navio` executable with `gdb` or `lldb`
+and start debugging, just like you would with any other program:
 
 ```bash
-gdb src/test/test_navio
+gdb build/bin/test_navio
 ```
 
 #### Segmentation faults
 
-If you hit a segmentation fault during a test run, you can diagnose where the fault
-is happening by running `gdb ./src/test/test_navio` and then using the `bt` command
-within gdb.
+If you hit a segmentation fault during a test run, you can diagnose where the
+fault is happening by running `gdb ./build/bin/test_navio` and then using the
+`bt` command within gdb.
 
 Another tool that can be used to resolve segmentation faults is
 [valgrind](https://valgrind.org/).
 
-If for whatever reason you want to produce a core dump file for this fault, you can do
-that as well. By default, the boost test runner will intercept system errors and not
-produce a core file. To bypass this, add `--catch_system_errors=no` to the
-`test_navio` arguments and ensure that your ulimits are set properly (e.g. `ulimit -c
-unlimited`).
+If for whatever reason you want to produce a core dump file for this fault, you
+can do that as well. By default, the boost test runner will intercept system
+errors and not produce a core file. To bypass this, add
+`--catch_system_errors=no` to the `test_navio` arguments and ensure that your
+ulimits are set properly (e.g. `ulimit -c unlimited`).
 
-Running the tests and hitting a segmentation fault should now produce a file called `core`
-(on Linux platforms, the file name will likely depend on the contents of
-`/proc/sys/kernel/core_pattern`).
+Running the tests and hitting a segmentation fault should now produce a file
+called `core` (on Linux platforms, the file name will likely depend on the
+contents of `/proc/sys/kernel/core_pattern`).
 
 You can then explore the core dump using
+
 ```bash
-gdb src/test/test_navio core
+gdb build/bin/test_navio core
 
 (gbd) bt  # produce a backtrace for where a segfault occurred
 ```
