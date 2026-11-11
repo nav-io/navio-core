@@ -1,50 +1,31 @@
-# Bitcoin Core
+# Navio Core
 
 ## Setup
 
-Bitcoin Core is the original Bitcoin client and it builds the backbone of the
-network. It downloads and, by default, stores the entire history of Bitcoin
-transactions, which requires a few hundred gigabytes of disk space. Depending on
-the speed of your computer and network connection, the synchronization process
-can take anywhere from a few hours to a day or more.
+Navio Core is the reference implementation of the Navio protocol. It downloads
+and, by default, stores the entire history of the Navio chain. Depending on the
+speed of your computer and network connection, the synchronization process can
+take anywhere from a few minutes to a few hours.
 
-To download Bitcoin Core, visit
-[bitcoincore.org](https://bitcoincore.org/en/download/).
+To download Navio Core, visit [nav.io/get-started](https://nav.io/get-started)
+or the [GitHub releases](https://github.com/nav-io/navio-core/releases).
 
 ## Running
 
-The following are some helpful notes on how to run Bitcoin Core on your native
-platform.
-
-### Unix
-
-Unpack the files into a directory and run:
-
-- `bin/navio-qt` (GUI) or
-- `bin/naviod` (headless)
-
-### Windows
-
-Unpack the files into a directory, and then run navio-qt.exe.
-
-### macOS
-
-Drag Bitcoin Core to your applications folder, and then run Bitcoin Core.
+Navio Core has no GUI. Unpack the files into a directory and run `bin/naviod`
+(`bin/naviod.exe` on Windows) to start the node, and `bin/navio-cli` to talk to
+it.
 
 ### Need Help?
 
-- See the documentation at the
-  [Bitcoin Wiki](https://en.bitcoin.it/wiki/Main_Page) for help and more
-  information.
-- Ask for help on [Bitcoin StackExchange](https://bitcoin.stackexchange.com).
-- Ask for help on #bitcoin on Libera Chat. If you don't have an IRC client, you
-  can use [web.libera.chat](https://web.libera.chat/#bitcoin).
-- Ask for help on the [BitcoinTalk](https://bitcointalk.org/) forums, in the
-  [Technical Support board](https://bitcointalk.org/index.php?board=4.0).
+- See the [documentation website](https://docs.nav.io) and the
+  [wiki](https://github.com/nav-io/navio-core/wiki).
+- Report bugs on the
+  [issue tracker](https://github.com/nav-io/navio-core/issues).
 
 ## Building
 
-The following are developer notes on how to build Bitcoin Core on your native
+The following are developer notes on how to build Navio Core on your native
 platform. They are not complete guides, but include notes on the necessary
 libraries, compile flags, etc.
 
@@ -59,13 +40,12 @@ libraries, compile flags, etc.
 
 ## Development
 
-The Bitcoin repo's [root README](/README.md) contains relevant information on
-the development process and automated testing.
+The Navio repo's [root README](/README.md) contains relevant information on the
+development process and automated testing.
 
 - [Developer Notes](developer-notes.md)
 - [Productivity Notes](productivity.md)
 - [Release Process](release-process.md)
-- [Source Code Documentation (External Link)](https://doxygen.bitcoincore.org/)
 - [JSON-RPC Interface](JSON-RPC-interface.md)
 - [Unauthenticated REST Interface](REST-interface.md)
 - [BIPS](bips.md)
@@ -73,13 +53,12 @@ the development process and automated testing.
 - [Benchmarking](benchmarking.md)
 - [Internal Design Docs](design/)
 
-### Resources
+### Navio features
 
-- Discuss on the [BitcoinTalk](https://bitcointalk.org/) forums, in the
-  [Development & Technical Discussion board](https://bitcointalk.org/index.php?board=6.0).
-- Discuss project-specific development on #bitcoin-core-dev on Libera Chat. If
-  you don't have an IRC client, you can use
-  [web.libera.chat](https://web.libera.chat/#bitcoin-core-dev).
+- [Cold Staking](cold-staking.md)
+- [BLSCT Cold Signing](blsct-cold-signing.md)
+- [Encrypted P2P Messaging](p2p-encrypted-messaging.md)
+- [bech32_mod Generator Polynomial](bech32-mod-gen-poly.md)
 
 ### Miscellaneous
 
