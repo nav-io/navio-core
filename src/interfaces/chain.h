@@ -108,9 +108,9 @@ struct BlockInfo {
 //! internal workings of the bitcoin node, and not being very convenient to use.
 //! Chain methods should be cleaned up and simplified over time. Examples:
 //!
-//! * The initMessages() and showProgress() methods which the wallet uses to send
-//!   notifications to the GUI should go away when GUI and wallet can directly
-//!   communicate with each other without going through the node
+//! * The initMessage() method which the wallet uses to send notifications to
+//!   the GUI should go away when GUI and wallet can directly communicate with
+//!   each other without going through the node
 //!   (https://github.com/bitcoin/bitcoin/pull/15288#discussion_r253321096).
 //!
 //! * The handleRpc, registerRpcs, rpcEnableDeprecated methods and other RPC
@@ -314,9 +314,6 @@ public:
 
     //! Send init error.
     virtual void initError(const bilingual_str& message) = 0;
-
-    //! Send progress indicator.
-    virtual void showProgress(const std::string& title, int progress, bool resume_possible) = 0;
 
     //! Chain notifications.
     class Notifications

@@ -1963,21 +1963,6 @@ void CConnman::DisconnectNodes()
     }
 }
 
-void CConnman::NotifyNumConnectionsChanged()
-{
-    size_t nodes_size;
-    {
-        LOCK(m_nodes_mutex);
-        nodes_size = m_nodes.size();
-    }
-    if(nodes_size != nPrevNodeCount) {
-        nPrevNodeCount = nodes_size;
-        if (m_client_interface) {
-            m_client_interface->NotifyNumConnectionsChanged(nodes_size);
-        }
-    }
-}
-
 bool CConnman::ShouldRunInactivityChecks(const CNode& node, std::chrono::seconds now) const
 {
     return node.m_connected + m_peer_connect_timeout < now;
@@ -2190,7 +2175,6 @@ void CConnman::ThreadSocketHandler()
     while (!interruptNet)
     {
         DisconnectNodes();
-        NotifyNumConnectionsChanged();
         SocketHandler();
     }
 }
@@ -3135,10 +3119,6 @@ void CConnman::SetNetworkActive(bool active)
     }
 
     fNetworkActive = active;
-
-    if (m_client_interface) {
-        m_client_interface->NotifyNetworkActiveChanged(fNetworkActive);
-    }
 }
 
 CConnman::CConnman(uint64_t nSeed0In, uint64_t nSeed1In, AddrMan& addrman_in,
