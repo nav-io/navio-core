@@ -797,8 +797,13 @@ class RangeProof:
         self.alpha_hat = MclScalar()
         self.tau_x = MclScalar()
 
-    def deserialize(self, f):
-        self.Vs = deser_vector(f, MclG1Point)
+    def deserialize(self, f, with_vs=True):
+        # A PoS proof's range proof omits Vs (RangeProofWithoutVs). Otherwise
+        # an empty Vs ends the proof, as in RangeProof::Unserialize.
+        if with_vs:
+            self.Vs = deser_vector(f, MclG1Point)
+            if not self.Vs:
+                return
         self.Ls = deser_vector(f, MclG1Point)
         self.Rs = deser_vector(f, MclG1Point)
         self.A.deserialize(f)
@@ -810,9 +815,12 @@ class RangeProof:
         self.alpha_hat.deserialize(f)
         self.tau_x.deserialize(f)
 
-    def serialize(self):
+    def serialize(self, with_vs=True):
         r = b""
-        r += ser_vector(self.Vs, "serialize")
+        if with_vs:
+            r += ser_vector(self.Vs, "serialize")
+            if not self.Vs:
+                return r
         r += ser_vector(self.Ls, "serialize")
         r += ser_vector(self.Rs, "serialize")
         r += self.A.serialize()
@@ -886,27 +894,31 @@ class RangeProof_old:
 class CTxOutBLSCTData:
     __slots__ = ("blindingKey", "spendingKey", "ephemeralKey", "rangeProof", "viewTag")
 
-    def __init__(self, blindingKey = MclG1Point(), spendingKey = MclG1Point(), ephemeralKey = MclG1Point(), rangeProof = RangeProof(), viewTag=0):
-        self.blindingKey = blindingKey
-        self.spendingKey = spendingKey
-        self.ephemeralKey = ephemeralKey
-        self.rangeProof = rangeProof
+    def __init__(self, blindingKey=None, spendingKey=None, ephemeralKey=None, rangeProof=None, viewTag=0):
+        self.blindingKey = blindingKey if blindingKey is not None else MclG1Point()
+        self.spendingKey = spendingKey if spendingKey is not None else MclG1Point()
+        self.ephemeralKey = ephemeralKey if ephemeralKey is not None else MclG1Point()
+        self.rangeProof = rangeProof if rangeProof is not None else RangeProof()
         self.viewTag = viewTag
 
+    def has_keys(self):
+        identity = MclG1Point().p
+        return any(k.p != identity for k in (self.spendingKey, self.blindingKey, self.ephemeralKey))
+
     def deserialize(self, f):
+        self.rangeProof.deserialize(f)
         self.spendingKey.deserialize(f)
         self.blindingKey.deserialize(f)
         self.ephemeralKey.deserialize(f)
-        self.rangeProof.deserialize(f)
-        self.viewTag = struct.unpack("<i", f.read(2))[0]
+        self.viewTag = struct.unpack("<H", f.read(2))[0]
 
     def serialize(self):
         r = b""
+        r += self.rangeProof.serialize()
         r += self.spendingKey.serialize()
         r += self.blindingKey.serialize()
         r += self.ephemeralKey.serialize()
-        r += self.rangeProof.serialize()
-        r += struct.pack("<I", self.viewTag)[:2]
+        r += struct.pack("<H", self.viewTag)
         return r
 
 class TokenId:
@@ -937,11 +949,11 @@ class TokenId:
 class CTxOut:
     __slots__ = ("nValue", "scriptPubKey", "blsctData", "tokenId", "predicate")
 
-    def __init__(self, nValue=0, scriptPubKey=b"", blsctData=CTxOutBLSCTData(), tokenId=TokenId(), predicate=b""):
+    def __init__(self, nValue=0, scriptPubKey=b"", blsctData=None, tokenId=None, predicate=b""):
         self.nValue = nValue
         self.scriptPubKey = scriptPubKey
-        self.blsctData = blsctData
-        self.tokenId = tokenId
+        self.blsctData = blsctData if blsctData is not None else CTxOutBLSCTData()
+        self.tokenId = tokenId if tokenId is not None else TokenId()
         if predicate == b"":
             # Don't set random predicate for OP_RETURN scripts (like witness commitments)
             # to match node behavior
@@ -981,7 +993,7 @@ class CTxOut:
     def serialize(self):
         flags = 0
 
-        if len(self.blsctData.rangeProof.Vs) > 0:
+        if len(self.blsctData.rangeProof.Vs) > 0 or self.blsctData.has_keys():
             flags |= OUTPUT_BLSCT_MARKER
         if not self.tokenId.isNull():
             flags |= OUTPUT_TOKEN_MARKER
@@ -1092,7 +1104,7 @@ class CTransaction:
     __slots__ = ("hash", "nLockTime", "nVersion", "sha256", "vin", "vout",
                  "wit", "txSig")
 
-    def __init__(self, tx=None, txSig = BLSCTSignature()):
+    def __init__(self, tx=None, txSig=None):
         if tx is None:
             self.nVersion = 2
             self.vin = []
@@ -1109,7 +1121,12 @@ class CTransaction:
             self.sha256 = tx.sha256
             self.hash = tx.hash
             self.wit = copy.deepcopy(tx.wit)
-        self.txSig = txSig
+        if txSig is not None:
+            self.txSig = txSig
+        elif tx is not None:
+            self.txSig = copy.deepcopy(tx.txSig)
+        else:
+            self.txSig = BLSCTSignature()
 
     def deserialize(self, f):
         self.nVersion = struct.unpack("<i", f.read(4))[0]
@@ -1488,12 +1505,12 @@ class PosProof:
         self.set_mem_proof = SetMemProof()
         self.set_mem_proof.deserialize(f)
         self.range_proof = RangeProof()
-        self.range_proof.deserialize(f)
+        self.range_proof.deserialize(f, with_vs=False)
 
     def serialize(self):
         r = b""
         r += self.set_mem_proof.serialize()
-        r += self.range_proof.serialize()
+        r += self.range_proof.serialize(with_vs=False)
         return r
 
 # This is what we send on the wire, in a cmpctblock message.
