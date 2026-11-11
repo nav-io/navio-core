@@ -401,6 +401,7 @@ BASE_SCRIPTS = [
     'p2pmsg_aggregate.py',
     'p2pmsg_aggregate_e2e.py',
     'p2pmsg_candidate.py',
+    'p2pmsg_candidate_own_address.py',
     'p2pmsg_default_aggregate.py',
     'p2pmsg_cover_types.py',
     'p2pmsg_identity.py',

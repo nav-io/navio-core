@@ -585,7 +585,9 @@ static void ListOutputTransaction(const CWallet& wallet,
     // Change outputs are accounted for on the send side (nChange subtracted
     // from the synthetic send amount in CachedTxGetAmounts). Emitting them as
     // receive entries would double-count them against the balance invariant.
-    if (OutputIsChange(wallet, *wout.out)) return;
+    // A served cover candidate's output is our own coin coming back to its
+    // address, which the spent coin's row already shows.
+    if (OutputIsChange(wallet, *wout.out) || OutputIsCoverReturn(wallet, wout)) return;
 
     // Do NOT filter immature coinbase here — the RPC contract requires
     // emitting category="immature" entries with their amount visible. The

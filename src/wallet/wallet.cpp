@@ -63,6 +63,7 @@
 #include <wallet/context.h>
 #include <wallet/crypter.h>
 #include <wallet/db.h>
+#include <wallet/receive.h>
 #include <wallet/scriptpubkeyman.h>
 #include <wallet/transaction.h>
 #include <wallet/types.h>
@@ -1845,7 +1846,12 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                 if (!wout) {
                     throw std::runtime_error("DB error adding output to wallet, write failed");
                 }
+                return wout;
             };
+            // The rows do not keep their transaction, so whether an output
+            // returns a coin of ours this tx spends (a served cover coming
+            // back) is decided here, with the tx in hand, and stored.
+            OwnSpentCoins own_spent{GetOwnSpentCoins(*this, tx)};
 
             // loop though all outputs
             for (size_t i = 0; i < tx.vout.size(); i++) {
@@ -1884,7 +1890,16 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                     mine = IsMine(txout);
                 }
                 if (fExisted || mine) {
-                    add_output(outpoint, std::move(txout));
+                    const CTxOut& synced_out = tx.vout[i];
+                    CWalletOutput* wout = add_output(outpoint, std::move(txout));
+                    const bool cover_return{synced_out.HasBLSCTRangeProof() &&
+                                            OutputIsCoverReturn(*this, synced_out, wout->blsctRecoveryData, own_spent)};
+                    if (cover_return && !wout->fCoverReturn) {
+                        wout->fCoverReturn = true;
+                        if (!WalletBatch(GetDatabase(), /*_fFlushOnClose=*/false).WriteOutput(outpoint, *wout)) {
+                            throw std::runtime_error("DB error marking a returned cover output, write failed");
+                        }
+                    }
                 }
             }
 
