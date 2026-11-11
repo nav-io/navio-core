@@ -72,6 +72,7 @@ add_executable(fuzz
   parse_script.cpp
   parse_univalue.cpp
   partially_downloaded_block.cpp
+  pir.cpp
   policy_estimator.cpp
   policy_estimator_io.cpp
   poolresource.cpp

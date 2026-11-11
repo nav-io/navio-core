@@ -13,6 +13,9 @@ unsigned-integer-overflow:FuzzedDataProvider::ConsumeIntegralInRange
 unsigned-integer-overflow:leveldb/
 unsigned-integer-overflow:minisketch/
 unsigned-integer-overflow:secp256k1/
+# SimplePIR does LWE arithmetic in Z_{2^32}: every product and sum is meant to
+# wrap modulo 2^32.
+unsigned-integer-overflow:pir/simplepir.cpp
 unsigned-integer-overflow:test/fuzz/crypto_diff_fuzz_chacha20.cpp
 implicit-integer-sign-change:*/include/boost/
 implicit-integer-sign-change:*/include/c++/

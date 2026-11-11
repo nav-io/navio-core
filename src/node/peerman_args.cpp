@@ -27,6 +27,17 @@ void ApplyArgsManOptions(const ArgsManager& argsman, PeerManager::Options& optio
     if (auto value{argsman.GetIntArg("-outkeysmaxbytes")}) {
         options.outkeys_max_reply_bytes = uint64_t(std::max<int64_t>(*value, 0));
     }
+
+    options.serve_pir = argsman.GetBoolArg("-peerpir", DEFAULT_PEERPIR);
+    if (auto value{argsman.GetIntArg("-pirepochblocks")}) {
+        options.pir.epoch_blocks = uint32_t(std::clamp<int64_t>(*value, 1, node::MAX_PIR_EPOCH_BLOCKS));
+    }
+    if (auto value{argsman.GetIntArg("-pirmaxepochs")}) {
+        options.pir.max_epochs = uint32_t(std::clamp<int64_t>(*value, 1, 1000));
+    }
+    if (auto value{argsman.GetIntArg("-pirpeerbudget")}) {
+        options.pir.peer_budget = uint64_t(std::max<int64_t>(*value, 0));
+    }
 }
 
 } // namespace node
