@@ -414,12 +414,18 @@ with `-debug=qt` to see it.
 ### Signet, testnet, and regtest modes
 
 If you are testing multi-machine code that needs to operate across the internet,
-you can run with either the `-signet` or the `-testnet` config option to test
-with "play navios" on a test network.
+you can run with the `-testnet` config option to test with "play navios" on the
+test network.
+
+`-signet` runs a BLSCT test network whose blocks must be signed for its
+challenge. There is no default signet yet, so it needs `-signetchallenge`, and
+each block producer needs a key that satisfies it: the `signetkey` argument of
+`generatetoblsctaddress`, or `-signetblockkey` for `navio-staker`.
 
 If you are testing something that can run on one machine, run with the
-`-regtest` option. In regression test mode, blocks can be created on demand; see
-[test/functional/](/test/functional) for tests that run in `-regtest` mode.
+`-blsctregtest` option, a regression test chain with BLSCT active, or with
+`-regtest` for a chain without it. In both, blocks can be created on demand; see
+[test/functional/](/test/functional) for the tests that use them.
 
 ### DEBUG_LOCKORDER
 
