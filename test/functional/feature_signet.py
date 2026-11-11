@@ -13,6 +13,7 @@ import threading
 import time
 
 from test_framework.key import ECKey
+from test_framework.messages import CBlock, from_hex
 from test_framework.script_util import key_to_p2wpkh_script
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
@@ -21,7 +22,6 @@ from test_framework.util import (
 )
 
 MIN_STAKE = 10000
-VERSION_BIT_POS = 0x01000000  # CBlockHeader::VERSION_BIT_POS
 STAKER_TIMEOUT = 120
 
 
@@ -60,6 +60,16 @@ class SignetBasicTest(BitcoinTestFramework):
 
     def key_hex(self, key):
         return key.get_bytes().hex()
+
+    def assert_block_round_trips(self, node, block_hash):
+        """The framework's CBlock parses the block and serializes it back."""
+        block_hex = node.getblock(block_hash, 0)
+        block = from_hex(CBlock(), block_hex)
+        block.rehash()
+        assert_equal(block.hash, block_hash)
+        assert_equal(len(block.vtx), len(node.getblock(block_hash)["tx"]))
+        assert_equal(block.serialize().hex(), block_hex)
+        return block
 
     def mine(self, node, nblocks, address, key, sync_fun=None):
         # Node 2 is on another signet, so only nodes 0 and 1 can sync.
@@ -147,7 +157,8 @@ class SignetBasicTest(BitcoinTestFramework):
         # A proof of stake needs a set of at least two staked commitments.
         node.createwallet(wallet_name="other", blsct=True)
         wallet.sendtoblsctaddress(node.get_wallet_rpc("other").getnewaddress(label="", address_type="blsct"), 2 * MIN_STAKE)
-        self.mine(node, 1, wallet.getnewaddress(label="", address_type="blsct"), self.key)
+        send_hash = self.mine(node, 1, wallet.getnewaddress(label="", address_type="blsct"), self.key)[0]
+        assert len(self.assert_block_round_trips(node, send_hash).vtx) > 1
         node.get_wallet_rpc("other").stakelock(MIN_STAKE)
         wallet.stakelock(MIN_STAKE)
         self.mine(node, 10, wallet.getnewaddress(label="", address_type="blsct"), self.key)
@@ -160,7 +171,7 @@ class SignetBasicTest(BitcoinTestFramework):
             staker.kill()
             staker.wait()
         self.wait_until(lambda: node.getblockcount() > height_before)
-        assert node.getblock(node.getbestblockhash())["version"] & VERSION_BIT_POS
+        assert self.assert_block_round_trips(node, node.getbestblockhash()).IsProofOfStake()
         self.sync_blocks([node, self.nodes[1]])
 
     def test_init_errors(self):
