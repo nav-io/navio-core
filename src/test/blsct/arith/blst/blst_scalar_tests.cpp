@@ -639,4 +639,14 @@ BOOST_AUTO_TEST_CASE(test_radix_string_to_bytes)
     throws("ab", 8, "unsupported radix");
 }
 
+BOOST_AUTO_TEST_CASE(test_string_ctor_error_omits_input)
+{
+    const std::string secret{"1234567890abcdefg"};
+    BOOST_CHECK_EXCEPTION(Scalar(secret, 16), std::runtime_error, [&](const std::runtime_error& e) {
+        const std::string what{e.what()};
+        return what == "BlstScalar: Failed to instantiate Scalar: RadixStringToBytes: bad digit" &&
+               what.find(secret.substr(0, 10)) == std::string::npos;
+    });
+}
+
 BOOST_AUTO_TEST_SUITE_END()
