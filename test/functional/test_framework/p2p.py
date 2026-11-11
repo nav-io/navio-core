@@ -168,8 +168,8 @@ MESSAGEMAP = {
 }
 
 MAGIC_BYTES = {
-    "mainnet": b"\xdb\xd2\xb1\xac",   # mainnet
-    "testnet3": b"\xe2\xbe\x8d\xb7",  # testnet3
+    "mainnet": b"\xbd\x5f\xc3\x00",   # mainnet
+    "testnet7": b"\x24\x67\xd2\xc1",  # testnet7
     "regtest": b"\xfd\xbf\x9f\xfb",   # regtest
     "blsctregtest": b"\xfd\xbf\x9f\xfb",  # blsctregtest (same magic as regtest)
     "signet": b"\x0a\x03\xcf\x40",    # Bitcoin's default signet; a navio signet derives its magic from -signetchallenge
