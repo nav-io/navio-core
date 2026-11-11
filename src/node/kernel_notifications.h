@@ -31,10 +31,6 @@ public:
 
     [[nodiscard]] kernel::InterruptResult blockTip(SynchronizationState state, CBlockIndex& index) override;
 
-    void headerTip(SynchronizationState state, int64_t height, int64_t timestamp, bool presync) override;
-
-    void progress(const bilingual_str& title, int progress_percent, bool resume_possible) override;
-
     void warning(const bilingual_str& warning) override;
 
     void flushError(const std::string& debug_message) override;
