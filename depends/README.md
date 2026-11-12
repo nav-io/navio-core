@@ -12,9 +12,9 @@ For example:
 
     make HOST=x86_64-w64-mingw32 -j4
 
-**CMake by default ignores the depends output.** To pick up libraries, tools
-and settings from the depends build, pass the toolchain file it writes. In the
-above example, that is `depends/x86_64-w64-mingw32/toolchain.cmake`:
+**CMake by default ignores the depends output.** To pick up libraries, tools and
+settings from the depends build, pass the toolchain file it writes. In the above
+example, that is `depends/x86_64-w64-mingw32/toolchain.cmake`:
 
     cmake -B build --toolchain depends/x86_64-w64-mingw32/toolchain.cmake
 
@@ -36,7 +36,8 @@ Common `host-platform-triplet`s for cross compilation are:
 - `aarch64-linux-android` for Android ARM 64 bit
 - `x86_64-linux-android` for Android x86 64 bit
 
-The paths are automatically configured and no other options are needed unless targeting [Android](../doc/build-android.md).
+The paths are automatically configured and no other options are needed unless
+targeting [Android](../doc/build-android.md).
 
 ### Install the required dependencies: Ubuntu & Debian
 
@@ -45,13 +46,14 @@ The paths are automatically configured and no other options are needed unless ta
     sudo apt-get install curl bsdmainutils cmake zip
 
 Note: You must obtain the macOS SDK before proceeding with a cross-compile.
-Under the depends directory, create a subdirectory named `SDKs`.
-Then, place the extracted SDK under this new directory.
-For more information, see [SDK Extraction](../contrib/macdeploy/README.md#sdk-extraction).
+Under the depends directory, create a subdirectory named `SDKs`. Then, place the
+extracted SDK under this new directory. For more information, see
+[SDK Extraction](../contrib/macdeploy/README.md#sdk-extraction).
 
 #### For Win64 cross compilation
 
-- see [build-windows.md](../doc/build-windows.md#cross-compilation-for-ubuntu-and-windows-subsystem-for-linux)
+- see
+  [build-windows.md](../doc/build-windows.md#cross-compilation-for-ubuntu-and-windows-subsystem-for-linux)
 
 #### For linux (including i386, ARM) cross compilation
 
@@ -90,7 +92,8 @@ The following can be set when running make: `make FOO=bar`
 - `SOURCES_PATH`: Downloaded sources will be placed here
 - `BASE_CACHE`: Built packages will be placed here
 - `SDK_PATH`: Path where SDKs can be found (used by macOS)
-- `FALLBACK_DOWNLOAD_PATH`: If a source file can't be fetched, try here before giving up
+- `FALLBACK_DOWNLOAD_PATH`: If a source file can't be fetched, try here before
+  giving up
 - `C_STANDARD`: Set the C standard version used. Defaults to `c11`.
 - `CXX_STANDARD`: Set the C++ standard version used. Defaults to `c++20`.
 - `NO_BOOST`: Don't download/build/cache Boost
@@ -98,17 +101,20 @@ The following can be set when running make: `make FOO=bar`
 - `NO_ZMQ`: Don't download/build/cache packages needed for enabling ZeroMQ
 - `NO_WALLET`: Don't download/build/cache libs needed to enable the wallet
 - `NO_SQLITE`: Don't download/build/cache SQLite
-- `NO_USDT`: Don't download/build/cache packages needed for enabling USDT tracepoints
+- `NO_USDT`: Don't download/build/cache packages needed for enabling USDT
+  tracepoints
 - `DEBUG`: Disable some optimizations and enable more runtime checking
 - `HOST_ID_SALT`: Optional salt to use when generating host package ids
 - `BUILD_ID_SALT`: Optional salt to use when generating build package ids
-- `FORCE_USE_SYSTEM_CLANG`: (EXPERTS ONLY) When cross-compiling for macOS, use Clang found in the
-  system's `$PATH` rather than the default prebuilt release of Clang
-  from llvm.org. Clang 8 or later is required
-- `LOG`: Use file-based logging for individual packages. During a package build its log file
-  resides in the `depends` directory, and the log file is printed out automatically in case
-  of build error. After successful build log files are moved along with package archives
-- `LTO`: Enable options needed for LTO. Does not add `-flto` related options to \*FLAGS.
+- `FORCE_USE_SYSTEM_CLANG`: (EXPERTS ONLY) When cross-compiling for macOS, use
+  Clang found in the system's `$PATH` rather than the default prebuilt release
+  of Clang from llvm.org. Clang 8 or later is required
+- `LOG`: Use file-based logging for individual packages. During a package build
+  its log file resides in the `depends` directory, and the log file is printed
+  out automatically in case of build error. After successful build log files are
+  moved along with package archives
+- `LTO`: Enable options needed for LTO. Does not add `-flto` related options to
+  \*FLAGS.
 - `NO_HARDEN=1`: Don't use hardening options when building packages
 
 If some packages are not built, for example `make NO_WALLET=1`, the appropriate
