@@ -117,8 +117,9 @@ The following can be set when running make: `make FOO=bar`
   \*FLAGS.
 - `NO_HARDEN=1`: Don't use hardening options when building packages
 
-If some packages are not built, for example `make NO_WALLET=1`, the appropriate
-options will be passed to bitcoin's configure. In this case, `--disable-wallet`.
+If some packages are not built, for example `make NO_WALLET=1`, the toolchain
+file turns the matching CMake options off, so a build that uses it leaves those
+features out. In this case, it sets `ENABLE_WALLET` to `OFF`.
 
 ### Additional targets
 
