@@ -23,6 +23,8 @@ from test_framework.util import (
 
 MIN_STAKE = 10000
 STAKER_TIMEOUT = 120
+# Signet's nLastPOWHeight: above it every block must be proof-of-stake.
+LAST_POW_HEIGHT = 1000
 
 
 def make_key():
@@ -108,6 +110,7 @@ class SignetBasicTest(BitcoinTestFramework):
         assert_equal(node.submitblock(other_block), "bad-signet-blksig")
 
         self.test_staking(node, wallet)
+        self.test_transparent_miners_above_last_pow(self.nodes[2], other_address)
         self.test_init_errors()
 
     def staker_path(self):
@@ -176,6 +179,26 @@ class SignetBasicTest(BitcoinTestFramework):
 
         self.log.info("A proof-of-stake block signed for another challenge is rejected")
         assert_equal(self.nodes[2].submitblock(node.getblock(node.getbestblockhash(), 0)), "bad-signet-blksig")
+
+    def test_transparent_miners_above_last_pow(self, node, address):
+        """The transparent-coinbase miners are refused on signet as on any
+        BLSCT network. Their error offers generatetoblsctaddress only while
+        the next block can still be proof-of-work."""
+        self.log.info("The transparent miners' error drops the proof-of-work hint once nLastPOWHeight is reached")
+        script = f"raw({self.challenge})"
+        refusal = ("a block paying a transparent coinbase is always rejected here, so generatetodescriptor is not "
+                   f"available. Blocks above height {LAST_POW_HEIGHT} must be proof-of-stake")
+        pow_hint = "; up to that height, generatetoblsctaddress can mine proof-of-work blocks instead."
+        assert node.getblockcount() < LAST_POW_HEIGHT
+        assert_raises_rpc_error(-1, refusal + pow_hint, self.generatetodescriptor, node, 1, script, sync_fun=self.no_op)
+
+        # Node 2 is on a signet of its own, so nothing has to sync.
+        while node.getblockcount() < LAST_POW_HEIGHT:
+            self.mine(node, min(100, LAST_POW_HEIGHT - node.getblockcount()), address, self.other_key, sync_fun=self.no_op)
+        assert_equal(node.getblockcount(), LAST_POW_HEIGHT)
+        assert_raises_rpc_error(-1, refusal + ".", self.generatetodescriptor, node, 1, script, sync_fun=self.no_op)
+        # The next block must be proof-of-stake, which is why the hint is gone.
+        assert_raises_rpc_error(-1, "late proof of work", self.mine, node, 1, address, self.other_key, sync_fun=self.no_op)
 
     def test_init_errors(self):
         self.log.info("test that signet logs the network magic on node start")
