@@ -80,34 +80,8 @@ public:
     /** Progress message during initialization. */
     ADD_SIGNALS_DECL_WRAPPER(InitMessage, void, const std::string& message);
 
-    /** Wallet loader created. */
-    ADD_SIGNALS_DECL_WRAPPER(InitWallet, void, );
-
-    /** Number of network connections changed. */
-    ADD_SIGNALS_DECL_WRAPPER(NotifyNumConnectionsChanged, void, int newNumConnections);
-
-    /** Network activity state changed. */
-    ADD_SIGNALS_DECL_WRAPPER(NotifyNetworkActiveChanged, void, bool networkActive);
-
-    /**
-     * Status bar alerts changed.
-     */
-    ADD_SIGNALS_DECL_WRAPPER(NotifyAlertChanged, void, );
-
-    /**
-     * Show progress e.g. for verifychain.
-     * resume_possible indicates shutting down now will result in the current progress action resuming upon restart.
-     */
-    ADD_SIGNALS_DECL_WRAPPER(ShowProgress, void, const std::string& title, int nProgress, bool resume_possible);
-
     /** New block has been accepted */
     ADD_SIGNALS_DECL_WRAPPER(NotifyBlockTip, void, SynchronizationState, const CBlockIndex*);
-
-    /** Best header has changed */
-    ADD_SIGNALS_DECL_WRAPPER(NotifyHeaderTip, void, SynchronizationState, int64_t height, int64_t timestamp, bool presync);
-
-    /** Banlist did change. */
-    ADD_SIGNALS_DECL_WRAPPER(BannedListChanged, void, void);
 };
 
 /** Show warning message **/

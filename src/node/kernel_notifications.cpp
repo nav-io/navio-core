@@ -27,7 +27,6 @@
 
 static void AlertNotify(const std::string& strMessage)
 {
-    uiInterface.NotifyAlertChanged();
 #if HAVE_SYSTEM
     std::string strCmd = gArgs.GetArg("-alertnotify", "");
     if (strCmd.empty()) return;
@@ -67,16 +66,6 @@ kernel::InterruptResult KernelNotifications::blockTip(SynchronizationState state
         return kernel::Interrupted{};
     }
     return {};
-}
-
-void KernelNotifications::headerTip(SynchronizationState state, int64_t height, int64_t timestamp, bool presync)
-{
-    uiInterface.NotifyHeaderTip(state, height, timestamp, presync);
-}
-
-void KernelNotifications::progress(const bilingual_str& title, int progress_percent, bool resume_possible)
-{
-    uiInterface.ShowProgress(title.translated, progress_percent, resume_possible);
 }
 
 void KernelNotifications::warning(const bilingual_str& warning)

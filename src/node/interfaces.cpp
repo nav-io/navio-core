@@ -418,10 +418,6 @@ public:
     void initMessage(const std::string& message) override { ::uiInterface.InitMessage(message); }
     void initWarning(const bilingual_str& message) override { InitWarning(message); }
     void initError(const bilingual_str& message) override { InitError(message); }
-    void showProgress(const std::string& title, int progress, bool resume_possible) override
-    {
-        ::uiInterface.ShowProgress(title, progress, resume_possible);
-    }
     std::unique_ptr<Handler> handleNotifications(std::shared_ptr<Notifications> notifications) override
     {
         return std::make_unique<NotificationsHandlerImpl>(std::move(notifications));

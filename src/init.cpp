@@ -1314,7 +1314,6 @@ bool AppInitMain(NodeContext& node)
     // the interfaces, it doesn't load wallet data. Wallets actually get loaded
     // when load() and start() interface methods are called below.
     g_wallet_init_interface.Construct(node);
-    uiInterface.InitWallet();
 
     /* Register RPC commands regardless of -server setting so they will be
      * available in the GUI RPC console even if external calls are disabled.
