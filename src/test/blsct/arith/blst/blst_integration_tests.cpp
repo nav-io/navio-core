@@ -8,6 +8,7 @@
 #include <blsct/arith/elements.h>
 #include <blsct/arith/blst/blst_g1point.h>
 #include <blsct/arith/blst/blst_scalar.h>
+#include <blsct/arith/blst/blst_util.h>
 #include <boost/test/unit_test.hpp>
 #include <set>
 #include <streams.h>
@@ -530,6 +531,41 @@ BOOST_AUTO_TEST_CASE(test_range_proof)
             testCaseBool
         );
         BOOST_CHECK(res == true);
+    }
+}
+
+// BlstUtil::MSM only takes its tiled path (blst_p1s_tile_pippenger, one
+// tile per window across threads) for threads > 1 and enough points; every
+// other caller runs with the default of one thread. Check the tiled result
+// against the single-call path and against a naive sum of scalar * point.
+BOOST_AUTO_TEST_CASE(test_msm_tiled_matches_single_and_naive)
+{
+    // 32 is the smallest tiled size, 64 gives a window that divides the
+    // scalar width (so the top tile holds only the carry), 33 and 200 do not.
+    for (const size_t n : {32, 33, 64, 200}) {
+        std::vector<BlstG1Point> pts;
+        std::vector<BlstScalar> scalars;
+        for (size_t i = 0; i < n; ++i) {
+            pts.push_back(BlstG1Point::Rand());
+            scalars.push_back(BlstScalar::Rand());
+        }
+        // Edge scalars: zero, one and the largest value (-1 mod r).
+        scalars[0] = BlstScalar(0);
+        scalars[1] = BlstScalar(1);
+        scalars[2] = BlstScalar(1).Negate();
+
+        BlstG1Point naive;
+        for (size_t i = 0; i < n; ++i) {
+            naive = naive + pts[i] * scalars[i];
+        }
+
+        const auto single = BlstUtil::MSM(pts.data(), scalars.data(), n, 1);
+        BOOST_CHECK(single == naive);
+        // 1000 exceeds the tile count, so MSM clamps it.
+        for (const size_t threads : {2, 4, 1000}) {
+            const auto tiled = BlstUtil::MSM(pts.data(), scalars.data(), n, threads);
+            BOOST_CHECK_MESSAGE(tiled == naive, "n=" << n << " threads=" << threads);
+        }
     }
 }
 
