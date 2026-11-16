@@ -464,12 +464,12 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
         // which candidate serving needs -- each outstanding candidate must
         // spend a distinct coin.
         //
-        // Confirmed coins only: the requester checks a candidate against its
-        // UTXO set alone and drops one spending the wallet's own 0-conf
-        // change, after this serve slot, the reservation and a change address
-        // were already spent on it.
+        // Coins with SERVE_MIN_DEPTH confirmations only: a candidate the
+        // requester drops, or whose coin a reorg undoes, wastes this serve
+        // slot, the reservation and a change address, and fails the
+        // requester's aggregate in the reorg case.
         wallet::CCoinControl coin_control;
-        coin_control.m_min_depth = 1;
+        coin_control.m_min_depth = aggregation::SERVE_MIN_DEPTH;
         // A null coin control keeps the wallet's avoid-reuse filter; keep it.
         coin_control.m_avoid_address_reuse = true;
         blsct::TxFactory::AddAvailableCoins(&wallet, km, params, coins, /*nAmountLimit=*/MAX_MONEY, &coin_control);
@@ -497,7 +497,7 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
         }
         if (!chosen) {
             ReturnServeBudget(*budget_slot);
-            error = "No confirmed NAV coin free to build a candidate from";
+            error = strprintf("No NAV coin with %d confirmations free to build a candidate from", aggregation::SERVE_MIN_DEPTH);
             return std::nullopt;
         }
 
