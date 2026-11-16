@@ -195,8 +195,8 @@ BlstG1Point BlstG1Point::Rand()
 
 bool BlstG1Point::IsValid() const
 {
-    // mclBnG1_isValid checks the curve equation (order verification is off
-    // for G1 in mcl's BLS12-381 init; SetVch adds the subgroup check).
+    // Checks the curve equation only; SetVch adds the subgroup check. The
+    // identity counts as valid.
     if (IsZero()) return true;
     return blst_p1_on_curve(&m_point);
 }
