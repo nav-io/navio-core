@@ -29,6 +29,13 @@ on chain. Forgetting the local send must then leave both as they are: the
 funding coin stays spent and the change stays held. (A full-tx wallet has no
 counterpart: it replaces the local send with the block transaction as soon as
 the block connects.)
+
+If that block is disconnected when the send is forgotten, the merged
+transaction is back in the mempool and the change is no longer confirmed, so
+the change row goes with the send. Reconnecting the block must restore it.
+
+A change row kept or restored this way is an ordinary coin: a later send can
+spend it.
 """
 
 from decimal import Decimal
@@ -148,6 +155,73 @@ class BlsctOutputStorageRemovePrunedFundsTest(BitcoinTestFramework):
         self.assert_holds_change(wallet, change_outid, change, "merged zapped")
         return name, change_outid, change
 
+    def merge_disconnect_and_forget(self):
+        """Merge a fresh output-storage wallet's send into a block transaction,
+        disconnect that block so the merged transaction is back in the mempool,
+        removeprunedfunds the local send, then reconnect the block. Returns
+        (wallet name, change outid, change amount)."""
+        node = self.nodes[0]
+        name = "zap_storage_merged_unconfirmed"
+        node.createwallet(wallet_name=name, blsct=True, storage_output=True)
+        wallet = node.get_wallet_rpc(name)
+        addr = wallet.getnewaddress(label="", address_type="blsct")
+
+        self.miner.sendtoblsctaddress(addr, FUND_AMOUNT)
+        self.generate_blsct_blocks(self.miner_addr, 1)
+        funding_outid = wallet.listblsctunspent(0, 9999999)[0]["outid"]
+
+        wallet.sendtoblsctaddress(self.receiver_addr, SEND_AMOUNT)
+        self.miner.sendtoblsctaddress(self.receiver_addr, SEND_AMOUNT)
+        sends = [e for e in wallet.listtransactions("*", 10 ** 9, 0, True)
+                 if e.get("category") == "send"]
+        assert_equal(len(sends), 1)
+        send_txid = sends[0]["txid"]
+        block_hash = self.generatetoblsctaddress(node, 1, self.miner_addr)[0]
+        block_txs = node.getblock(block_hash)["tx"]
+        # The coinbase and the transaction both sends were merged into.
+        assert_equal(len(block_txs), 2)
+        assert send_txid not in block_txs, "send was not merged"
+
+        unspent = wallet.listblsctunspent(0, 9999999)
+        assert_equal(len(unspent), 1)
+        change_outid = unspent[0]["outid"]
+        change = to_dec(unspent[0]["amount"])
+        assert change_outid != funding_outid
+
+        # Disconnecting the block puts the merged transaction back in the
+        # mempool, so the change row is no longer confirmed when the send is
+        # forgotten.
+        node.invalidateblock(block_hash)
+        assert_equal(node.getrawmempool(), [block_txs[1]])
+        unspent = wallet.listblsctunspent(0, 9999999)
+        assert_equal([(u["outid"], u["confirmations"]) for u in unspent], [(change_outid, 0)])
+
+        wallet.removeprunedfunds(send_txid)
+        # The funding coin stays spent by the merged transaction.
+        unspent = wallet.listblsctunspent(0, 9999999)
+        self.log.info(f"[merged unconfirmed zapped] listblsctunspent="
+                      f"{[(u['outid'], u['amount']) for u in unspent]}")
+        assert funding_outid not in [u["outid"] for u in unspent]
+
+        # Reconnecting the block confirms the merged transaction again, and
+        # the block scan restores the change row the zap erased.
+        node.reconsiderblock(block_hash)
+        assert_equal(node.getbestblockhash(), block_hash)
+        self.assert_holds_change(wallet, change_outid, change, "merged unconfirmed reconnected")
+        return name, change_outid, change
+
+    def spend_change(self, wallet, outid, change):
+        """Send from `wallet`, whose only coin is the change `outid`, and mine
+        the send: the change is spent and the new change is the only coin."""
+        wallet.sendtoblsctaddress(self.receiver_addr, SEND_AMOUNT)
+        self.generate_blsct_blocks(self.miner_addr, 1)
+        unspent = wallet.listblsctunspent(0, 9999999)
+        assert_equal(len(unspent), 1)
+        assert unspent[0]["outid"] != outid
+        new_change = to_dec(unspent[0]["amount"])
+        assert new_change < change - SEND_AMOUNT
+        assert_equal(to_dec(wallet.getbalances()["mine"]["trusted"]), new_change)
+
     def assert_holds_change(self, wallet, outid, change, scenario):
         """`wallet` holds exactly the confirmed change `outid`."""
         mine = wallet.getbalances()["mine"]
@@ -178,14 +252,23 @@ class BlsctOutputStorageRemovePrunedFundsTest(BitcoinTestFramework):
         self.log.info("removeprunedfunds of a send merged into a block transaction")
         merged_name, merged_outid, merged_change = self.merge_send_and_forget()
 
+        self.log.info("removeprunedfunds of a merged send while its block is disconnected")
+        reconnected_name, reconnected_outid, reconnected_change = self.merge_disconnect_and_forget()
+
         self.log.info("Every wallet keeps what it held after a restart")
         self.restart_node(0)
         for name, outid in (control, storage):
             node.loadwallet(name)
             self.assert_holds_only(node.get_wallet_rpc(name), outid, f"{name} restarted")
-        node.loadwallet(merged_name)
-        self.assert_holds_change(node.get_wallet_rpc(merged_name), merged_outid, merged_change,
-                                 "merged restarted")
+        merged = ((merged_name, merged_outid, merged_change),
+                  (reconnected_name, reconnected_outid, reconnected_change))
+        for name, outid, change in merged:
+            node.loadwallet(name)
+            self.assert_holds_change(node.get_wallet_rpc(name), outid, change, f"{name} restarted")
+
+        self.log.info("A change row kept or restored after the zap can be spent")
+        for name, outid, change in merged:
+            self.spend_change(node.get_wallet_rpc(name), outid, change)
 
 
 if __name__ == '__main__':
