@@ -85,7 +85,9 @@ BlstG1Point BlstUtil::MSM(const BlstG1Point* pts, const BlstScalar* scalars, siz
     const size_t window = PippengerWindowSize(n);
     const size_t ny = kScalarBits / window + 1;
     threads = std::min(threads, ny);
-    std::vector<blst_p1> tiles(ny);
+    // Each tile sums the points weighted by the scalars' digits in its window,
+    // so it is derived from secret scalars too; wiped when freed, like `sc`.
+    std::vector<blst_p1, zero_after_free_allocator<blst_p1>> tiles(ny);
     std::atomic<size_t> next{0};
     const size_t scratch_limbs = (blst_p1s_mult_pippenger_scratch_sizeof(0) << (window - 1)) / sizeof(limb_t) + 1;
 
