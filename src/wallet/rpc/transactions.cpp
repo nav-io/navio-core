@@ -587,7 +587,7 @@ static void ListOutputTransaction(const CWallet& wallet,
     // receive entries would double-count them against the balance invariant.
     // A served cover candidate's output is our own coin coming back to its
     // address, which the spent coin's row already shows.
-    if (OutputIsChange(wallet, *wout.out) || OutputIsCoverReturn(wallet, wout)) return;
+    if (OutputIsChange(wallet, *wout.out) || wout.fCoverReturn) return;
 
     // Do NOT filter immature coinbase here — the RPC contract requires
     // emitting category="immature" entries with their amount visible. The

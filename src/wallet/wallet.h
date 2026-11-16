@@ -1239,6 +1239,25 @@ struct MigrationResult {
 
 //! Do all steps to migrate a legacy wallet to a descriptor wallet
 [[nodiscard]] util::Result<MigrationResult> MigrateLegacyToDescriptor(const std::string& wallet_name, const SecureString& passphrase, WalletContext& context);
+//! A served cover candidate pays its coin back to the subaddress the coin was
+//! paid to, which is usually a receive address, so OutputIsChange() does not
+//! see it as change. These recognise such an output: it carries
+//! blsct::COVER_CANDIDATE_MEMO, and pays the same subaddress and the same
+//! amount as one of our coins the same transaction spends. A payer that
+//! knows one of our coins (it paid it to us) can mimic a return only inside a
+//! transaction that also spends that coin, which only an aggregate merging
+//! our served cover does; there it can at most swap which of the two outputs
+//! is listed as the receive, not change any amount.
+//!
+//! Our BLSCT NAV coins `tx` spends, as (subaddress hash id, amount) pairs.
+//! Each cover return found by OutputIsCoverReturn() uses one pair up.
+using OwnSpentCoins = std::multiset<std::pair<CKeyID, CAmount>>;
+OwnSpentCoins GetOwnSpentCoins(const CWallet& wallet, const CTransaction& tx) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
+//! Whether output `txout` of a tx spending `spent` returns one of those coins.
+//! An output-storage row stores the answer, made when it is synced, as
+//! CWalletOutput::fCoverReturn.
+bool OutputIsCoverReturn(const CWallet& wallet, const CTxOut& txout, const range_proof::RecoveredData<Blst>& recovered, OwnSpentCoins& spent) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
+
 } // namespace wallet
 
 #endif // BITCOIN_WALLET_WALLET_H
