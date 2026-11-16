@@ -123,6 +123,7 @@ add_executable(test_navio
   p2pmsg_archive_tests.cpp
   p2pmsg_fmd_tests.cpp
   p2pmsg_tests.cpp
+  pir_tests.cpp
   pmt_tests.cpp
   policy_fee_tests.cpp
   policyestimator_tests.cpp

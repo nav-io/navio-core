@@ -10,6 +10,7 @@ add_library(test_util STATIC EXCLUDE_FROM_ALL
   logging.cpp
   mining.cpp
   net.cpp
+  pir.cpp
   random.cpp
   script.cpp
   setup_common.cpp

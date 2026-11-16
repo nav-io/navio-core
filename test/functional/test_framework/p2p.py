@@ -63,6 +63,10 @@ from test_framework.messages import (
     msg_getdata,
     msg_getoutkeys,
     msg_outkeys,
+    msg_getpirhint,
+    msg_pirhint,
+    msg_pirquery,
+    msg_pirreply,
     msg_getheaders,
     msg_headers,
     msg_inv,
@@ -142,6 +146,10 @@ MESSAGEMAP = {
     b"getdata": msg_getdata,
     b"getoutkeys": msg_getoutkeys,
     b"outkeys": msg_outkeys,
+    b"getpirhint": msg_getpirhint,
+    b"pirhint": msg_pirhint,
+    b"pirquery": msg_pirquery,
+    b"pirreply": msg_pirreply,
     b"getheaders": msg_getheaders,
     b"headers": msg_headers,
     b"inv": msg_inv,
@@ -442,6 +450,10 @@ class P2PInterface(P2PConnection):
     def on_p2pmsgs(self, message): pass
     def on_getoutkeys(self, message): pass
     def on_outkeys(self, message): pass
+    def on_getpirhint(self, message): pass
+    def on_pirhint(self, message): pass
+    def on_pirquery(self, message): pass
+    def on_pirreply(self, message): pass
     def on_block(self, message): pass
     def on_blocktxn(self, message): pass
     def on_cfcheckpt(self, message): pass
