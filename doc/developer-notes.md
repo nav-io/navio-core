@@ -13,7 +13,6 @@
   - [Development tips and tricks](#development-tips-and-tricks)
     - [Compiling for debugging](#compiling-for-debugging)
     - [Show sources in debugging](#show-sources-in-debugging)
-    - [Compiling for gprof profiling](#compiling-for-gprof-profiling)
     - [`debug.log`](#debuglog)
     - [Signet, testnet, and regtest modes](#signet-testnet-and-regtest-modes)
     - [DEBUG_LOCKORDER](#debug_lockorder)
@@ -26,7 +25,7 @@
   - [Threads](#threads)
   - [Ignoring IDE/editor files](#ignoring-ideeditor-files)
 - [Development guidelines](#development-guidelines)
-  - [General Bitcoin Core](#general-bitcoin-core)
+  - [General Navio Core](#general-navio-core)
   - [Wallet](#wallet)
   - [General C++](#general-c)
   - [C++ data structures](#c-data-structures)
@@ -37,7 +36,6 @@
   - [Scripts](#scripts)
     - [Shebang](#shebang)
   - [Source code organization](#source-code-organization)
-  - [GUI](#gui)
   - [Subtrees](#subtrees)
   - [Upgrading LevelDB](#upgrading-leveldb)
     - [File Descriptor Counts](#file-descriptor-counts)
@@ -345,11 +343,12 @@ Recommendations:
 
 ### Generating Documentation
 
-The documentation can be generated with `make docs` and cleaned up with
-`make clean-docs`. The resulting files are located in `doc/doxygen/html`; open
-`index.html` in that directory to view the homepage.
+The documentation can be generated with `cmake --build build --target docs`. The
+resulting files are located in `doc/doxygen/html`; open `index.html` in that
+directory to view the homepage. To clean up, delete `doc/doxygen`.
 
-Before running `make docs`, you'll need to install these dependencies:
+Before building the `docs` target, you'll need to install these dependencies
+(then re-run the CMake configure step so it finds Doxygen):
 
 Linux: `sudo apt install doxygen graphviz`
 
@@ -359,7 +358,7 @@ MacOS: `brew install doxygen graphviz`
 
 ### Compiling for debugging
 
-Run configure with `--enable-debug` to add additional compiler flags that
+Configure with `-DCMAKE_BUILD_TYPE=Debug` to add additional compiler flags that
 produce better debugging builds.
 
 ### Show sources in debugging
@@ -394,10 +393,6 @@ ln -s /path/to/project/root/src src
 
 3. Use `debugedit` to modify debug information in the binary.
 
-### Compiling for gprof profiling
-
-Run configure with the `--enable-gprof` option, then make.
-
 ### `debug.log`
 
 If the code is behaving strangely, take a look in the `debug.log` file in the
@@ -407,9 +402,6 @@ Debug logging can be enabled on startup with the `-debug` and `-loglevel`
 configuration options and toggled while naviod is running with the `logging`
 RPC. For instance, launching naviod with `-debug` or `-debug=1` will turn on all
 log categories and `-loglevel=trace` will turn on all log severity levels.
-
-The Qt code routes `qDebug()` output to `debug.log` under category "qt": run
-with `-debug=qt` to see it.
 
 ### Signet, testnet, and regtest modes
 
@@ -424,10 +416,10 @@ If you are testing something that can run on one machine, run with the
 ### DEBUG_LOCKORDER
 
 Navio Core is a multi-threaded application, and deadlocks or other
-multi-threading bugs can be very difficult to track down. The `--enable-debug`
-configure option adds `-DDEBUG_LOCKORDER` to the compiler flags. This inserts
-run-time checks to keep track of which locks are held and adds warnings to the
-`debug.log` file if inconsistencies are detected.
+multi-threading bugs can be very difficult to track down. The `Debug` build type
+adds `-DDEBUG_LOCKORDER` to the compiler flags. This inserts run-time checks to
+keep track of which locks are held and adds warnings to the `debug.log` file if
+inconsistencies are detected.
 
 ### DEBUG_LOCKCONTENTION
 
@@ -435,10 +427,9 @@ Defining `DEBUG_LOCKCONTENTION` adds a "lock" logging category to the logging
 RPC that, when enabled, logs the location and duration of each lock contention
 to the `debug.log` file.
 
-The `--enable-debug` configure option adds `-DDEBUG_LOCKCONTENTION` to the
-compiler flags. You may also enable it manually for a non-debug build by running
-configure with `-DDEBUG_LOCKCONTENTION` added to your CPPFLAGS, i.e.
-`CPPFLAGS="-DDEBUG_LOCKCONTENTION"`, then build and run naviod.
+The `Debug` build type adds `-DDEBUG_LOCKCONTENTION` to the compiler flags. You
+may also enable it manually for a non-debug build by configuring with
+`-DCMAKE_CXX_FLAGS="-DDEBUG_LOCKCONTENTION"`, then build and run naviod.
 
 You can then use the `-debug=lock` configuration option at naviod startup or
 `navio-cli logging '["lock"]'` at runtime to turn on lock contention logging. It
@@ -480,10 +471,10 @@ which includes known Valgrind warnings in our dependencies that cannot be fixed
 in-tree. Example use:
 
 ```shell
-$ valgrind --suppressions=contrib/valgrind.supp src/test/test_navio
+$ valgrind --suppressions=contrib/valgrind.supp build/bin/test_navio
 $ valgrind --suppressions=contrib/valgrind.supp --leak-check=full \
-      --show-leak-kinds=all src/test/test_navio --log_level=test_suite
-$ valgrind -v --leak-check=full src/naviod -printtoconsole
+      --show-leak-kinds=all build/bin/test_navio --log_level=test_suite
+$ valgrind -v --leak-check=full build/bin/naviod -printtoconsole
 $ ./test/functional/test_runner.py --valgrind
 ```
 
@@ -555,27 +546,27 @@ See the functional test documentation for how to invoke perf within tests.
 
 Navio Core can be compiled with various "sanitizers" enabled, which add
 instrumentation for issues regarding things like memory safety, thread race
-conditions, or undefined behavior. This is controlled with the
-`--with-sanitizers` configure flag, which should be a comma separated list of
-sanitizers to enable. The sanitizer list should correspond to supported
-`-fsanitize=` options in your compiler. These sanitizers have runtime overhead,
-so they are most useful when testing changes or producing debugging builds.
+conditions, or undefined behavior. This is controlled with the `SANITIZERS`
+CMake option, which should be a comma separated list of sanitizers to enable.
+The sanitizer list should correspond to supported `-fsanitize=` options in your
+compiler. These sanitizers have runtime overhead, so they are most useful when
+testing changes or producing debugging builds.
 
 Some examples:
 
 ```bash
 # Enable both the address sanitizer and the undefined behavior sanitizer
-./configure --with-sanitizers=address,undefined
+cmake -B build -DSANITIZERS=address,undefined
 
 # Enable the thread sanitizer
-./configure --with-sanitizers=thread
+cmake -B build -DSANITIZERS=thread
 ```
 
 If you are compiling with GCC you will typically need to install corresponding
 "san" libraries to actually compile with these flags, e.g. libasan for the
 address sanitizer, libtsan for the thread sanitizer, and libubsan for the
-undefined sanitizer. If you are missing required libraries, the configure script
-will fail with a linker error when testing the sanitizer flags.
+undefined sanitizer. If you are missing required libraries, the CMake configure
+step will fail when testing the sanitizer flags.
 
 The test suite should pass cleanly with the `thread` and `undefined` sanitizers.
 You may need to use a suppressions file, see `test/sanitizer_suppressions`. They
@@ -593,12 +584,12 @@ information about any additional options.
 There are a number of known problems when using the `address` sanitizer. The
 address sanitizer is known to fail in
 [sha256_sse4::Transform](/src/crypto/sha256_sse4.cpp) which makes it unusable
-unless you also use `--disable-asm` when running configure. We would like to fix
-sanitizer issues, so please send pull requests if you can fix any errors found
-by the address sanitizer (or any other sanitizer).
+unless you also configure with `-DUSE_ASM=OFF`. We would like to fix sanitizer
+issues, so please send pull requests if you can fix any errors found by the
+address sanitizer (or any other sanitizer).
 
 Not all sanitizer options can be enabled at the same time, e.g. trying to build
-with `--with-sanitizers=address,thread` will fail in the configure script as
+with `-DSANITIZERS=address,thread` will fail in the CMake configure step as
 these sanitizers are mutually incompatible. Refer to your compiler manual to
 learn more about these options and which sanitizers are supported by your
 compiler.
@@ -622,8 +613,8 @@ to protect data structures.
 Deadlocks due to inconsistent lock ordering (thread 1 locks `cs_main` and then
 `cs_wallet`, while thread 2 locks them in the opposite order: result, deadlock
 as each waits for the other to release its lock) are a problem. Compile with
-`-DDEBUG_LOCKORDER` (or use `--enable-debug`) to get lock order inconsistencies
-reported in the `debug.log` file.
+`-DDEBUG_LOCKORDER` (or use the `Debug` build type) to get lock order
+inconsistencies reported in the `debug.log` file.
 
 Re-architecting the core code so there are better-defined interfaces between the
 various components is a goal, with any necessary locking done by the components
@@ -721,11 +712,6 @@ A few non-style-related recommendations for developers, as well as points to pay
 attention to for reviewers of Navio Core code.
 
 ## General Navio Core
-
-- New features should be exposed on RPC first, then can be made available in the
-  GUI.
-  - _Rationale_: RPC allows for better automatic testing. The test suite for the
-    GUI is very limited.
 
 - Make sure pull requests pass CI before merging.
   - _Rationale_: Makes sure that they pass thorough testing, and that the tester
@@ -953,10 +939,6 @@ warning on some compilers.
     `LogDebug`, etc.
     - _Rationale_: This is redundant. Tinyformat handles strings.
 
-  - Do not use it to convert to `QString`. Use `QString::fromStdString()`.
-    - _Rationale_: Qt has built-in functionality for converting their string
-      type from/to C++. No need to roll your own.
-
   - In cases where do you call `.c_str()`, you might want to additionally check
     that the string does not contain embedded '\0' characters, because it will
     (necessarily) truncate the string. This might be used to hide parts of the
@@ -1064,8 +1046,7 @@ bool Chainstate::PreciousBlock(BlockValidationState& state, CBlockIndex* pindex)
 ```
 
 - Build and run tests with `-DDEBUG_LOCKORDER` to verify that no potential
-  deadlocks are introduced. As of 0.12, this is defined by default when
-  configuring with `--enable-debug`.
+  deadlocks are introduced. The `Debug` build type defines it.
 
 - When using `LOCK`/`TRY_LOCK` be aware that the lock exists in the context of
   the current scope, so surround the statement and the code that needs the lock
@@ -1173,26 +1154,6 @@ namespace {
 #endif // BITCOIN_FOO_BAR_H
 ```
 
-## GUI
-
-- Do not display or manipulate dialogs in model code (classes `*Model`).
-  - _Rationale_: Model classes pass through events and data from the core, they
-    should not interact with the user. That's where View classes come in. The
-    converse also holds: try to not directly access core data structures from
-    Views.
-
-- Avoid adding slow or blocking code in the GUI thread. In particular, do not
-  add new `interfaces::Node` and `interfaces::Wallet` method calls, even if they
-  may be fast now, in case they are changed to lock or communicate across
-  processes in the future.
-
-  Prefer to offload work from the GUI thread to worker threads (see
-  `RPCExecutor` in console code as an example) or take other steps (see
-  https://doc.qt.io/archives/qq/qq27-responsive-guis.html) to keep the GUI
-  responsive.
-  - _Rationale_: Blocking the GUI thread can increase latency, and lead to hangs
-    and deadlocks.
-
 ## Subtrees
 
 Several parts of the repository are subtrees of software maintained elsewhere.
@@ -1238,6 +1199,12 @@ Current subtrees include:
 - src/minisketch
   - Upstream at https://github.com/sipa/minisketch ; maintained by Core
     contributors.
+
+- src/blst
+  - A vendored copy of a blst release, not a git subtree, so
+    `git-subtree-check.sh` does not cover it.
+  - Upstream at https://github.com/supranational/blst ; maintained by
+    Supranational. Send changes upstream and update the copy from a release.
 
 ## Upgrading LevelDB
 
@@ -1418,9 +1385,9 @@ A few guidelines for introducing and reviewing new RPC interfaces:
 
 - Add every non-string RPC argument `(method, idx, name)` to the table
   `vRPCConvertParams` in `rpc/client.cpp`.
-  - _Rationale_: `navio-cli` and the GUI debug console use this table to
-    determine how to convert a plaintext command line to JSON. If the types
-    don't match, the method can be unusable from there.
+  - _Rationale_: `navio-cli` uses this table to determine how to convert a
+    plaintext command line to JSON. If the types don't match, the method can be
+    unusable from there.
 
 - A RPC method must either be a wallet method or a non-wallet method. Do not
   introduce new methods that differ in behavior based on the presence of a
@@ -1473,19 +1440,18 @@ A few guidelines for introducing and reviewing new RPC interfaces:
 ## Internal interface guidelines
 
 Internal interfaces between parts of the codebase that are meant to be
-independent (node, wallet, GUI), are defined in
+independent (node, wallet), are defined in
 [`src/interfaces/`](../src/interfaces/). The main interface classes defined
 there are [`interfaces::Chain`](../src/interfaces/chain.h), used by wallet to
 access the node's latest chain state, and
-[`interfaces::Wallet`](../src/interfaces/wallet.h), used by the GUI to control
-an individual wallet. There are also more specialized interface types like
+[`interfaces::WalletLoader`](../src/interfaces/wallet.h), used by the node to
+create and load wallets. There are also more specialized interface types like
 [`interfaces::Handler`](../src/interfaces/handler.h)
 [`interfaces::ChainClient`](../src/interfaces/chain.h) passed to and from
 various interface methods.
 
-Interface classes are written in a particular style so node, wallet, and GUI
-code doesn't need to run in the same process, and so the class declarations work
-more easily with tools and libraries supporting interprocess communication:
+Interface classes are written in a particular style so node and wallet code stay
+decoupled:
 
 - Interface classes should be abstract and have methods that are
   [pure virtual](https://en.cppreference.com/w/cpp/language/abstract_class).
