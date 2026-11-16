@@ -9,6 +9,7 @@
 #include <config/bitcoin-config.h>
 #endif
 #include <addresstype.h>
+#include <blsct/wallet/txfactory_global.h>
 #include <blockfilter.h>
 #include <blsct/tokens/predicate_exec.h>
 #include <chain.h>
@@ -63,7 +64,6 @@
 #include <wallet/context.h>
 #include <wallet/crypter.h>
 #include <wallet/db.h>
-#include <wallet/receive.h>
 #include <wallet/scriptpubkeyman.h>
 #include <wallet/transaction.h>
 #include <wallet/types.h>
@@ -1848,11 +1848,6 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                 }
                 return wout;
             };
-            // The rows do not keep their transaction, so whether an output
-            // returns a coin of ours this tx spends (a served cover coming
-            // back) is decided here, with the tx in hand, and stored.
-            OwnSpentCoins own_spent{GetOwnSpentCoins(*this, tx)};
-
             // loop though all outputs
             for (size_t i = 0; i < tx.vout.size(); i++) {
                 CTxOut txout = tx.vout[i];
@@ -1890,15 +1885,35 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                     mine = IsMine(txout);
                 }
                 if (fExisted || mine) {
-                    const CTxOut& synced_out = tx.vout[i];
-                    CWalletOutput* wout = add_output(outpoint, std::move(txout));
-                    const bool cover_return{synced_out.HasBLSCTRangeProof() &&
-                                            OutputIsCoverReturn(*this, synced_out, wout->blsctRecoveryData, own_spent)};
-                    if (cover_return && !wout->fCoverReturn) {
-                        wout->fCoverReturn = true;
-                        if (!WalletBatch(GetDatabase(), /*_fFlushOnClose=*/false).WriteOutput(outpoint, *wout)) {
-                            throw std::runtime_error("DB error marking a returned cover output, write failed");
-                        }
+                    add_output(outpoint, std::move(txout));
+                }
+            }
+
+            // The rows do not keep their transaction, so whether an output
+            // returns a coin of ours this tx spends (a served cover coming
+            // back) is decided here, with the tx in hand, and stored. It is
+            // done once every output is stored, so a coin this same tx creates
+            // and spends counts too, and redone on every sync, so a tx mined
+            // again in another form can also clear a mark.
+            {
+                std::set<COutPoint> spent_here;
+                for (const CTxIn& txin : tx.vin) spent_here.insert(txin.prevout);
+                OwnSpentCoins own_spent{GetOwnSpentCoins(*this, tx)};
+                std::optional<WalletBatch> batch;
+                for (size_t i = 0; i < tx.vout.size(); ++i) {
+                    const COutPoint outpoint{tx.GetOutputId(i)};
+                    const auto it = mapOutputs.find(outpoint);
+                    // A coin the tx also spends is one of the coins matched
+                    // against, never a return.
+                    if (it == mapOutputs.end() || spent_here.contains(outpoint)) continue;
+                    CWalletOutput& wout = it->second;
+                    const bool cover_return{tx.vout[i].HasBLSCTRangeProof() &&
+                                            OutputIsCoverReturn(*this, tx.vout[i], wout.blsctRecoveryData, own_spent)};
+                    if (cover_return == wout.fCoverReturn) continue;
+                    wout.fCoverReturn = cover_return;
+                    if (!batch) batch.emplace(GetDatabase(), /*_fFlushOnClose=*/false);
+                    if (!batch->WriteOutput(outpoint, wout)) {
+                        throw std::runtime_error("DB error marking a returned cover output, write failed");
                     }
                 }
             }
@@ -5227,4 +5242,42 @@ ScriptPubKeyMan* CWallet::AddWalletDescriptor(WalletDescriptor& desc, const Flat
 
     return spk_man;
 }
+
+OwnSpentCoins GetOwnSpentCoins(const CWallet& wallet, const CTransaction& tx)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    OwnSpentCoins spent;
+    const auto* blsct_km = wallet.GetBLSCTKeyMan();
+    if (!blsct_km || !tx.IsBLSCT()) return spent;
+    for (const CTxIn& txin : tx.vin) {
+        const CTxOut* prev{nullptr};
+        CAmount amount{0};
+        if (const CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(txin.prevout)) {
+            const int ix = wtx->GetOutputIndexFromHash(txin.prevout);
+            if (ix < 0 || static_cast<size_t>(ix) >= wtx->tx->vout.size()) continue;
+            prev = &wtx->tx->vout[ix];
+            amount = wtx->GetBLSCTRecoveryData(ix).amount;
+        } else if (const CWalletOutput* wout = wallet.GetWalletOutput(txin.prevout)) {
+            prev = wout->out.get();
+            amount = wout->blsctRecoveryData.amount;
+        }
+        if (!prev || !prev->tokenId.IsNull() || !prev->HasBLSCTKeys() || !wallet.IsMine(*prev)) continue;
+        spent.emplace(blsct_km->GetHashId(*prev), amount);
+    }
+    return spent;
+}
+
+bool OutputIsCoverReturn(const CWallet& wallet, const CTxOut& txout, const range_proof::RecoveredData<Blst>& recovered, OwnSpentCoins& spent)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    if (spent.empty() || recovered.message != blsct::COVER_CANDIDATE_MEMO) return false;
+    if (!txout.tokenId.IsNull() || !txout.HasBLSCTKeys()) return false;
+    const auto* blsct_km = wallet.GetBLSCTKeyMan();
+    if (!blsct_km) return false;
+    const auto it = spent.find({blsct_km->GetHashId(txout), recovered.amount});
+    if (it == spent.end()) return false;
+    spent.erase(it);
+    return true;
+}
+
 } // namespace wallet

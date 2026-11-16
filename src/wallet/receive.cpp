@@ -150,49 +150,6 @@ bool OutputIsChange(const CWallet& wallet, const CTxOut& txout, const TokenId& t
     return ScriptIsChange(wallet, txout.scriptPubKey);
 }
 
-OwnSpentCoins GetOwnSpentCoins(const CWallet& wallet, const CTransaction& tx)
-{
-    AssertLockHeld(wallet.cs_wallet);
-    OwnSpentCoins spent;
-    const auto* blsct_km = wallet.GetBLSCTKeyMan();
-    if (!blsct_km || !tx.IsBLSCT()) return spent;
-    for (const CTxIn& txin : tx.vin) {
-        const CTxOut* prev{nullptr};
-        CAmount amount{0};
-        if (const CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(txin.prevout)) {
-            const int ix = wtx->GetOutputIndexFromHash(txin.prevout);
-            if (ix < 0 || static_cast<size_t>(ix) >= wtx->tx->vout.size()) continue;
-            prev = &wtx->tx->vout[ix];
-            amount = wtx->GetBLSCTRecoveryData(ix).amount;
-        } else if (const CWalletOutput* wout = wallet.GetWalletOutput(txin.prevout)) {
-            prev = wout->out.get();
-            amount = wout->blsctRecoveryData.amount;
-        }
-        if (!prev || !prev->tokenId.IsNull() || !prev->HasBLSCTKeys() || !wallet.IsMine(*prev)) continue;
-        spent.emplace(blsct_km->GetHashId(*prev), amount);
-    }
-    return spent;
-}
-
-bool OutputIsCoverReturn(const CWallet& wallet, const CTxOut& txout, const range_proof::RecoveredData<Blst>& recovered, OwnSpentCoins& spent)
-{
-    AssertLockHeld(wallet.cs_wallet);
-    if (spent.empty() || recovered.message != blsct::COVER_CANDIDATE_MEMO) return false;
-    if (!txout.tokenId.IsNull() || !txout.HasBLSCTKeys()) return false;
-    const auto* blsct_km = wallet.GetBLSCTKeyMan();
-    if (!blsct_km) return false;
-    const auto it = spent.find({blsct_km->GetHashId(txout), recovered.amount});
-    if (it == spent.end()) return false;
-    spent.erase(it);
-    return true;
-}
-
-bool OutputIsCoverReturn(const CWallet& wallet, const CWalletOutput& wout)
-{
-    AssertLockHeld(wallet.cs_wallet);
-    return wout.fCoverReturn;
-}
-
 CAmount OutputGetChange(const CWallet& wallet, const CTxOut& txout, const TokenId& token_id)
 {
     AssertLockHeld(wallet.cs_wallet);
