@@ -68,7 +68,9 @@ class P2PMsgAggregateCountBoundaryTest(BitcoinTestFramework):
             assert outpoint in prevouts, "fell back to plain: cover input %s missing" % outpoint
         assert_equal(len(tx["vin"]), OWN_INPUTS + len(cand_inputs))
         assert_equal(self.nodes[0].getaggregationhint()["available"], 0)
-        self.generatetoblsctaddress(self.nodes[0], 1, self.miner0)
+        # Two blocks: w1's next candidate spends the output of this one, and
+        # a candidate is only built from a coin with two confirmations.
+        self.generatetoblsctaddress(self.nodes[0], 2, self.miner0)
         self.sync_blocks()
         assert txid not in self.nodes[0].getrawmempool(), "boundary aggregate did not confirm"
 

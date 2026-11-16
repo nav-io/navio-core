@@ -175,9 +175,7 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         assert_equal(n0.getaggregationhint()["available"], 0)
         self.log.info("candidate spending a coin already spent in the mempool was dropped")
 
-        # Confirm that spend before serving again: replycandidate can pick its
-        # unconfirmed change, and a candidate spending an unconfirmed coin is
-        # dropped by the requester (bad-txns-inputs-missingorspent).
+        # Confirm that spend before serving again.
         self.generate_blsct_blocks(n1, miner, 1)
         self.sync_blocks()
 
@@ -198,6 +196,35 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         assert set(res["inputs"]).isdisjoint(set(res2["inputs"])), (
             "second candidate reused a reserved coin: %r vs %r" % (res["inputs"], res2["inputs"]))
         self.log.info("two live candidates spend distinct coins")
+
+        # A candidate spending an unconfirmed coin is dropped by the requester
+        # (bad-txns-inputs-missingorspent), and one spending a coin with a
+        # single confirmation is lost to a one-block reorg, so the producer
+        # only builds one from a coin with two. Give w2 a single coin and
+        # serve as it matures, then leave w2 holding only its 0-conf change.
+        no_coin = "No NAV coin with 2 confirmations free to build a candidate from"
+        n1.createwallet(wallet_name="w2", blsct=True, storage_output=True)
+        w2 = n1.get_wallet_rpc("w2")
+        w1.sendtoblsctaddress(w2.getnewaddress(label="", address_type="blsct"), 1000)
+        self.generate_blsct_blocks(n1, miner, 1)
+        self.sync_blocks()
+        unspent = w2.listblsctunspent()
+        assert_equal([u["confirmations"] for u in unspent], [1])
+        reply_key = n0.mintp2pmsgreplykey(600)["reply_pubkey"]
+        assert_raises_rpc_error(-4, no_coin, w2.replycandidate, reply_key)
+        self.log.info("a coin with one confirmation is not served as a candidate")
+
+        self.generate_blsct_blocks(n1, miner, 1)
+        self.sync_blocks()
+        res = w2.replycandidate(reply_key)
+        assert_equal(res["inputs"], [unspent[0]["outid"]])
+        self.log.info("a coin with two confirmations is served as a candidate")
+
+        w2.sendtoblsctaddress(miner, 100)
+        assert_equal([u["confirmations"] for u in w2.listblsctunspent(0)], [0])
+        reply_key = n0.mintp2pmsgreplykey(600)["reply_pubkey"]
+        assert_raises_rpc_error(-4, no_coin, w2.replycandidate, reply_key)
+        self.log.info("unconfirmed change is not served as a candidate")
 
 
 if __name__ == "__main__":

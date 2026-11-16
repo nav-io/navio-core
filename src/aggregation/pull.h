@@ -70,6 +70,12 @@ static constexpr size_t SERVE_MAX_PER_TICK = 2;
 //! follow-up on per-wallet accounting.
 static constexpr size_t SERVE_MAX_COINS_PER_WINDOW = 30;
 static constexpr int64_t SERVE_WINDOW_SECONDS = 60 * 60;
+//! Producer side: a candidate spends only a coin with at least this many
+//! confirmations. The requester checks a candidate against its UTXO set
+//! alone, so it drops one spending 0-conf change, and a coin with a single
+//! confirmation is lost to a one-block reorg, failing the aggregate that
+//! picked the candidate.
+static constexpr int SERVE_MIN_DEPTH = 2;
 
 /**
  * Producer-side queue of candidate pull requests (AGG_ANN) awaiting a wallet

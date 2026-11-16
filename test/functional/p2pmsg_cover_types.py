@@ -112,7 +112,9 @@ class P2PMsgCoverTypesTest(BitcoinTestFramework):
         for wallet in (transfer_producer, transfer_producer, transfer_producer, transfer_sender):
             funder.sendtoblsctaddress(addr(wallet), 10)
         self.wait_until(lambda: len(n1.getrawmempool()) == 4, timeout=60)
-        self.mine(n1, addr(funder), 1)
+        # Two blocks: a candidate is only built from a coin with two
+        # confirmations.
+        self.mine(n1, addr(funder), 2)
         self.wait_until(lambda: len(transfer_sender.listblsctunspent()) == 1, timeout=60)
 
         self.log.info("Pool two reward-backed and two transfer-backed candidates on node0")
