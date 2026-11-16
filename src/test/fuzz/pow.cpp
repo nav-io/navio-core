@@ -2,6 +2,7 @@
 // Distributed under the MIT software license, see the accompanying
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
+#include <blsct/pos/pos.h>
 #include <chain.h>
 #include <chainparams.h>
 #include <pow.h>
@@ -90,7 +91,12 @@ FUZZ_TARGET(pow, .init = initialize_pow)
 FUZZ_TARGET(pow_transition, .init = initialize_pow)
 {
     FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
-    const Consensus::Params& consensus_params{Params().GetConsensus()};
+    // One proof-of-work retarget period, checked at its end. On a BLSCT chain
+    // those heights are past nLastPOWHeight, where only proof of stake is
+    // valid (see pos_transition), so check the proof-of-work rule with BLSCT
+    // off.
+    Consensus::Params consensus_params{Params().GetConsensus()};
+    consensus_params.fBLSCT = false;
     std::vector<std::unique_ptr<CBlockIndex>> blocks;
 
     const uint32_t old_time{fuzzed_data_provider.ConsumeIntegral<uint32_t>()};
@@ -129,5 +135,47 @@ FUZZ_TARGET(pow_transition, .init = initialize_pow)
     }
     auto last_block{blocks.back().get()};
     unsigned int new_nbits{GetNextWorkRequired(last_block, nullptr, consensus_params)};
+    Assert(PermittedDifficultyTransition(consensus_params, last_block->nHeight + 1, last_block->nBits, new_nbits));
+}
+
+FUZZ_TARGET(pos_transition, .init = initialize_pow)
+{
+    FuzzedDataProvider fuzzed_data_provider(buffer.data(), buffer.size());
+    const Consensus::Params& consensus_params{Params().GetConsensus()};
+    std::vector<std::unique_ptr<CBlockIndex>> blocks;
+
+    const uint32_t old_time{fuzzed_data_provider.ConsumeIntegral<uint32_t>()};
+    const uint32_t new_time{fuzzed_data_provider.ConsumeIntegral<uint32_t>()};
+    uint32_t nbits{fuzzed_data_provider.ConsumeIntegral<uint32_t>()};
+
+    const arith_uint256 pos_limit = UintToArith256(consensus_params.posLimit);
+    arith_uint256 max_old_target{~arith_uint256{0}};
+    max_old_target /= arith_uint256{static_cast<uint64_t>(consensus_params.nPosTargetTimespan) * 4};
+    if (max_old_target > pos_limit) {
+        max_old_target = pos_limit;
+    }
+    arith_uint256 old_target;
+    bool old_target_negative{false};
+    bool old_target_overflow{false};
+    old_target.SetCompact(nbits, &old_target_negative, &old_target_overflow);
+    if (old_target_negative || old_target == 0 || old_target_overflow || old_target > max_old_target) {
+        old_target = max_old_target;
+    }
+    nbits = old_target.GetCompact();
+    // Headers up to the first proof-of-stake retarget past nLastPOWHeight;
+    // the last one's time sets the retarget's timespan.
+    const int interval{static_cast<int>(consensus_params.DifficultyAdjustmentIntervalPos())};
+    const int retarget_height{(consensus_params.nLastPOWHeight / interval + 1) * interval};
+    for (int height = 0; height < retarget_height; ++height) {
+        CBlockHeader header;
+        header.nTime = height == retarget_height - 1 ? new_time : old_time;
+        header.nBits = nbits;
+        auto current_block{std::make_unique<CBlockIndex>(header)};
+        current_block->pprev = blocks.empty() ? nullptr : blocks.back().get();
+        current_block->nHeight = height;
+        blocks.emplace_back(std::move(current_block));
+    }
+    auto last_block{blocks.back().get()};
+    const unsigned int new_nbits{blsct::GetNextTargetRequired(last_block, nullptr, consensus_params)};
     Assert(PermittedDifficultyTransition(consensus_params, last_block->nHeight + 1, last_block->nBits, new_nbits));
 }

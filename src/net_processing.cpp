@@ -119,6 +119,12 @@ static constexpr auto BLOCK_STALLING_TIMEOUT_MAX{64s};
 /** Number of headers sent in one getheaders result. We rely on the assumption that if a peer sends
  *  less than this number, we reached its tip. Changing this value is a protocol upgrade. */
 static const unsigned int MAX_HEADERS_RESULTS = 2000;
+/** Headers that fork from our chain within this many blocks of its tip pass
+ *  the anti-DoS work threshold freely and may come from any peer. A fork from
+ *  deeper must carry nearly our chain's work, and on a BLSCT chain, whose
+ *  header work costs nothing to fake, it must also come from a peer we chose
+ *  (outbound or manual): see IsDeepBlsctFork. */
+static constexpr int ANTI_DOS_FORK_DEPTH{144};
 /** Maximum depth of blocks we're willing to serve as compact blocks to peers
  *  when requested. For older blocks, a regular BLOCK response will be sent. */
 static const int MAX_CMPCTBLOCK_DEPTH = 5;
@@ -670,6 +676,11 @@ private:
     bool CheckHeadersPoW(const std::vector<CBlockHeader>& headers, const Consensus::Params& consensusParams, Peer& peer);
     /** Calculate an anti-DoS work threshold for headers chains */
     arith_uint256 GetAntiDoSWorkThreshold();
+    /** The limit on how fast a peer's headers chain built on `chain_start`
+     *  may claim work, measured on our chain from where it forks; no limit
+     *  during initial block download, when our tip says nothing about the
+     *  chain's current rate. */
+    HeadersWorkRateLimit GetHeadersWorkRateLimit(const CBlockIndex& chain_start);
     /** Deal with state tracking and headers sync for peers that send the
      * occasional non-connecting header (this can happen due to BIP 130 headers
      * announcements for blocks interacting with the 2hr (MAX_FUTURE_BLOCK_TIME) rule). */
@@ -2793,9 +2804,16 @@ arith_uint256 PeerManagerImpl::GetAntiDoSWorkThreshold()
         const CBlockIndex *tip = m_chainman.ActiveChain().Tip();
         // Use a 144 block buffer, so that we'll accept headers that fork from
         // near our tip.
-        near_chaintip_work = tip->nChainWork - std::min<arith_uint256>(144*GetBlockProof(*tip), tip->nChainWork);
+        near_chaintip_work = tip->nChainWork - std::min<arith_uint256>(ANTI_DOS_FORK_DEPTH*GetBlockProof(*tip), tip->nChainWork);
     }
     return std::max(near_chaintip_work, m_chainman.MinimumChainWork());
+}
+
+HeadersWorkRateLimit PeerManagerImpl::GetHeadersWorkRateLimit(const CBlockIndex& chain_start)
+{
+    LOCK(cs_main);
+    if (m_chainman.IsInitialBlockDownload()) return {};
+    return HeadersWorkRateLimit{m_chainman.ActiveChain(), chain_start, m_chainparams.GetConsensus()};
 }
 
 /**
@@ -2961,7 +2979,7 @@ bool PeerManagerImpl::TryLowWorkHeadersSync(Peer& peer, CNode& pfrom, const CBlo
             // advancing to the first unknown header would be a small effect.
             LOCK(peer.m_headers_sync_mutex);
             peer.m_headers_sync.reset(new HeadersSyncState(peer.m_id, m_chainparams.GetConsensus(),
-                chain_start_header, minimum_chain_work));
+                chain_start_header, minimum_chain_work, GetHeadersWorkRateLimit(*chain_start_header)));
 
             // Now a HeadersSyncState object for tracking this synchronization
             // is created, process the headers using it as normal. Failures are
@@ -3236,12 +3254,39 @@ void PeerManagerImpl::ProcessHeadersMessage(CNode& pfrom, Peer& peer,
     // At this point, the headers connect to something in our block index.
     // Do anti-DoS checks to determine if we should process or store for later
     // processing.
+
+    // Only a peer we chose may lead us onto a deep fork (see
+    // ANTI_DOS_FORK_DEPTH).
+    if (!already_validated_work && pfrom.IsInboundConn()) {
+        const bool deep_fork{WITH_LOCK(cs_main, return IsDeepBlsctFork(m_chainman.ActiveChain(), *chain_start_header, m_chainparams.GetConsensus(), ANTI_DOS_FORK_DEPTH))};
+        if (deep_fork) {
+            LogPrint(BCLog::NET, "Ignoring headers of a deep fork (height=%u) from inbound peer=%d\n", chain_start_header->nHeight + headers.size(), pfrom.GetId());
+            return;
+        }
+    }
+
     if (!already_validated_work && TryLowWorkHeadersSync(peer, pfrom,
                 chain_start_header, headers)) {
         // If we successfully started a low-work headers sync, then there
         // should be no headers to process any further.
         Assume(headers.empty());
         return;
+    }
+
+    // Enough work is no evidence on a proof-of-stake chain, whose headers are
+    // free to make: refuse a chain claiming work faster than an honest one can
+    // (see HeadersWorkRateLimit). Headers from a presync were checked there.
+    if (!already_validated_work) {
+        HeadersWorkRateLimit limit{GetHeadersWorkRateLimit(*chain_start_header)};
+        const int64_t now{TicksSinceEpoch<std::chrono::seconds>(GetAdjustedTime())};
+        arith_uint256 chain_work{chain_start_header->nChainWork};
+        for (const CBlockHeader& header : headers) {
+            chain_work += GetBlockProof(CBlockIndex{header});
+            if (!limit.Add(chain_work, header.nTime, now)) {
+                LogPrint(BCLog::NET, "Ignoring headers whose chain work grows implausibly fast (height=%u) from peer=%d\n", chain_start_header->nHeight + headers.size(), pfrom.GetId());
+                return;
+            }
+        }
     }
 
     // At this point, we have a set of headers with sufficient work on them
