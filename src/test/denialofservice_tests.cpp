@@ -398,6 +398,48 @@ BOOST_AUTO_TEST_CASE(peer_discouragement)
     connman->ClearTestNodes();
 }
 
+BOOST_AUTO_TEST_CASE(discourage_disconnects_only_misbehaving_peer)
+{
+    // Peers can share an address that is not theirs alone (a Tor exit node,
+    // a remote reverse proxy for WebSocket peers). Discouraging one must not
+    // disconnect the others.
+    LOCK(NetEventsInterface::g_msgproc_mutex);
+
+    auto banman = std::make_unique<BanMan>(m_args.GetDataDirBase() / "banlist", nullptr, DEFAULT_MISBEHAVING_BANTIME);
+    auto connman = std::make_unique<ConnmanTestMsg>(0x1337, 0x1337, *m_node.addrman, *m_node.netgroupman, Params());
+    auto peerLogic = PeerManager::make(*connman, *m_node.addrman, banman.get(), *m_node.chainman, *m_node.mempool, {});
+    banman->ClearBanned();
+
+    const CAddress shared_addr{ip(0xa0b0c001), NODE_NONE};
+    std::array<CNode*, 2> nodes;
+    for (NodeId id{0}; id < NodeId(nodes.size()); ++id) {
+        nodes[id] = new CNode{id,
+                              /*sock=*/nullptr,
+                              shared_addr,
+                              /*nKeyedNetGroupIn=*/0,
+                              /*nLocalHostNonceIn=*/0,
+                              CAddress(),
+                              /*addrNameIn=*/"",
+                              ConnectionType::INBOUND,
+                              /*inbound_onion=*/false};
+        nodes[id]->SetCommonVersion(PROTOCOL_VERSION);
+        peerLogic->InitializeNode(*nodes[id], NODE_NETWORK);
+        nodes[id]->fSuccessfullyConnected = true;
+        connman->AddTestNode(*nodes[id]);
+    }
+
+    peerLogic->UnitTestMisbehaving(nodes[0]->GetId(), DISCOURAGEMENT_THRESHOLD);
+    BOOST_CHECK(peerLogic->SendMessages(nodes[0]));
+    BOOST_CHECK(banman->IsDiscouraged(shared_addr));
+    BOOST_CHECK(nodes[0]->fDisconnect);
+    BOOST_CHECK(!nodes[1]->fDisconnect);
+
+    for (CNode* node : nodes) {
+        peerLogic->FinalizeNode(*node);
+    }
+    connman->ClearTestNodes();
+}
+
 BOOST_AUTO_TEST_CASE(paused_send_peer_times_out)
 {
     // A peer that stops reading leaves our send buffer full. It is dropped
