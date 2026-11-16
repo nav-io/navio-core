@@ -1330,6 +1330,11 @@ std::vector<CScript> EvalDescriptorStringOrObject(const UniValue& scanobject, Fl
     if (!desc) {
         throw JSONRPCError(RPC_INVALID_ADDRESS_OR_KEY, error);
     }
+    // A BLSCT output's scriptPubKey is a bare OP_TRUE whatever its recipient,
+    // so the script of a BLSCT address would match every BLSCT output.
+    if (desc->GetOutputType() == OutputType::BLSCT) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, strprintf("Cannot scan for a BLSCT address: '%s'. BLSCT outputs are found by view key (the wallet), not by script", desc_str));
+    }
     if (!desc->IsRange()) {
         range.first = 0;
         range.second = 0;

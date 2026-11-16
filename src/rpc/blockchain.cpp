@@ -2084,7 +2084,8 @@ static const auto scan_action_arg_desc = RPCArg{
 
 static const auto scan_objects_arg_desc = RPCArg{
     "scanobjects", RPCArg::Type::ARR, RPCArg::Optional::OMITTED, "Array of scan objects. Required for \"start\" action\n"
-        "Every scan object is either a string descriptor or an object:",
+        "Every scan object is either a string descriptor or an object.\n"
+        "addr() of a BLSCT address is refused: BLSCT outputs are found by view key (the wallet), not by script:",
     {
         {"descriptor", RPCArg::Type::STR, RPCArg::Optional::OMITTED, "An output descriptor"},
         {"", RPCArg::Type::OBJ, RPCArg::Optional::OMITTED, "An object with output descriptor and metadata",
@@ -2216,7 +2217,7 @@ static RPCHelpMan scantxoutset()
     return RPCHelpMan{"scantxoutset",
         "\nScans the unspent transaction output set for entries that match certain output descriptors.\n"
         "Examples of output descriptors are:\n"
-        "    addr(<address>)                      Outputs whose scriptPubKey corresponds to the specified address (does not include P2PK)\n"
+        "    addr(<address>)                      Outputs whose scriptPubKey corresponds to the specified address (does not include P2PK or BLSCT)\n"
         "    raw(<hex script>)                    Outputs whose scriptPubKey equals the specified hex scripts\n"
         "    combo(<pubkey>)                      P2PK, P2PKH, P2WPKH, and P2SH-P2WPKH outputs for the given pubkey\n"
         "    pkh(<pubkey>)                        P2PKH outputs for the given pubkey\n"
