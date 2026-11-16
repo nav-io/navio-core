@@ -139,8 +139,9 @@ BlstScalar::BlstScalar(const std::string& s, int radix)
     std::vector<uint8_t> be;
     try {
         be = blst_arith::RadixStringToBytes(s, radix, 64);
-    } catch (const std::exception&) {
-        throw std::runtime_error(std::string(__func__) + ": Failed to instantiate Scalar from " + s);
+    } catch (const std::exception& e) {
+        // The input can be a secret, so report only why it was rejected.
+        throw std::runtime_error(std::string(__func__) + ": Failed to instantiate Scalar: " + e.what());
     }
     blst_scalar sc{};
     blst_scalar_from_be_bytes(&sc, be.data(), be.size());
