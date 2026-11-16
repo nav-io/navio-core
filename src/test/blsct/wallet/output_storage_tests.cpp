@@ -11,6 +11,7 @@
 #include <kernel/chain.h>
 #include <kernel/mempool_removal_reason.h>
 #include <key_io.h>
+#include <logging.h>
 #include <rpc/util.h>
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
@@ -1356,6 +1357,44 @@ BOOST_FIXTURE_TEST_CASE(output_storage_record_failure_marks_all_inputs, TestingS
     const CWalletOutput* change{r.wallet->GetWalletOutput(r.change_outpoint)};
     BOOST_REQUIRE(change != nullptr);
     BOOST_CHECK(change->state<TxStateInMempool>());
+}
+
+// An own output that fails to write must not keep the later ones from being
+// mirrored: AddToWallet() keeps the failed one in memory, so every output is
+// mirrored and the failure is reported after them.
+BOOST_FIXTURE_TEST_CASE(output_storage_record_failure_mirrors_later_outputs, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    const OwnAggregate r = MakeOwnAggregate(m_node.chain.get(), /*cover_pays_wallet=*/true);
+    LOCK(r.wallet->cs_wallet);
+
+    // Spends no coin of ours, so the only writes the mirror makes are of its
+    // two outputs, both ours: the change, then the cover.
+    CMutableTransaction mtx{*r.aggregate};
+    mtx.vin = {CTxIn{COutPoint{InsecureRand256()}}};
+    const CTransactionRef tx{MakeTransactionRef(mtx)};
+
+    // Writes fail from the transaction's own record until the change has been
+    // added, so the change's write fails and the cover's succeeds. AddToWallet
+    // logs an output before writing it, with its batch already open.
+    MockableDatabase& db{GetMockableDatabase(*r.wallet)};
+    btcsignals::scoped_connection fail_later_writes{r.wallet->NotifyTransactionChanged.connect([&](const uint256&, ChangeType) {
+        db.m_pass = false;
+    })};
+    const std::string change_added{"AddToWallet " + r.change_outpoint.ToString()};
+    const auto pass_after_change{LogInstance().PushBackCallback([&](const std::string& s) {
+        if (s.find(change_added) != std::string::npos) db.m_pass = true;
+    })};
+    BOOST_CHECK(!r.wallet->RecordBroadcastTransaction(tx, r.own_half_outputs, {}, std::nullopt));
+    LogInstance().DeleteCallback(pass_after_change);
+    fail_later_writes.disconnect();
+    db.m_pass = true;
+
+    for (const COutPoint& outpoint : {r.change_outpoint, r.cover_outpoint}) {
+        const CWalletOutput* output{r.wallet->GetWalletOutput(outpoint)};
+        BOOST_REQUIRE(output != nullptr);
+        BOOST_CHECK(output->state<TxStateInMempool>());
+    }
 }
 
 // The own half's outputs that the trust covers are part of the wallet record
