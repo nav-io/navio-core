@@ -500,28 +500,28 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
         const int tip_height = wallet.chain().getHeight().value_or(-1);
         factory.SetTranscriptV2((tip_height + 1) >= Params().GetConsensus().nBLSCTProofV2Height);
         factory.blsct::TxFactoryBase::AddInput(c.amount, c.gamma, c.spendingKey, c.token_id, COutPoint(c.outpoint.hash), c.is_staked_commitment);
-        // Self-spend the whole value back to a fresh own CHANGE address:
-        // input value == output value, zero fee (BuildCandidate emits no fee
-        // output). CHANGE_ACCOUNT, not the user-facing receive account 0 --
-        // serving must not burn receive subaddresses or pollute the address
-        // book with per-candidate RECEIVE entries. GetNewDestination is a
-        // util::Result and this runs on a background thread, where .value()
-        // on an error (keypool exhaustion) would escape through TraceThread
-        // and abort the node; fail the one candidate instead.
-        auto dest_res = km->GetNewDestination(blsct::CHANGE_ACCOUNT);
-        if (!dest_res) {
+        // Self-spend the whole value back to the subaddress the coin was
+        // paid to: input value == output value, zero fee (BuildCandidate
+        // emits no fee output). Once a requester merges the candidate and it
+        // is mined, the coin is still on its address, under its label and
+        // account, rather than moved to the change account for having been
+        // used as cover. On chain this changes nothing: every BLSCT output
+        // gets fresh one-time keys, so paying the same subaddress again is
+        // not visible without the view key. Deriving it from the id reserves
+        // no subaddress and writes nothing to the address book.
+        if (!c.subaddress) {
             ReleaseCandidateInput(COutPoint(c.outpoint.hash));
             ReturnServeBudget(*budget_slot);
-            error = "could not derive a candidate destination";
+            error = strprintf("could not find the subaddress of candidate coin %s", c.outpoint.hash.GetHex());
             return std::nullopt;
         }
-        blsct::SubAddress self_dest(std::get<blsct::DoublePublicKey>(dest_res.value()));
+        const blsct::SubAddress self_dest = km->GetSubAddress(*c.subaddress);
         // Deliberately a RANDOM blinding key rather than the seed-derived
         // recoverable one. A cover candidate exists to be unlinkable: the
         // scalars of a derived set all share one derivation path, so anyone
         // who learned this wallet's seed could pick its cover halves out of
         // every aggregate it ever contributed to.
-        factory.AddOutput(self_dest, c.amount, "candidate", TokenId(), blsct::NORMAL, /*minStake=*/0,
+        factory.AddOutput(self_dest, c.amount, std::string{blsct::COVER_CANDIDATE_MEMO}, TokenId(), blsct::NORMAL, /*minStake=*/0,
                           /*fSubtractFeeFromAmount=*/false, BlstScalar::Rand(), /*nBLSCTDefaultFee=*/0);
         auto built = factory.BuildCandidate();
         if (!built) {

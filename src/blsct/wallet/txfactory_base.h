@@ -188,6 +188,11 @@ struct InputCandidates {
     // commitment; empty for undelegated outputs. Stake consolidation only
     // folds commitments that share the same identity.
     std::string delegation{};
+    // The wallet subaddress the coin was paid to, when the wallet gathering
+    // it knows (TxFactory::AddAvailableCoins always sets it). A cover
+    // candidate pays its output back to it, so serving a coin does not move
+    // it off its address.
+    std::optional<SubAddressIdentifier> subaddress{};
 };
 
 class TxFactoryBase

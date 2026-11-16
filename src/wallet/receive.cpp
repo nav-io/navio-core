@@ -365,6 +365,10 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
     // reimported wallet that sees only the merged block tx would otherwise
     // net every intermediate change against the debit of the original coins.
     const std::set<uint256> spent_in_tx{OutputsSpentInTx(*wtx.tx)};
+    // Our coins this tx spends, for recognising served cover candidates that
+    // return one of them to its own subaddress.
+    OwnSpentCoins own_spent;
+    if (nDebit > 0) own_spent = GetOwnSpentCoins(wallet, *wtx.tx);
 
     // Sent/received.
     for (unsigned int i = 0; i < wtx.tx->vout.size(); ++i)
@@ -381,7 +385,8 @@ void CachedTxGetAmounts(const CWallet& wallet, const CWalletTx& wtx,
             // Accumulate BLSCT change separately so the synthetic send entry
             // below reports the true balance debit (sent-to-others + fee),
             // not the inflated inputs-minus-explicit-outputs figure.
-            if (OutputIsChange(wallet, txout)) {
+            if (OutputIsChange(wallet, txout) ||
+                (txout.HasBLSCTRangeProof() && OutputIsCoverReturn(wallet, txout, wtx.GetBLSCTRecoveryData(i), own_spent))) {
                 if (txout.HasBLSCTRangeProof()) {
                     nChange += wtx.GetBLSCTRecoveryData(i).amount;
                     continue;

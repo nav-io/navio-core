@@ -10,6 +10,9 @@
 #include <wallet/types.h>
 #include <wallet/wallet.h>
 
+#include <set>
+#include <utility>
+
 namespace wallet {
 isminetype InputIsMine(const CWallet& wallet, const CTxIn& txin) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet);
 
