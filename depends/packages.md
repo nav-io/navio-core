@@ -4,13 +4,15 @@ variables, and defining build commands.
 The package "mylib" will be used here as an example
 
 General tips:
-- mylib_foo is written as $(package)_foo in order to make recipes more similar.
-- Secondary dependency packages relative to the bitcoin binaries/libraries (i.e.
+
+- mylib_foo is written as $(package)\_foo in order to make recipes more similar.
+- Secondary dependency packages relative to the navio binaries/libraries (i.e.
   those not in `ALLOWED_LIBRARIES` in `contrib/devtools/symbol-check.py`) don't
   need to be shared and should be built statically whenever possible. See
   [below](#secondary-dependencies) for more details.
 
 ## Identifiers
+
 Each package is required to define at least these variables:
 
     $(package)_version:
@@ -48,18 +50,18 @@ These variables are optional:
     Any extra files that will be fetched via $(package)_fetch_cmds. These are
     specified so that they can be fetched and verified via 'make download'.
 
-
 ## Build Variables:
+
 After defining the main identifiers, build variables may be added or customized
 before running the build commands. They should be added to a function called
-$(package)_set_vars. For example:
+$(package)\_set_vars. For example:
 
     define $(package)_set_vars
     ...
     endef
 
-Most variables can be prefixed with the host, architecture, or both, to make
-the modifications specific to that case. For example:
+Most variables can be prefixed with the host, architecture, or both, to make the
+modifications specific to that case. For example:
 
     Universal:     $(package)_cc=gcc
     Linux only:    $(package)_linux_cc=gcc
@@ -86,7 +88,7 @@ These variables may be set to override or append their default values.
     $(package)_build_opts
     $(package)_config_opts
 
-The *_env variables are used to add environment variables to the respective
+The \*\_env variables are used to add environment variables to the respective
 commands.
 
 Many variables respect a debug/release suffix as well, in order to use them for
@@ -96,16 +98,16 @@ only the appropriate build config. For example:
     $(package)_cflags_i686_debug = -g
     $(package)_config_opts_release = --disable-debug
 
-These will be used in addition to the options that do not specify
-debug/release. All builds are considered to be release unless DEBUG=1 is set by
-the user. Other variables may be defined as needed.
+These will be used in addition to the options that do not specify debug/release.
+All builds are considered to be release unless DEBUG=1 is set by the user. Other
+variables may be defined as needed.
 
 ## Build commands:
 
-  For each build, a unique build dir and staging dir are created. For example,
-  `work/build/mylib/1.0-1adac830f6e` and `work/staging/mylib/1.0-1adac830f6e`.
+For each build, a unique build dir and staging dir are created. For example,
+`work/build/mylib/1.0-1adac830f6e` and `work/staging/mylib/1.0-1adac830f6e`.
 
-  The following build commands are available for each recipe:
+The following build commands are available for each recipe:
 
     $(package)_fetch_cmds:
     Runs from: build dir
@@ -133,7 +135,7 @@ the user. Other variables may be defined as needed.
     Runs from: build dir/$(package)_build_subdir
     Stage the build results. If undefined, does nothing.
 
-  The following variables are available for each recipe:
+The following variables are available for each recipe:
 
     $(1)_staging_dir: package's destination sysroot path
     $(1)_staging_prefix_dir: prefix path inside of the package's staging dir
@@ -143,9 +145,9 @@ the user. Other variables may be defined as needed.
 
 Notes on build commands:
 
-For packages built with autotools, $($(package)_autoconf) can be used in the
+For packages built with autotools, $($(package)\_autoconf) can be used in the
 configure step to (usually) correctly configure automatically. Any
-$($(package)_config_opts) will be appended.
+$($(package)\_config_opts) will be appended.
 
 Most autotools projects can be properly staged using:
 
@@ -157,15 +159,16 @@ In general, the output of a depends package should not contain any libtool
 archives. Instead, the package should output `.pc` (`pkg-config`) files where
 possible.
 
-From the [Gentoo Wiki entry](https://wiki.gentoo.org/wiki/Project:Quality_Assurance/Handling_Libtool_Archives):
+From the
+[Gentoo Wiki entry](https://wiki.gentoo.org/wiki/Project:Quality_Assurance/Handling_Libtool_Archives):
 
->  Libtool pulls in all direct and indirect dependencies into the .la files it
->  creates. This leads to massive overlinking, which is toxic to the Gentoo
->  ecosystem, as it leads to a massive number of unnecessary rebuilds.
+> Libtool pulls in all direct and indirect dependencies into the .la files it
+> creates. This leads to massive overlinking, which is toxic to the Gentoo
+> ecosystem, as it leads to a massive number of unnecessary rebuilds.
 
 ## Secondary dependencies:
 
-Secondary dependency packages relative to the bitcoin binaries/libraries (i.e.
+Secondary dependency packages relative to the navio binaries/libraries (i.e.
 those not in `ALLOWED_LIBRARIES` in `contrib/devtools/symbol-check.py`) don't
 need to be shared and should be built statically whenever possible. This
 improves general build reliability as illustrated by the following example:
@@ -179,12 +182,13 @@ For us, it's much easier to just link a static `libsecondary` into a shared
 `libprimary`. Especially because in our case, we are linking against a dummy
 `libprimary` anyway that we'll throw away. We don't care if the end-user has a
 static or dynamic `libsecondary`, that's not our concern. With a static
-`libsecondary`, when we need to link `libprimary` into our executable, there's no
-dependency chain to worry about as `libprimary` has all the symbols.
+`libsecondary`, when we need to link `libprimary` into our executable, there's
+no dependency chain to worry about as `libprimary` has all the symbols.
 
 ## Build targets:
 
-To build an individual package (useful for debugging), following build targets are available.
+To build an individual package (useful for debugging), following build targets
+are available.
 
     make ${package}
     make ${package}_fetched

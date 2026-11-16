@@ -2,8 +2,7 @@
 
 **Updated for FreeBSD [12.3](https://www.freebsd.org/releases/12.3R/announce/)**
 
-This guide describes how to build naviod, command-line utilities, and GUI on
-FreeBSD.
+This guide describes how to build naviod and command-line utilities on FreeBSD.
 
 ## Preparation
 
@@ -78,7 +77,7 @@ There are many ways to configure Navio Core, here are a few common examples:
 cmake -B build -G Ninja
 ```
 
-##### No Wallet or GUI
+##### No Wallet
 
 ```bash
 cmake -B build -G Ninja -DENABLE_WALLET=OFF

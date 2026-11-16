@@ -1,12 +1,13 @@
-This is a system of building and caching dependencies necessary for building Bitcoin.
-There are several features that make it different from most similar systems:
+This is a system of building and caching dependencies necessary for building
+Navio. There are several features that make it different from most similar
+systems:
 
 ### It is designed to be builder and host agnostic
 
 In theory, binaries for any target OS/architecture can be created, from a
 builder running any OS/architecture. In practice, build-side tools must be
-specified when the defaults don't fit, and packages must be amended to work
-on new hosts.
+specified when the defaults don't fit, and packages must be amended to work on
+new hosts.
 
 ### No reliance on timestamps
 
@@ -41,12 +42,11 @@ build should represent an exact single payload.
 ### Sources are fetched and verified automatically
 
 Each package must define its source location and checksum. The build will fail
-if the fetched source does not match. Sources may be pre-seeded and/or cached
-as desired.
+if the fetched source does not match. Sources may be pre-seeded and/or cached as
+desired.
 
 ### Self-cleaning
 
-Build and staging dirs are wiped after use, and any previous version of a
-cached result is removed following a successful build. Automated builders
-should be able to build each revision and store the results with no further
-intervention.
+Build and staging dirs are wiped after use, and any previous version of a cached
+result is removed following a successful build. Automated builders should be
+able to build each revision and store the results with no further intervention.
