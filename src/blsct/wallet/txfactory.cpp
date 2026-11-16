@@ -165,12 +165,12 @@ std::optional<BuiltTransaction> TxFactory::CreateTransaction(wallet::CWallet* wa
         [blsct_km](const Outid& anchor) { return blsct_km->ReserveBlindingGeneration(anchor); });
 }
 
-void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit)
+void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit, const wallet::CCoinControl* coin_control)
 {
     AssertLockHeld(wallet->cs_wallet);
 
     bool is_blsct_storage = wallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
-    auto availableCoins = is_blsct_storage ? AvailableBlsctCoins(*wallet, nullptr, coins_params) : AvailableCoins(*wallet, nullptr, std::nullopt, coins_params);
+    auto availableCoins = is_blsct_storage ? AvailableBlsctCoins(*wallet, coin_control, coins_params) : AvailableCoins(*wallet, coin_control, std::nullopt, coins_params);
 
     // Recover every candidate first, then select largest-value-first below.
     // Selecting in wallet order would pile in many small outputs (e.g. the

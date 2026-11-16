@@ -463,7 +463,16 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
         // yields exactly one (the largest) coin; MAX_MONEY yields all of them,
         // which candidate serving needs -- each outstanding candidate must
         // spend a distinct coin.
-        blsct::TxFactory::AddAvailableCoins(&wallet, km, params, coins, /*nAmountLimit=*/MAX_MONEY);
+        //
+        // Confirmed coins only: the requester checks a candidate against its
+        // UTXO set alone and drops one spending the wallet's own 0-conf
+        // change, after this serve slot, the reservation and a change address
+        // were already spent on it.
+        wallet::CCoinControl coin_control;
+        coin_control.m_min_depth = 1;
+        // A null coin control keeps the wallet's avoid-reuse filter; keep it.
+        coin_control.m_avoid_address_reuse = true;
+        blsct::TxFactory::AddAvailableCoins(&wallet, km, params, coins, /*nAmountLimit=*/MAX_MONEY, &coin_control);
         // Each outstanding candidate must spend a DISTINCT coin (see
         // ReserveCandidateInput), picked UNIFORMLY at random from the free
         // ones. Randomness matters twice: the reservation ledger is in-memory,
@@ -488,7 +497,7 @@ std::optional<CTransactionRef> BuildAndSendCandidate(wallet::CWallet& wallet, co
         }
         if (!chosen) {
             ReturnServeBudget(*budget_slot);
-            error = "No spendable NAV coin free to build a candidate from";
+            error = "No confirmed NAV coin free to build a candidate from";
             return std::nullopt;
         }
 

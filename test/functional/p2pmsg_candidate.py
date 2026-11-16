@@ -175,9 +175,7 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         assert_equal(n0.getaggregationhint()["available"], 0)
         self.log.info("candidate spending a coin already spent in the mempool was dropped")
 
-        # Confirm that spend before serving again: replycandidate can pick its
-        # unconfirmed change, and a candidate spending an unconfirmed coin is
-        # dropped by the requester (bad-txns-inputs-missingorspent).
+        # Confirm that spend before serving again.
         self.generate_blsct_blocks(n1, miner, 1)
         self.sync_blocks()
 
@@ -198,6 +196,22 @@ class P2PMsgCandidateTest(BitcoinTestFramework):
         assert set(res["inputs"]).isdisjoint(set(res2["inputs"])), (
             "second candidate reused a reserved coin: %r vs %r" % (res["inputs"], res2["inputs"]))
         self.log.info("two live candidates spend distinct coins")
+
+        # A candidate spending an unconfirmed coin is dropped by the requester
+        # (bad-txns-inputs-missingorspent), so the producer must not build one
+        # from its own 0-conf change. Leave w2 holding only such change.
+        n1.createwallet(wallet_name="w2", blsct=True, storage_output=True)
+        w2 = n1.get_wallet_rpc("w2")
+        w1.sendtoblsctaddress(w2.getnewaddress(label="", address_type="blsct"), 1000)
+        self.generate_blsct_blocks(n1, miner, 1)
+        self.sync_blocks()
+        assert_equal(len(w2.listblsctunspent()), 1)
+        w2.sendtoblsctaddress(miner, 100)
+        unspent = w2.listblsctunspent(0)
+        assert_equal([u["confirmations"] for u in unspent], [0])
+        reply_key = n0.mintp2pmsgreplykey(600)["reply_pubkey"]
+        assert_raises_rpc_error(-4, "No confirmed NAV coin free to build a candidate from", w2.replycandidate, reply_key)
+        self.log.info("unconfirmed change is not served as a candidate")
 
 
 if __name__ == "__main__":
