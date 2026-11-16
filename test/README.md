@@ -43,7 +43,7 @@ set PYTHONUTF8=1
 Individual tests can be run by directly calling the test script, e.g.:
 
 ```
-test/functional/feature_rbf.py
+build/test/functional/feature_rbf.py
 ```
 
 or can be run through the test_runner harness, eg:
@@ -295,7 +295,7 @@ https://www.kernel.org/doc/Documentation/security/Yama.txt
 Often while debugging RPC calls in functional tests, the test might time out
 before the process can return a response. Use `--timeout-factor 0` to disable
 all RPC timeouts for that particular functional test. Ex:
-`test/functional/wallet_hd.py --timeout-factor 0`.
+`build/test/functional/wallet_hd.py --timeout-factor 0`.
 
 ##### Profiling
 
