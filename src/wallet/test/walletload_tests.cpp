@@ -11,6 +11,9 @@
 
 #include <boost/test/unit_test.hpp>
 
+#include <set>
+#include <string>
+
 namespace wallet {
 
 BOOST_AUTO_TEST_SUITE(walletload_tests)
@@ -107,8 +110,9 @@ BOOST_FIXTURE_TEST_CASE(wallet_load_external_signer, TestingSetup)
     BOOST_CHECK(found); // The error must be logged
 }
 
-bool HasAnyRecordOfType(WalletDatabase& db, const std::string& key)
+std::set<std::string> RecordTypes(WalletDatabase& db)
 {
+    std::set<std::string> types;
     std::unique_ptr<DatabaseBatch> batch = db.MakeBatch(false);
     BOOST_CHECK(batch);
     std::unique_ptr<DatabaseCursor> cursor = batch->GetNewCursor();
@@ -121,9 +125,14 @@ bool HasAnyRecordOfType(WalletDatabase& db, const std::string& key)
         if (status == DatabaseCursor::Status::DONE) break;
         std::string type;
         ssKey >> type;
-        if (type == key) return true;
+        types.insert(type);
     }
-    return false;
+    return types;
+}
+
+bool HasAnyRecordOfType(WalletDatabase& db, const std::string& key)
+{
+    return RecordTypes(db).contains(key);
 }
 
 template<typename... Args>
@@ -354,6 +363,12 @@ BOOST_FIXTURE_TEST_CASE(wallet_load_verif_crypted_blsct, TestingSetup)
         // Now delete all records and check that the 'Unlock' function doesn't re-write them
         BOOST_CHECK(wallet->GetBLSCTKeyMan()->DeleteRecords());
         BOOST_CHECK(!HasAnyRecordOfType(wallet->GetDatabase(), DBKeys::CRYPTED_BLSCTKEY));
+        // No BLSCT record of any type may survive DeleteRecords.
+        for (const auto& type : RecordTypes(wallet->GetDatabase())) {
+            const bool blsct = type.starts_with("blsct") || type.starts_with("cblsct") ||
+                               type == DBKeys::VIEWKEY || type == DBKeys::SPENDKEY;
+            BOOST_CHECK_MESSAGE(!blsct, "record type left behind: " << type);
+        }
         BOOST_CHECK(wallet->Unlock("encrypt"));
         BOOST_CHECK(!HasAnyRecordOfType(wallet->GetDatabase(), DBKeys::CRYPTED_BLSCTKEY));
     }
