@@ -3,7 +3,9 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 //! @file
-//! @brief Common init functions used by naviod (via init.cpp) and test_navio.
+//! @brief Common init functions used by naviod (via init.cpp) and by the
+//! test_util library's setup_common.cpp, which test_navio, bench_navio and
+//! fuzz link.
 
 #ifndef BITCOIN_INIT_COMMON_H
 #define BITCOIN_INIT_COMMON_H
