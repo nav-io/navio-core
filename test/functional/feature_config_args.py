@@ -371,7 +371,7 @@ class ConfArgsTest(BitcoinTestFramework):
     def test_acceptstalefeeestimates_arg_support(self):
         self.log.info("Test -acceptstalefeeestimates option support")
         conf_file = self.nodes[0].datadir_path / "navio.conf"
-        for chain, chain_name in {("main", ""), ("test", "testnet3"), ("signet", "signet")}:
+        for chain, chain_name in {("main", ""), ("test", "testnet7"), ("signet", "signet")}:
             # Signet has no default network, so it needs a challenge to start.
             signet_config = 'signetchallenge=51\n' if chain == "signet" else ''
             util.write_config(conf_file, n=0, chain=chain_name, extra_config='acceptstalefeeestimates=1\n' + signet_config)
