@@ -405,6 +405,22 @@ class ToolWalletTest(BitcoinTestFramework):
         self.assert_raises_tool_error('Error: This wallet uses an external signer, which this build no longer supports', '-wallet=signerload', '-dumpfile={}'.format(signer_wallet_dump), 'createfromdump')
         assert not (self.nodes[0].wallets_path / "signerload").is_dir()
 
+        self.log.info('Checking createfromdump reports an exception as an error')
+        # A failed createfromdump removes the wallet directory, which throws
+        # when the directory holds a file the tool did not create. That must
+        # end in an error and exit code 1, not an abort.
+        foreign_dir = self.nodes[0].wallets_path / "foreign"
+        foreign_dir.mkdir()
+        (foreign_dir / "keep.txt").write_text("not a wallet file")
+        p = self.bitcoin_wallet_process('-wallet=foreign', '-dumpfile={}'.format(bad_sum_wallet_dump), 'createfromdump')
+        stdout, stderr = p.communicate()
+        assert_equal(p.poll(), 1)
+        assert_equal(stdout, '')
+        assert 'EXCEPTION: ' in stderr
+        assert 'in ExecuteWalletToolFunc()' in stderr
+        assert (foreign_dir / "keep.txt").exists()
+        assert not (foreign_dir / "wallet.dat").exists()
+
         self.log.info('Checking createfromdump with an unnamed wallet')
         self.do_tool_createfromdump("", "wallet.dump")
         assert (self.nodes[0].wallets_path / "wallet.dat").exists()

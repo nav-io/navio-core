@@ -141,7 +141,18 @@ MAIN_FUNCTION
     }
 
     ECC_Start();
-    if (!wallet::WalletTool::ExecuteWalletToolFunc(args, command->command)) {
+    // Catch here rather than let std::terminate end the process: unwinding is
+    // then implementation-defined, and the scope guards that wipe secrets may
+    // not run.
+    try {
+        if (!wallet::WalletTool::ExecuteWalletToolFunc(args, command->command)) {
+            return EXIT_FAILURE;
+        }
+    } catch (const std::exception& e) {
+        PrintExceptionContinue(&e, "ExecuteWalletToolFunc()");
+        return EXIT_FAILURE;
+    } catch (...) {
+        PrintExceptionContinue(nullptr, "ExecuteWalletToolFunc()");
         return EXIT_FAILURE;
     }
     ECC_Stop();
