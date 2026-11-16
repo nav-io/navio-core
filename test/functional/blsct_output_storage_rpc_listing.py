@@ -92,10 +92,13 @@ class BlsctOutputStorageRpcListingTest(BitcoinTestFramework):
             assert_equal(len(limited), 1)
             assert_equal(limited[0]["address"], address)
             smallest = min(to_dec(u["amount"]) for u in filtered)
+            # Every coin reaches the smallest one's amount, so the listing
+            # stops after its first coin.
             limited = wallet.listunspent(0, 9999999, [address], True, {"minimumSumAmount": smallest})
-            assert_greater_than(len(limited), 0)
-            assert sum(to_dec(u["amount"]) for u in limited) >= smallest
-            assert all(u["address"] == address for u in limited)
+            assert_equal(len(limited), 1)
+            assert_equal(limited[0]["address"], address)
+            if len(filtered) > 1:
+                self.sum_limit_stopped_early = True
 
         # Amount filters are applied to the recovered BLSCT amount.
         biggest = max(to_dec(u["amount"]) for u in unspent)
@@ -222,6 +225,7 @@ class BlsctOutputStorageRpcListingTest(BitcoinTestFramework):
         self.check_listunspent(sender, "send out of mempool")
 
     def run_test(self):
+        self.sum_limit_stopped_early = False
         node = self.nodes[0]
         node.createwallet(wallet_name="sender", blsct=True, storage_output=True)
         node.createwallet(wallet_name="receiver", blsct=True, storage_output=True)
@@ -301,6 +305,10 @@ class BlsctOutputStorageRpcListingTest(BitcoinTestFramework):
 
         self.test_merged_chain(sender, receiver_addr)
         self.test_send_out_of_mempool(sender)
+
+        # Some address held several coins, so the address-filtered
+        # minimumSumAmount check had coins left to stop before.
+        assert self.sum_limit_stopped_early
 
 
 if __name__ == '__main__':
