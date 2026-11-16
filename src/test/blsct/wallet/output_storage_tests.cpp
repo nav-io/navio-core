@@ -1321,7 +1321,7 @@ BOOST_FIXTURE_TEST_CASE(full_tx_own_aggregate_record_failure, TestingSetup)
 
 // A send whose transaction is written but whose input spends then fail to
 // write must still mark every input spent in memory, not only those before
-// the first failed write, and must still report the failure.
+// the first failed write, mirror its change, and still report the failure.
 BOOST_FIXTURE_TEST_CASE(output_storage_record_failure_marks_all_inputs, TestingSetup)
 {
     SeedInsecureRand(SeedRand::ZEROS);
@@ -1351,9 +1351,11 @@ BOOST_FIXTURE_TEST_CASE(output_storage_record_failure_marks_all_inputs, TestingS
         BOOST_CHECK(output->state_spent<TxStateInMempool>());
         BOOST_CHECK(output->m_spent_by == tx->GetHash());
     }
-    // The failure was reported by the inputs, before the outputs were
-    // mirrored, so the change is not in the wallet yet.
-    BOOST_CHECK(r.wallet->GetWalletOutput(r.change_outpoint) == nullptr);
+    // The input failure is reported only after the outputs were mirrored,
+    // so a follow-up send can already see the change.
+    const CWalletOutput* change{r.wallet->GetWalletOutput(r.change_outpoint)};
+    BOOST_REQUIRE(change != nullptr);
+    BOOST_CHECK(change->state<TxStateInMempool>());
 }
 
 // The own half's outputs that the trust covers are part of the wallet record
