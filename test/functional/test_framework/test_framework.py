@@ -451,8 +451,8 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
 
     def add_wallet_options(self, parser, *, descriptors=True, legacy=True, blsct=True):
         # The `legacy` parameter is retained for backwards-compatibility with
-        # callers but legacy (BDB) wallets have been removed. Only descriptor
-        # and (optionally) BLSCT wallets are supported now. `blsct` is likewise
+        # callers but the BDB backend legacy-only runs used has been removed.
+        # Only descriptor and (optionally) BLSCT runs are supported now. `blsct` is likewise
         # accepted and ignored: tests create BLSCT wallets themselves with
         # createwallet(blsct=True).
         del legacy, blsct
