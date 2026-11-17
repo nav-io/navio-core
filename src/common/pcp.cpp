@@ -19,6 +19,7 @@
 #include <util/strencodings.h>
 #include <util/string.h>
 #include <util/threadinterrupt.h>
+#include <util/time.h>
 
 namespace {
 
@@ -293,8 +294,8 @@ std::variant<MappingResult, MappingError> NATPMPRequestPortMap(const CNetAddr &g
     if (dest_addr.ss_family != AF_INET) return MappingError::NETWORK_ERROR;
 
     // Create IPv4 UDP socket
-    auto sock{std::make_unique<Sock>(::socket(AF_INET, SOCK_DGRAM, IPPROTO_UDP))};
-    if (*sock == INVALID_SOCKET) {
+    auto sock{CreateSock(AF_INET, SOCK_DGRAM, IPPROTO_UDP)};
+    if (!sock) {
         LogWarning("natpmp: Could not create UDP socket: %s\n", NetworkErrorString(WSAGetLastError()));
         return MappingError::NETWORK_ERROR;
     }
@@ -418,8 +419,8 @@ std::variant<MappingResult, MappingError> PCPRequestPortMap(const PCPMappingNonc
     if (dest_addr.ss_family != bind_addr.ss_family) return MappingError::NETWORK_ERROR;
 
     // Create UDP socket (IPv4 or IPv6 based on provided gateway).
-    auto sock{std::make_unique<Sock>(::socket(dest_addr.ss_family, SOCK_DGRAM, IPPROTO_UDP))};
-    if (*sock == INVALID_SOCKET) {
+    auto sock{CreateSock(dest_addr.ss_family, SOCK_DGRAM, IPPROTO_UDP)};
+    if (!sock) {
         LogWarning("pcp: Could not create UDP socket: %s\n", NetworkErrorString(WSAGetLastError()));
         return MappingError::NETWORK_ERROR;
     }
