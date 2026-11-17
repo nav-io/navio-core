@@ -581,7 +581,7 @@ public:
      *
      * Preconditions: it is only valid to call this function when the wallet is
      * online and the block index is loaded. So this cannot be called by
-     * bitcoin-wallet tool code or by wallet migration code. If this is called
+     * bitcoin-wallet tool code. If this is called
      * without the wallet being online, it won't be able able to determine the
      * the height of the last block processed, or the heights of blocks
      * referenced in transaction, and might cause assert failures.
@@ -833,7 +833,7 @@ public:
      * Worker cap for BLSCT output recovery, from -par (GetParThreads()); 0 means one per core.
      *
      * Only CWallet::Create() sets it, and every node wallet comes from there:
-     * loading, creating, restoring and migrating all go through it with the
+     * loading, creating and restoring all go through it with the
      * node's args. The wallets navio-wallet builds directly (MakeWallet in
      * wallettool.cpp, CreateFromDump in dump.cpp) keep the default because
      * they have no chain: nothing reaches AddToWallet(CTransactionRef, ...),
@@ -1157,20 +1157,6 @@ public:
 
     //! Add a descriptor to the wallet, return a ScriptPubKeyMan & associated output type
     ScriptPubKeyMan* AddWalletDescriptor(WalletDescriptor& desc, const FlatSigningProvider& signing_provider, const std::string& label, bool internal) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
-
-    /** Move all records from the BDB database to a new SQLite database for storage.
-     * The original BDB file will be deleted and replaced with a new SQLite file.
-     * A backup is not created.
-     * May crash if something unexpected happens in the filesystem.
-     */
-    bool MigrateToSQLite(bilingual_str& error) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
-
-    //! Get all of the descriptors from a legacy wallet
-    std::optional<MigrationData> GetDescriptorsForLegacy(bilingual_str& error) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
-
-    //! Adds the ScriptPubKeyMans given in MigrationData to this wallet, removes LegacyScriptPubKeyMan,
-    //! and where needed, moves tx and address book entries to watchonly_wallet or solvable_wallet
-    bool ApplyMigrationData(MigrationData& data, bilingual_str& error) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 };
 
 /**
@@ -1228,17 +1214,6 @@ bool AddWalletSetting(interfaces::Chain& chain, const std::string& wallet_name);
 
 //! Remove wallet name from persistent configuration so it will not be loaded on startup.
 bool RemoveWalletSetting(interfaces::Chain& chain, const std::string& wallet_name);
-
-struct MigrationResult {
-    std::string wallet_name;
-    std::shared_ptr<CWallet> wallet;
-    std::shared_ptr<CWallet> watchonly_wallet;
-    std::shared_ptr<CWallet> solvables_wallet;
-    fs::path backup_path;
-};
-
-//! Do all steps to migrate a legacy wallet to a descriptor wallet
-[[nodiscard]] util::Result<MigrationResult> MigrateLegacyToDescriptor(const std::string& wallet_name, const SecureString& passphrase, WalletContext& context);
 } // namespace wallet
 
 #endif // BITCOIN_WALLET_WALLET_H
