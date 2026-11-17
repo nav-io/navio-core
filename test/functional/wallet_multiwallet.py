@@ -112,7 +112,6 @@ class MultiWalletTest(BitcoinTestFramework):
         #   sub/w5     - to verify relative wallet path is created correctly
         #   extern/w6  - to verify absolute wallet path is created correctly
         #   w7_symlink - to verify symlinked wallet path is initialized correctly
-        #   w8         - to verify existing wallet file is loaded correctly. Not tested for SQLite wallets as this is a deprecated BDB behavior.
         #   ''         - to verify default wallet file is created correctly
         to_create = ['w1', 'w2', 'w3', 'w', 'sub/w5', 'w7_symlink']
         in_wallet_dir = [w.replace('/', os.path.sep) for w in to_create]  # Wallets in the wallet dir
