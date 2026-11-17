@@ -8,6 +8,8 @@
 #include <test/fuzz/util/net.h>
 
 #include <common/pcp.h>
+#include <logging.h>
+#include <netbase.h>
 #include <util/check.h>
 #include <util/threadinterrupt.h>
 
@@ -22,11 +24,29 @@ constexpr int NUM_TRIES{5};
 //! Timeout for each attempt to request a port mapping.
 constexpr std::chrono::duration TIMEOUT{100ms};
 
-FUZZ_TARGET(pcp_request_port_map)
+void port_map_target_init()
+{
+    // Logging buffers until started: start it with every output off, so the
+    // port mapping warnings are dropped instead of piling up in the buffer.
+    LogInstance().m_print_to_file = false;
+    LogInstance().m_print_to_console = false;
+    LogInstance().StartLogging();
+}
+
+FUZZ_TARGET(pcp_request_port_map, .init = port_map_target_init)
 {
     FuzzedDataProvider fuzzed_data_provider{buffer.data(), buffer.size()};
 
-    // Perform the port mapping request.
+    // Create a mocked socket between random (and potentially invalid) client and gateway addresses.
+    auto CreateSockOrig = CreateSock;
+    CreateSock = [&](int domain, int type, int protocol) {
+        if ((domain == AF_INET || domain == AF_INET6) && type == SOCK_DGRAM && protocol == IPPROTO_UDP) {
+            return std::make_unique<FuzzedSock>(fuzzed_data_provider);
+        }
+        return std::unique_ptr<FuzzedSock>();
+    };
+
+    // Perform the port mapping request. The mocked socket will return fuzzer-provided data.
     const auto gateway_addr{ConsumeNetAddr(fuzzed_data_provider)};
     const auto local_addr{ConsumeNetAddr(fuzzed_data_provider)};
     const auto port{fuzzed_data_provider.ConsumeIntegral<uint16_t>()};
@@ -40,13 +60,24 @@ FUZZ_TARGET(pcp_request_port_map)
         Assert(mapping->internal.GetPort() == port);
         mapping->ToString();
     }
+
+    CreateSock = CreateSockOrig;
 }
 
-FUZZ_TARGET(natpmp_request_port_map)
+FUZZ_TARGET(natpmp_request_port_map, .init = port_map_target_init)
 {
     FuzzedDataProvider fuzzed_data_provider{buffer.data(), buffer.size()};
 
-    // Perform the port mapping request.
+    // Create a mocked socket between random (and potentially invalid) client and gateway addresses.
+    auto CreateSockOrig = CreateSock;
+    CreateSock = [&](int domain, int type, int protocol) {
+        if (domain == AF_INET && type == SOCK_DGRAM && protocol == IPPROTO_UDP) {
+            return std::make_unique<FuzzedSock>(fuzzed_data_provider);
+        }
+        return std::unique_ptr<FuzzedSock>();
+    };
+
+    // Perform the port mapping request. The mocked socket will return fuzzer-provided data.
     const auto gateway_addr{ConsumeNetAddr(fuzzed_data_provider)};
     const auto port{fuzzed_data_provider.ConsumeIntegral<uint16_t>()};
     const auto lifetime{fuzzed_data_provider.ConsumeIntegral<uint32_t>()};
@@ -59,4 +90,6 @@ FUZZ_TARGET(natpmp_request_port_map)
         Assert(mapping->internal.GetPort() == port);
         mapping->ToString();
     }
+
+    CreateSock = CreateSockOrig;
 }

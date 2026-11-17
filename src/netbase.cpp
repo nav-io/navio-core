@@ -444,23 +444,22 @@ bool Socks5(const std::string& strDest, uint16_t port, const ProxyCredentials* a
     }
 }
 
-std::unique_ptr<Sock> CreateSockTCP(const CService& address_family)
+std::unique_ptr<Sock> CreateSockOS(int domain, int type, int protocol)
 {
-    // Create a sockaddr from the specified service.
-    struct sockaddr_storage sockaddr;
-    socklen_t len = sizeof(sockaddr);
-    if (!address_family.GetSockAddr((struct sockaddr*)&sockaddr, &len)) {
-        LogPrintf("Cannot create socket for %s: unsupported network\n", address_family.ToStringAddrPort());
-        return nullptr;
-    }
+    // Not IPv4 or IPv6
+    if (domain == AF_UNSPEC) return nullptr;
 
-    // Create a TCP socket in the address family of the specified service.
-    SOCKET hSocket = socket(((struct sockaddr*)&sockaddr)->sa_family, SOCK_STREAM, IPPROTO_TCP);
+    // Create a socket in the specified address family.
+    SOCKET hSocket = socket(domain, type, protocol);
     if (hSocket == INVALID_SOCKET) {
         return nullptr;
     }
 
     auto sock = std::make_unique<Sock>(hSocket);
+
+    if (domain != AF_INET && domain != AF_INET6) {
+        return sock;
+    }
 
     // Ensure that waiting for I/O on this socket won't result in undefined
     // behavior.
@@ -479,10 +478,12 @@ std::unique_ptr<Sock> CreateSockTCP(const CService& address_family)
     }
 #endif
 
-    // Set the no-delay option (disable Nagle's algorithm) on the TCP socket.
-    const int on{1};
-    if (sock->SetSockOpt(IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on)) == SOCKET_ERROR) {
-        LogPrint(BCLog::NET, "Unable to set TCP_NODELAY on a newly created socket, continuing anyway\n");
+    if (protocol == IPPROTO_TCP) {
+        // Set the no-delay option (disable Nagle's algorithm) on the TCP socket.
+        const int on{1};
+        if (sock->SetSockOpt(IPPROTO_TCP, TCP_NODELAY, &on, sizeof(on)) == SOCKET_ERROR) {
+            LogPrint(BCLog::NET, "Unable to set TCP_NODELAY on a newly created socket, continuing anyway\n");
+        }
     }
 
     // Set the non-blocking option on the socket.
@@ -493,7 +494,7 @@ std::unique_ptr<Sock> CreateSockTCP(const CService& address_family)
     return sock;
 }
 
-std::function<std::unique_ptr<Sock>(const CService&)> CreateSock = CreateSockTCP;
+std::function<std::unique_ptr<Sock>(int, int, int)> CreateSock = CreateSockOS;
 
 template<typename... Args>
 static void LogConnectFailure(bool manual_connection, const char* fmt, const Args&... args) {
