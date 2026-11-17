@@ -480,7 +480,9 @@ class BLSCTLegacyRPCGuardsTest(BitcoinTestFramework):
         node.createwallet(wallet_name="legacy_unloaded", descriptors=False, blsct=False)
         node.unloadwallet("legacy_unloaded")
         self.assert_migratewallet_refused("legacy_unloaded", sqlite_error)
-        node.loadwallet("legacy_unloaded")
+        # The load warning must not point at migratewallet, which refuses it.
+        warnings = node.loadwallet("legacy_unloaded")["warnings"]
+        assert_equal(warnings, ["Wallet loaded successfully. The legacy wallet type is being deprecated and support for creating and opening legacy wallets will be removed in the future."])
 
         # Unloaded, the file is refused for its format before it is opened as a
         # wallet, so a descriptor wallet gets the SQLite error here.
