@@ -365,6 +365,48 @@ BOOST_AUTO_TEST_CASE(headers_work_rate_window)
     }
 }
 
+// Presync does not reject timestamps past MAX_FUTURE_BLOCK_TIME, so a chain
+// could step its timestamps further apart than the window, giving every
+// header a window of its own, while raising its difficulty as far as each
+// retarget allows. Such timestamps buy no time in the windowed check either:
+// it refuses the chain before it passes the anti-DoS threshold, and before
+// the check over the whole chain would.
+BOOST_AUTO_TEST_CASE(headers_work_rate_window_future_time)
+{
+    const auto consensus = CreateChainParams(*m_node.args, ChainType::MAIN)->GetConsensus();
+    for (const int pos_blocks : {2500, 50000}) {
+        std::vector<std::unique_ptr<CBlockIndex>> store;
+        CBlockIndex* tip{BuildMainnetLikeChain(store, consensus, pos_blocks)};
+        CChain active;
+        active.SetTip(*tip);
+        const int64_t now{tip->GetBlockTime()};
+        CBlockIndex* fork{tip->GetAncestor(tip->nHeight - 2000)};
+        const arith_uint256 threshold{tip->nChainWork - GetBlockProof(*tip) * 144};
+        HeadersWorkRateLimit limit{active, *fork, consensus};
+        int passes_threshold_at{-1};
+        int cumulative_refused_at{-1};
+        int refused_at{-1};
+        CBlockIndex* last{fork};
+        for (int i = 1; i <= 3000 && (passes_threshold_at < 0 || cumulative_refused_at < 0); ++i) {
+            const int64_t time{now - 3000 + i * (consensus.nPosTargetTimespan + 60)};
+            // A packed retarget interval: the most the difficulty may rise.
+            const bool retarget{(last->nHeight + 1) % consensus.DifficultyAdjustmentIntervalPos() == 0};
+            const uint32_t bits{retarget ? blsct::CalculateNextTargetRequired(last, last->GetBlockTime(), consensus) : last->nBits};
+            last = AddIndex(store, last, time, bits);
+            if (passes_threshold_at < 0 && last->nChainWork >= threshold) passes_threshold_at = i;
+            if (cumulative_refused_at < 0 && !limit.Allows(last->nChainWork, time, now)) cumulative_refused_at = i;
+            if (refused_at < 0 && !limit.Add(last->nChainWork, time, now)) refused_at = i;
+        }
+        BOOST_TEST_MESSAGE(pos_blocks << " PoS blocks: threshold at " << passes_threshold_at << ", whole chain refused at "
+                           << cumulative_refused_at << ", refused at " << refused_at);
+        BOOST_REQUIRE_GT(passes_threshold_at, 0);
+        BOOST_REQUIRE_GT(cumulative_refused_at, 0);
+        BOOST_REQUIRE_GT(refused_at, 0);
+        BOOST_CHECK_LT(refused_at, passes_threshold_at);
+        BOOST_CHECK_LT(refused_at, cumulative_refused_at);
+    }
+}
+
 // Honest proof-of-stake headers pass the windowed check, at our pace and with
 // three retarget timespans' worth of blocks a second apart.
 BOOST_AUTO_TEST_CASE(headers_work_rate_window_honest)
