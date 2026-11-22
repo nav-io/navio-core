@@ -3506,9 +3506,11 @@ void CWallet::MirrorBlsctBroadcast(const CTransaction& tx)
     WalletBatch batch(GetDatabase(), /*_fFlushOnClose=*/false);
     // A failed write is reported only once every input is marked and our own
     // outputs are mirrored, so the in-memory spends and change are complete
-    // even when the database falls behind. If an output then fails too, the
-    // input error is the one reported.
+    // even when the database falls behind: AddToWallet() keeps an output in
+    // mapOutputs when its write fails. If both an input and an output fail,
+    // the input error is the one reported.
     bool write_failed{false};
+    bool output_write_failed{false};
     for (const CTxIn& txin : tx.vin) {
         auto it = mapOutputs.find(txin.prevout);
         if (it == mapOutputs.end()) continue;
@@ -3549,13 +3551,13 @@ void CWallet::MirrorBlsctBroadcast(const CTransaction& tx)
             /*rescanning_old_block=*/false,
             /*state_spent=*/TxStateInactive{},
             /*fCoinbase=*/tx.IsCoinBase());
-        if (!wout) {
-            if (write_failed) break;
-            throw std::runtime_error(std::string(__func__) + ": failed to mirror locally-created BLSCT output");
-        }
+        if (!wout) output_write_failed = true;
     }
     if (write_failed) {
         throw std::runtime_error(std::string(__func__) + ": Wallet db error, failed to update spent BLSCT output state");
+    }
+    if (output_write_failed) {
+        throw std::runtime_error(std::string(__func__) + ": failed to mirror locally-created BLSCT output");
     }
 }
 
