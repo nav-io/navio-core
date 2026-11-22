@@ -481,7 +481,7 @@ $ valgrind --suppressions=contrib/valgrind.supp build/bin/test_navio
 $ valgrind --suppressions=contrib/valgrind.supp --leak-check=full \
       --show-leak-kinds=all build/bin/test_navio --log_level=test_suite
 $ valgrind -v --leak-check=full build/bin/naviod -printtoconsole
-$ ./test/functional/test_runner.py --valgrind
+$ build/test/functional/test_runner.py --valgrind
 ```
 
 ### Compiling for test coverage
