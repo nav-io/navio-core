@@ -46,11 +46,6 @@ class NavioBlsctOutputStorageTest(BitcoinTestFramework):
     def get_wallet_db_size(self, node, wallet_name):
         """Get the size of the wallet database file in bytes."""
         wallet_dir = node.wallets_path
-        # Check SQLite first (default for BLSCT)
-        wallet_path = os.path.join(wallet_dir, wallet_name, "wallet.sqlite")
-        if os.path.exists(wallet_path):
-            return os.path.getsize(wallet_path)
-        # Fall back to BDB
         wallet_path = os.path.join(wallet_dir, wallet_name, "wallet.dat")
         if os.path.exists(wallet_path):
             return os.path.getsize(wallet_path)

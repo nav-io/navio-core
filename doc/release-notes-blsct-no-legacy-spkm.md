@@ -10,8 +10,6 @@
     come from the BLSCT key manager.
   - A wallet created with a passphrase is still reported as not `blank` by
     `getwalletinfo`; its BLSCT seed now clears that flag.
-  - `migratewallet` keeps refusing it with "This wallet already uses SQLite"
-    rather than calling it a descriptor wallet.
   - `navio-wallet info` shows "HD (hd seed available): no" and "Keypool Size:
     0", as it already did for wallets made by `navio-wallet create`.
 - On a BLSCT wallet, `keypoolrefill` with `blsct=true` (the default) now checks
