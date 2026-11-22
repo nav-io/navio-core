@@ -84,7 +84,9 @@ class P2PMsgCandidateOwnAddressTest(BitcoinTestFramework):
         self.funder.sendtoblsctaddress(savings, 10)
         self.funder.sendtoblsctaddress(self.addr(sender), 10)
         self.wait_until(lambda: len(n1.getrawmempool()) == 2, timeout=60)
-        self.mine(n1, self.funder_addr, 1)
+        # Two blocks: a served candidate must spend a coin with two
+        # confirmations.
+        self.mine(n1, self.funder_addr, 2)
         self.wait_until(lambda: len(sender.listblsctunspent()) == 1, timeout=60)
         assert_equal(Decimal(str(producer.getbalanceforaddress(savings)["mine"]["trusted"])), Decimal("10"))
 
