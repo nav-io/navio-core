@@ -82,7 +82,7 @@ public:
     // (also out of the merged amount) so an aggregation initiator can cover
     // the combined weight of its half + fee-0 cover candidates.
     static std::optional<BuiltTransaction> CreateConsolidationTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const blsct::DoublePublicKey& destination, const size_t& maxInputs, const CAmount& nBLSCTDefaultFee, const CAmount& additionalFee = 0) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
-    static void AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
+    static void AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit, const wallet::CCoinControl* coin_control = nullptr) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
     static void AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const TokenId& token_id, const CreateTransactionType& type, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit, const bool& consolidateStakedCommitments = true) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
 };
 } // namespace blsct
