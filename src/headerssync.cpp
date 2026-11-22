@@ -85,7 +85,10 @@ bool HeadersWorkRateLimit::Add(const arith_uint256& chain_work, int64_t time, in
         m_refused = true;
         return false;
     }
-    Record(time, chain_work);
+    // Presync does not reject timestamps past MAX_FUTURE_BLOCK_TIME, so clamp
+    // them as Allows() does: spaced further apart than the window, they would
+    // give every header a window of its own.
+    Record(std::min(time, now + MAX_FUTURE_BLOCK_TIME), chain_work);
     const arith_uint256& start{m_window.front().second};
     const arith_uint256 window_cap{m_max_work_per_second * arith_uint256{static_cast<uint64_t>(m_window_seconds)}};
     if (chain_work > start && chain_work - start > window_cap) m_refused = true;
