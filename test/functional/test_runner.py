@@ -141,6 +141,7 @@ BASE_SCRIPTS = [
     'p2p_sendheaders.py',
     'wallet_listtransactions.py',
     'p2pmsg_aggregate_count_boundary.py',
+    'feature_signet.py',
     # vv Tests less than 30s vv
     'p2p_invalid_messages.py',
     'rpc_createmultisig.py',
@@ -263,7 +264,6 @@ BASE_SCRIPTS = [
     # 'wallet_importdescriptors.py',
     'wallet_crosschain.py',
     'mining_basic.py',
-    'feature_signet.py',
     'p2p_mutated_blocks.py',
     'rpc_named_arguments.py',
     'feature_startupnotify.py',
