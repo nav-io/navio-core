@@ -13,6 +13,7 @@ add_library(navio_wallet STATIC EXCLUDE_FROM_ALL
   fees.cpp
   interfaces.cpp
   load.cpp
+  privacy_score.cpp
   receive.cpp
   rpc/addresses.cpp
   rpc/backup.cpp
