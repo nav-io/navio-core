@@ -179,6 +179,24 @@ static void RefineCoverSelection(wallet::CWallet& wallet, const CMutableTransact
     }
 }
 
+std::optional<uint32_t> ParseMinPrivacy(const UniValue& value)
+{
+    if (value.isNull()) return std::nullopt;
+    int64_t milli_bits;
+    if (!ParseFixedPoint(value.getValStr(), 3, &milli_bits) || milli_bits < 0) {
+        throw JSONRPCError(RPC_INVALID_PARAMETER, "min_privacy must be a non-negative number of bits with at most three decimals");
+    }
+    return static_cast<uint32_t>(std::min<int64_t>(milli_bits, wallet::PRIVACY_MILLI_BITS_MAX));
+}
+
+UniValue InsufficientFundsError(const blsct::CreateTransactionData& transactionData, const std::string& purpose)
+{
+    if (transactionData.minPrivacyMilliBits) {
+        return JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, strprintf("Insufficient funds with privacy_bits >= %s%s", wallet::PrivacyBitsToUniValue(transactionData.minPrivacyMilliBits).getValStr(), purpose));
+    }
+    return JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available" + purpose);
+}
+
 UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransactionData& transactionData, const bool& verbose, wallet::mapValue_t mapValue)
 {
     // This should always try to sign, if we don't have private keys, don't try to do anything here.
@@ -228,7 +246,7 @@ UniValue SendTransaction(wallet::CWallet& wallet, const blsct::CreateTransaction
                 candidates.clear();
                 continue;
             }
-            throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
+            throw InsufficientFundsError(txData);
         }
 
         // Refuse to commit a transaction whose staked commitment already exists
@@ -584,6 +602,7 @@ static RPCHelpMan aggregatesend()
             {"address", RPCArg::Type::STR, RPCArg::Optional::NO, "The destination BLSCT address"},
             {"amount", RPCArg::Type::AMOUNT, RPCArg::Optional::NO, "The amount to send"},
             {"max_candidates", RPCArg::Type::NUM, RPCArg::Default{16}, "Maximum cover candidates to merge"},
+            {"min_privacy", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, blsct::MIN_PRIVACY_HELP},
         },
         RPCResult{RPCResult::Type::OBJ, "", "", {
             {RPCResult::Type::STR_HEX, "txid", "The broadcast aggregate transaction id"},
@@ -616,8 +635,9 @@ static RPCHelpMan aggregatesend()
             txData.nBLSCTDefaultFee = rate;
             txData.additionalFee = extra;
             txData.fPadOutputs = gArgs.GetBoolArg("-blsctpadoutputs", blsct::DEFAULT_BLSCT_PAD_OUTPUTS);
+            txData.minPrivacyMilliBits = blsct::ParseMinPrivacy(request.params[3]);
             auto own = blsct::TxFactory::CreateTransaction(pwallet.get(), pwallet->GetBLSCTKeyMan(), txData);
-            if (!own) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available");
+            if (!own) throw blsct::InsufficientFundsError(txData);
 
             // Input-derived cover sizing, steady-cadence pool only (no
             // on-demand pull/wait; see SendTransaction). Cap the cover at the
@@ -659,7 +679,7 @@ static RPCHelpMan aggregatesend()
                 count_fee = needed;
                 txData.additionalFee = extra + count_fee;
                 own = blsct::TxFactory::CreateTransaction(pwallet.get(), pwallet->GetBLSCTKeyMan(), txData);
-                if (!own) throw JSONRPCError(RPC_WALLET_INSUFFICIENT_FUNDS, "Not enough funds available to cover the extra fee for the merged input/output count");
+                if (!own) throw blsct::InsufficientFundsError(txData, " to cover the extra fee for the merged input/output count");
             }
 
             std::vector<CTransactionRef> halves;
@@ -2039,6 +2059,7 @@ RPCHelpMan sendtoblsctaddress()
             {"subtractfeefromamount", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, the fee is deducted from the amount being sent so the recipient receives less than the requested amount and the wallet spends exactly the requested amount."},
             {"comment_to", RPCArg::Type::STR, RPCArg::Default{""}, "A wallet-local comment naming the person or organization the payment is to.\n"
                                                                    "Stored only in this wallet (surfaced by listtransactions as \"to\"); not sent on-chain."},
+            {"min_privacy", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, blsct::MIN_PRIVACY_HELP},
         },
         {
             RPCResult{"if verbose is not set or set to false",
@@ -2077,6 +2098,7 @@ RPCHelpMan sendtoblsctaddress()
 
             blsct::CreateTransactionData transactionData(address, AmountFromValue(request.params[1]), sMemo, TokenId(), blsct::CreateTransactionType::NORMAL, 0);
             transactionData.fSubtractFeeFromAmount = subtract_fee;
+            transactionData.minPrivacyMilliBits = blsct::ParseMinPrivacy(request.params[6]);
 
             // Wallet-local comments, stored on the sender's CWalletTx and
             // surfaced by listtransactions (not sent on-chain). The memo above
@@ -2108,6 +2130,7 @@ RPCHelpMan sendtokentoblsctaddress()
             {"memo", RPCArg::Type::STR, RPCArg::Default{""}, "A memo used to store in the transaction.\n"
                                                              "The recipient will see its value."},
             {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+            {"min_privacy", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, blsct::MIN_PRIVACY_HELP},
         },
         {
             RPCResult{"if verbose is not set or set to false",
@@ -2161,6 +2184,8 @@ RPCHelpMan sendtokentoblsctaddress()
 
             EnsureWalletIsUnlocked(*pwallet);
 
+            transactionData.minPrivacyMilliBits = blsct::ParseMinPrivacy(request.params[5]);
+
             return blsct::SendTransaction(*pwallet, transactionData, verbose);
         },
     };
@@ -2180,6 +2205,7 @@ RPCHelpMan sendnfttoblsctaddress()
             {"memo", RPCArg::Type::STR, RPCArg::Default{""}, "A memo used to store in the transaction.\n"
                                                              "The recipient will see its value."},
             {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+            {"min_privacy", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, blsct::MIN_PRIVACY_HELP},
         },
         {
             RPCResult{"if verbose is not set or set to false",
@@ -2233,6 +2259,8 @@ RPCHelpMan sendnfttoblsctaddress()
             blsct::CreateTransactionData transactionData(address, 1, sMemo, TokenId(token_id, nft_id), blsct::CreateTransactionType::NORMAL, 0);
 
             EnsureWalletIsUnlocked(*pwallet);
+
+            transactionData.minPrivacyMilliBits = blsct::ParseMinPrivacy(request.params[5]);
 
             return blsct::SendTransaction(*pwallet, transactionData, verbose);
         },
