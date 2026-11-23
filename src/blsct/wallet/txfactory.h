@@ -82,8 +82,17 @@ public:
     // (also out of the merged amount) so an aggregation initiator can cover
     // the combined weight of its half + fee-0 cover candidates.
     static std::optional<BuiltTransaction> CreateConsolidationTransaction(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const blsct::DoublePublicKey& destination, const size_t& maxInputs, const CAmount& nBLSCTDefaultFee, const CAmount& additionalFee = 0) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
-    static void AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
-    static void AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const TokenId& token_id, const CreateTransactionType& type, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit, const bool& consolidateStakedCommitments = true) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
+    //! Appends the coins `coins_params` lets through, largest first (staked
+    //! commitments smallest first), until they exceed `nAmountLimit`.
+    //! `coin_control` filters the coins further (e.g. a privacy floor).
+    //! With `prefer_similar_privacy`, coins of similar privacy scores are
+    //! preferred (see wallet::SelectFromOnePrivacyBucket()); when no group of
+    //! them can fund the limit alone, the selection is as without it.
+    static void AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit, const wallet::CCoinControl* coin_control = nullptr, bool prefer_similar_privacy = false) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
+    //! `min_privacy_milli_bits` excludes every coin scoring below it, or of
+    //! unknown score; `prefer_similar_privacy` applies to the ordinary coins
+    //! (not staked commitments) gathered.
+    static void AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const TokenId& token_id, const CreateTransactionType& type, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit, const bool& consolidateStakedCommitments = true, const std::optional<uint32_t>& min_privacy_milli_bits = std::nullopt, bool prefer_similar_privacy = false) EXCLUSIVE_LOCKS_REQUIRED(wallet->cs_wallet);
 };
 } // namespace blsct
 

@@ -101,6 +101,12 @@ struct CreateTransactionData {
     // transaction, without ever leaving the staking set.
     std::set<std::string> redelegateFromIds{};
 
+    // When set (the min_privacy option of the send RPCs), only coins whose
+    // privacy score, in milli-bits, is at least this are spent; coins of
+    // unknown score are not. Unset spends any coin, preferring coins of
+    // similar scores (see TxFactory::AddAvailableCoins).
+    std::optional<uint32_t> minPrivacyMilliBits{};
+
     Scalar tokenKey;
     std::map<std::string, std::string> nftMetadata;
 

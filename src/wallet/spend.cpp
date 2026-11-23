@@ -309,6 +309,13 @@ util::Result<PreSelectedInputs> FetchSelectedInputs(const CWallet& wallet, const
     return result;
 }
 
+//! Whether a BLSCT coin of score `score` passes the coin control's privacy floor.
+static bool MeetsMinPrivacy(const CCoinControl* coinControl, const std::optional<uint32_t>& score)
+{
+    if (!coinControl || !coinControl->m_min_privacy_milli_bits) return true;
+    return score && *score >= *coinControl->m_min_privacy_milli_bits;
+}
+
 CoinsResult AvailableCoins(const CWallet& wallet,
                            const CCoinControl* coinControl,
                            std::optional<CFeeRate> feerate,
@@ -445,7 +452,10 @@ CoinsResult AvailableCoins(const CWallet& wallet,
 
             mutableOutput.nValue = nValue;
             COutput coin(outpoint, mutableOutput, nDepth, input_bytes, spendable, solvable, safe_output, wtx.GetTxTime(), tx_from_me, feerate);
-            if (output.HasBLSCTRangeProof() || output.HasBLSCTKeys()) coin.privacy_milli_bits = wallet.GetCoinPrivacyMilliBits(outpoint);
+            if (output.HasBLSCTRangeProof() || output.HasBLSCTKeys()) {
+                coin.privacy_milli_bits = wallet.GetCoinPrivacyMilliBits(outpoint);
+                if (!MeetsMinPrivacy(coinControl, coin.privacy_milli_bits)) continue;
+            }
             result.Add(GetOutputType(type, is_from_p2sh), coin);
 
             outpoints.push_back(outpoint);
@@ -563,6 +573,7 @@ CoinsResult AvailableBlsctCoins(const CWallet& wallet,
 
         COutput coin(outpoint, mutableOutput, nDepth, -1, spendable, true, safeTx, wout.GetTxTime(), true, 0);
         coin.privacy_milli_bits = wout.m_privacy_milli_bits;
+        if (!MeetsMinPrivacy(coinControl, coin.privacy_milli_bits)) continue;
         result.Add(wout.fStakedCommitment ? OutputType::BLSCT_STAKE : OutputType::BLSCT, coin);
 
         outpoints.push_back(outpoint);

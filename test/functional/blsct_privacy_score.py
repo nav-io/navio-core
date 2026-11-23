@@ -19,6 +19,10 @@ Checked, for an output-storage producer and a full-transaction one:
 - an own send's change takes the lowest score of the coins it spends: the
   mixed coin alone keeps its score, together with a fresh receive it drops
   to 0;
+- a send with min_privacy spends only coins scoring at least that, and fails
+  with a clear error when they cannot fund it;
+- without it, a send prefers a low-score coin that funds it alone over
+  spending a well-mixed one;
 - the scores survive a restart and rescanblockchain rebuilds the same ones.
 """
 
@@ -26,7 +30,7 @@ import math
 from decimal import Decimal
 
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal
+from test_framework.util import assert_equal, assert_raises_rpc_error
 
 PULL_ARGS = ["-p2pmsg=1", "-p2pmsgpowbits=1", "-candidatepullinterval=2", "-servecandidates=0"]
 
@@ -158,17 +162,58 @@ class BLSCTPrivacyScoreTest(BitcoinTestFramework):
         self.wait_new_coins(producer, before)
         assert_equal(list(self.scores(producer).values()), [mixed_score] * 2)
 
+        self.log.info("min_privacy refuses a send the coins at or above it cannot fund")
+        # The mixed coins hold about 23.
+        assert_raises_rpc_error(-6, "Insufficient funds with privacy_bits >= 1.500",
+                                producer.sendtoblsctaddress, address=self.funder_receive, amount=30, min_privacy=1.5)
+        # sendtoaddress, routed to sendtoblsctaddress, forwards the floor.
+        assert_raises_rpc_error(-6, "Insufficient funds with privacy_bits >= 1.500",
+                                producer.sendtoaddress, address=self.funder_receive, amount=30, min_privacy=1.5)
+        # Passed as floats: the test framework sends a Decimal as a string,
+        # which min_privacy, a number, does not take.
+        above = mixed_score + Decimal("0.001")
+        assert_raises_rpc_error(-6, f"Insufficient funds with privacy_bits >= {above:.3f}",
+                                producer.sendtoblsctaddress, address=self.funder_receive, amount=1, min_privacy=float(above))
+        assert_raises_rpc_error(-8, "min_privacy must be a non-negative number of bits with at most three decimals",
+                                producer.sendtoblsctaddress, address=self.funder_receive, amount=1, min_privacy=-1)
+        assert_raises_rpc_error(-8, "min_privacy must be a non-negative number of bits with at most three decimals",
+                                producer.sendtoblsctaddress, address=self.funder_receive, amount=1, min_privacy=1.2345)
+        self.log.info("min_privacy at the mixed coin's score spends it")
+        before = set(self.scores(producer))
+        producer.sendtoblsctaddress(address=self.funder_receive, amount=1, min_privacy=float(mixed_score))
+        self.wait_mempool(n1, 1)
+        self.mine(n1, 1)
+        self.wait_new_coins(producer, before)
+        assert_equal(list(self.scores(producer).values()), [mixed_score] * 2)
+
+        self.log.info("Without a floor, a send prefers a low-score coin that funds it alone")
+        # Largest-first would spend a mixed coin (10 or 12 NAV) before the
+        # fresh 5 NAV one.
+        mixed_coins = set(self.scores(producer))
+        self.funder.sendtoblsctaddress(self.addr(producer), 5)
+        self.wait_mempool(n1, 1)
+        self.mine(n1, 1)
+        self.wait_until(lambda: len(self.scores(producer)) == 3, timeout=60)
+        before = set(self.scores(producer))
+        producer.sendtoblsctaddress(self.funder_receive, 1)
+        self.wait_mempool(n1, 1)
+        self.mine(n1, 1)
+        self.wait_new_coins(producer, before)
+        assert mixed_coins <= set(self.scores(producer)), "a mixed coin was spent"
+        assert_equal(sorted(self.scores(producer).values()), [Decimal(0), mixed_score, mixed_score])
+
         self.log.info("Spent together with a fresh receive, the change drops to the lower score, 0")
         self.funder.sendtoblsctaddress(self.addr(producer), 10)
         self.wait_mempool(n1, 1)
         self.mine(n1, 1)
-        self.wait_until(lambda: sorted(self.scores(producer).values()) == [Decimal(0), mixed_score, mixed_score], timeout=60)
-        # The producer holds 10 (fresh), 10 and about 13 (mixed): 25 spends all.
+        self.wait_until(lambda: sorted(self.scores(producer).values()) == [Decimal(0), Decimal(0), mixed_score, mixed_score], timeout=60)
+        # The producer holds 10 and 4 (fresh), 10 and 12 (mixed). No group
+        # funds 25 alone, so coins are taken largest first: 12 and both 10s.
         producer.sendtoblsctaddress(self.funder_receive, 25)
         self.wait_mempool(n1, 1)
         self.mine(n1, 1)
-        self.wait_until(lambda: len(self.scores(producer)) == 1, timeout=60)
-        assert_equal(list(self.scores(producer).values()), [Decimal(0)])
+        self.wait_until(lambda: len(self.scores(producer)) == 2, timeout=60)
+        assert_equal(list(self.scores(producer).values()), [Decimal(0)] * 2)
 
         self.log.info("Scores survive a restart; rescanblockchain rebuilds the same ones")
         before = self.scores(sender)

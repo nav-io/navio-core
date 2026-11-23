@@ -310,6 +310,7 @@ RPCHelpMan sendtoaddress()
                                                                        "dirty if they have previously been used in a transaction. If true, this also activates avoidpartialspends, grouping outputs by their addresses."},
             {"fee_rate", RPCArg::Type::AMOUNT, RPCArg::DefaultHint{"not set, fall back to wallet fee estimation"}, "Specify a fee rate in " + CURRENCY_ATOM + "/vB."},
             {"verbose", RPCArg::Type::BOOL, RPCArg::Default{false}, "If true, return extra information about the transaction."},
+            {"min_privacy", RPCArg::Type::NUM, RPCArg::Optional::OMITTED, "(BLSCT networks only, ignored elsewhere; forwarded to sendtoblsctaddress) " + blsct::MIN_PRIVACY_HELP},
         },
         {
             RPCResult{"if verbose is not set or set to false",
@@ -364,6 +365,11 @@ RPCHelpMan sendtoaddress()
                     inner.push_back(request.params[3]);
                 } else {
                     inner.push_back("");
+                }
+                // Forward min_privacy (sendtoaddress param 11), which
+                // sendtoblsctaddress reads as param 6.
+                if (request.params.size() > 11 && !request.params[11].isNull()) {
+                    inner.push_back(request.params[11]);
                 }
                 JSONRPCRequest subreq = request;
                 subreq.params = inner;

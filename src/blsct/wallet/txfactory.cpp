@@ -8,6 +8,7 @@
 #include <chainparams.h>
 #include <logging.h>
 #include <util/result.h>
+#include <wallet/privacy_score.h>
 
 #include <limits>
 
@@ -143,7 +144,11 @@ std::optional<BuiltTransaction> TxFactory::CreateTransaction(wallet::CWallet* wa
 
     std::vector<InputCandidates> inputCandidates;
 
-    TxFactory::AddAvailableCoins(wallet, blsct_km, transactionData.token_id, transactionData.type, inputCandidates, transactionData.nAmount, transactionData.fConsolidateStakedCommitments);
+    // Ordinary sends prefer coins of similar privacy scores: the change
+    // scores the lowest coin spent. Stake, token creation and mint
+    // transactions select as before.
+    const bool prefer_similar_privacy{transactionData.type == CreateTransactionType::NORMAL};
+    TxFactory::AddAvailableCoins(wallet, blsct_km, transactionData.token_id, transactionData.type, inputCandidates, transactionData.nAmount, transactionData.fConsolidateStakedCommitments, transactionData.minPrivacyMilliBits, prefer_similar_privacy);
 
     auto changeType = transactionData.type == CreateTransactionType::STAKED_COMMITMENT_UNSTAKE ? STAKING_ACCOUNT : CHANGE_ACCOUNT;
 
@@ -160,17 +165,29 @@ std::optional<BuiltTransaction> TxFactory::CreateTransaction(wallet::CWallet* wa
 
     // Derive every output's blinding scalar from the wallet seed, so the
     // sender can prove later that it created them (see blinding_key.h).
-    return TxFactoryBase::CreateTransaction(
-        inputCandidates, transactionData, blsct_km->GetBlindingSeed(),
-        [blsct_km](const Outid& anchor) { return blsct_km->ReserveBlindingGeneration(anchor); });
+    const auto build = [&]() {
+        return TxFactoryBase::CreateTransaction(
+            inputCandidates, transactionData, blsct_km->GetBlindingSeed(),
+            [blsct_km](const Outid& anchor) { return blsct_km->ReserveBlindingGeneration(anchor); });
+    };
+    auto built = build();
+    // The privacy preference is only a preference: it never makes a send
+    // fail that the plain selection could fund (the coins it picked may fall
+    // short of the fee, say).
+    if (!built && prefer_similar_privacy) {
+        inputCandidates.clear();
+        TxFactory::AddAvailableCoins(wallet, blsct_km, transactionData.token_id, transactionData.type, inputCandidates, transactionData.nAmount, transactionData.fConsolidateStakedCommitments, transactionData.minPrivacyMilliBits, /*prefer_similar_privacy=*/false);
+        built = build();
+    }
+    return built;
 }
 
-void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit)
+void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const wallet::CoinFilterParams& coins_params, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit, const wallet::CCoinControl* coin_control, bool prefer_similar_privacy)
 {
     AssertLockHeld(wallet->cs_wallet);
 
     bool is_blsct_storage = wallet->IsWalletFlagSet(wallet::WALLET_FLAG_BLSCT_OUTPUT_STORAGE);
-    auto availableCoins = is_blsct_storage ? AvailableBlsctCoins(*wallet, nullptr, coins_params) : AvailableCoins(*wallet, nullptr, std::nullopt, coins_params);
+    auto availableCoins = is_blsct_storage ? AvailableBlsctCoins(*wallet, coin_control, coins_params) : AvailableCoins(*wallet, coin_control, std::nullopt, coins_params);
 
     // Recover every candidate first, then select largest-value-first below.
     // Selecting in wallet order would pile in many small outputs (e.g. the
@@ -178,7 +195,7 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     // BLSCT transactions -- range proofs are large -- that hit the standard
     // tx-size limit and, when chained, the mempool descendant-size limit.
     // Largest-first keeps the input count, and therefore the tx size, minimal.
-    std::vector<InputCandidates> gathered;
+    std::vector<std::pair<InputCandidates, std::optional<uint32_t>>> gathered;
     for (const wallet::COutput& output : availableCoins.All()) {
         CTxOut out;
         range_proof::RecoveredData<Blst> recoveredInfo;
@@ -244,7 +261,7 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
             if (!blsct_km->GetSpendingKeyForOutput(out, subaddress, spending_key)) {
                 continue;
             }
-            gathered.push_back({value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash), isStakedCommitment, delegationId, subaddress});
+            gathered.emplace_back(InputCandidates{value, recoveredInfo.gamma, spending_key, out.tokenId, COutPoint(output.outpoint.hash), isStakedCommitment, delegationId, subaddress}, output.privacy_milli_bits);
         } catch (const std::exception& e) {
             LogPrintf("Error adding input: %s\n", e.what());
             continue;
@@ -258,14 +275,30 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     // commitments are taken smallest-first so an unstake consumes the minimal
     // commitment(s) needed and leaves large stakes intact instead of splitting
     // a big commitment.
-    std::sort(gathered.begin(), gathered.end(), [](const InputCandidates& a, const InputCandidates& b) {
+    std::sort(gathered.begin(), gathered.end(), [](const auto& lhs, const auto& rhs) {
+        const InputCandidates& a = lhs.first;
+        const InputCandidates& b = rhs.first;
         if (a.is_staked_commitment != b.is_staked_commitment) return a.is_staked_commitment;
         if (a.is_staked_commitment) return a.amount < b.amount;
         return a.amount > b.amount;
     });
 
+    // Prefer funding the amount from coins of one privacy bucket, so a
+    // well-mixed coin is not spent next to fresh ones (the change scores the
+    // lowest of them); see wallet::SelectFromOnePrivacyBucket(). Staked
+    // commitments, which an unstake spends smallest-first, are left alone.
+    if (prefer_similar_privacy && std::none_of(gathered.begin(), gathered.end(), [](const auto& c) { return c.first.is_staked_commitment; })) {
+        std::vector<std::pair<CAmount, std::optional<wallet::PrivacyMilliBits>>> coins;
+        coins.reserve(gathered.size());
+        for (const auto& [candidate, score] : gathered) coins.emplace_back(candidate.amount, score);
+        if (const auto chosen = wallet::SelectFromOnePrivacyBucket(coins, nAmountLimit)) {
+            for (const size_t i : *chosen) inputCandidates.push_back(gathered[i].first);
+            return;
+        }
+    }
+
     CAmount nTotalAdded = 0;
-    for (auto& candidate : gathered) {
+    for (auto& [candidate, score] : gathered) {
         inputCandidates.push_back(candidate);
         nTotalAdded += candidate.amount;
 
@@ -274,9 +307,21 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     }
 }
 
-void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const TokenId& token_id, const CreateTransactionType& type, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit, const bool& consolidateStakedCommitments)
+void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_km, const TokenId& token_id, const CreateTransactionType& type, std::vector<InputCandidates>& inputCandidates, const CAmount& nAmountLimit, const bool& consolidateStakedCommitments, const std::optional<uint32_t>& min_privacy_milli_bits, bool prefer_similar_privacy)
 {
     AssertLockHeld(wallet->cs_wallet);
+
+    // A privacy floor applies to every coin the tx spends, as its outputs
+    // score the lowest of them. Without one, no coin control is passed, as
+    // before; with one, it keeps the defaults a missing coin control stands
+    // for, address reuse included.
+    std::optional<wallet::CCoinControl> floor;
+    if (min_privacy_milli_bits) {
+        floor.emplace();
+        floor->m_avoid_address_reuse = wallet->IsWalletFlagSet(wallet::WALLET_FLAG_AVOID_REUSE);
+        floor->m_min_privacy_milli_bits = min_privacy_milli_bits;
+    }
+    const wallet::CCoinControl* coin_control{floor ? &*floor : nullptr};
 
     wallet::CoinFilterParams coins_params;
     coins_params.min_amount = 0;
@@ -296,7 +341,7 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
     // (dropped on a restart, or evicted when another mint filled the supply
     // cap) the wallet kept counting them as spent by it.
     if (type != CreateTransactionType::TX_MINT_TOKEN) {
-        AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, nAmountLimit + COIN);
+        AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, nAmountLimit + COIN, coin_control, prefer_similar_privacy);
     }
 
     // Whether this transaction must pull in the wallet's existing staked
@@ -328,13 +373,13 @@ void TxFactory::AddAvailableCoins(wallet::CWallet* wallet, blsct::KeyMan* blsct_
         coins_params.min_sum_amount = MAX_MONEY;
         coins_params.skip_locked = false;
 
-        AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, stakeCoinLimit);
+        AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, stakeCoinLimit, coin_control);
     }
 
     if ((type == CreateTransactionType::NORMAL && !token_id.IsNull()) || type == CreateTransactionType::TX_MINT_TOKEN) {
         coins_params.token_id.SetNull();
         coins_params.min_sum_amount = COIN;
-        AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, COIN);
+        AddAvailableCoins(wallet, blsct_km, coins_params, inputCandidates, COIN, coin_control, prefer_similar_privacy);
     }
 }
 
