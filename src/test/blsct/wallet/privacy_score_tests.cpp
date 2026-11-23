@@ -3,6 +3,7 @@
 // file COPYING or http://www.opensource.org/licenses/mit-license.php.
 
 #include <blsct/wallet/txfactory.h>
+#include <blsct/wallet/txfactory_base.h>
 #include <blsct/wallet/txfactory_global.h>
 #include <script/script.h>
 #include <streams.h>
@@ -346,6 +347,63 @@ BOOST_AUTO_TEST_CASE(select_from_one_privacy_bucket)
     BOOST_CHECK(SelectFromOnePrivacyBucket(coins, 12) == std::nullopt);
     BOOST_CHECK(SelectFromOnePrivacyBucket({}, 0) == std::nullopt);
     BOOST_CHECK(SelectFromOnePrivacyBucket(coins, MAX_MONEY) == std::nullopt);
+}
+
+//! The amounts of the coins TxFactory::AddAvailableCoins selects for a NORMAL
+//! send of `amount` (its limit is amount + 1 NAV for the fee).
+static std::vector<CAmount> Selected(CWallet& wallet, CAmount amount, const std::optional<PrivacyMilliBits>& min_privacy, bool prefer) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    std::vector<blsct::InputCandidates> out;
+    blsct::TxFactory::AddAvailableCoins(&wallet, wallet.GetBLSCTKeyMan(), TokenId(), blsct::CreateTransactionType::NORMAL, out, amount, /*consolidateStakedCommitments=*/true, min_privacy, prefer);
+    std::vector<CAmount> amounts;
+    for (const auto& c : out) amounts.push_back(c.amount / COIN);
+    return amounts;
+}
+
+BOOST_FIXTURE_TEST_CASE(coin_selection_privacy, TestingSetup)
+{
+    SeedInsecureRand(SeedRand::ZEROS);
+    for (const bool storage : {true, false}) {
+        ScoreWallet w(m_node.chain.get(), storage);
+        CWallet& wallet = *w.wallet;
+        LOCK(wallet.cs_wallet);
+        // 10 NAV @ 3 bits, 6 and 5 NAV @ 0, 4 NAV unknown.
+        const std::vector<std::pair<CAmount, std::optional<PrivacyMilliBits>>> coins{{10, 3000}, {6, 0}, {5, 0}, {4, std::nullopt}};
+        for (const auto& [amount, score] : coins) {
+            const CTxOut out{blsct::CreateOutput(w.receive, amount * COIN, "coin").out};
+            const COutPoint outpoint{out.GetHash()};
+            if (storage) {
+                BOOST_REQUIRE(wallet.AddToWallet(outpoint, std::make_shared<const CTxOut>(out), TxStateConfirmed{InsecureRand256(), 1, 0}, nullptr, true, false, TxStateInactive{}, false));
+                wallet.mapOutputs.at(outpoint).m_privacy_milli_bits = score;
+            } else {
+                CWalletTx* wtx = wallet.AddToWallet(ScoreWallet::MakeTx({}, 1, {out}), TxStateConfirmed{InsecureRand256(), 1, 0});
+                BOOST_REQUIRE(wtx);
+                wtx->m_privacy_milli_bits.clear();
+                if (score) wtx->m_privacy_milli_bits[0] = *score;
+            }
+            BOOST_REQUIRE(wallet.GetCoinPrivacyMilliBits(outpoint) == score);
+        }
+        using V = std::vector<CAmount>;
+
+        // Without the preference: largest first.
+        BOOST_CHECK(Selected(wallet, 3 * COIN, std::nullopt, false) == V({10}));
+        // With it, the lowest bucket that funds the send alone: the unknown
+        // coin (4) cannot fund 3 + 1, the 0-bit coins can, sparing the mixed 10.
+        BOOST_CHECK(Selected(wallet, 3 * COIN, std::nullopt, true) == V({6}));
+        BOOST_CHECK(Selected(wallet, 2 * COIN, std::nullopt, true) == V({4}));
+        BOOST_CHECK(Selected(wallet, 8 * COIN, std::nullopt, true) == V({6, 5}));
+        // The 0-bit coins (11) still fund 9 + 1, but not 10 + 1.
+        BOOST_CHECK(Selected(wallet, 9 * COIN, std::nullopt, true) == V({6, 5}));
+        BOOST_CHECK(Selected(wallet, 10 * COIN, std::nullopt, true) == V({10, 6}));
+        // No bucket funds 11 + 1 alone: selection as without the preference.
+        BOOST_CHECK(Selected(wallet, 11 * COIN, std::nullopt, true) == V({10, 6}));
+
+        // A floor excludes lower and unknown coins, preference or not.
+        BOOST_CHECK(Selected(wallet, 3 * COIN, PrivacyMilliBits{3000}, true) == V({10}));
+        BOOST_CHECK(Selected(wallet, 20 * COIN, PrivacyMilliBits{3000}, false) == V({10}));
+        BOOST_CHECK(Selected(wallet, 20 * COIN, PrivacyMilliBits{0}, false) == V({10, 6, 5}));
+        BOOST_CHECK(Selected(wallet, 20 * COIN, PrivacyMilliBits{3001}, false).empty());
+    }
 }
 
 BOOST_AUTO_TEST_SUITE_END()
