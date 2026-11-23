@@ -5,6 +5,8 @@
 #ifndef BITCOIN_WALLET_PRIVACY_SCORE_H
 #define BITCOIN_WALLET_PRIVACY_SCORE_H
 
+#include <consensus/amount.h>
+
 #include <algorithm>
 #include <cstdint>
 #include <limits>
@@ -57,6 +59,23 @@ PrivacyMilliBits Log2MilliBits(uint64_t n);
  * staker merged a chain of sends into) are left out of both by the caller.
  */
 std::optional<PrivacyMilliBits> ComputePrivacyMilliBits(uint64_t foreign_inputs, const std::vector<std::optional<PrivacyMilliBits>>& own_inputs);
+
+/**
+ * Soft preference of BLSCT coin selection for coins of similar scores. A
+ * send's change scores the lowest of the coins it spends, so funding it with
+ * one well-mixed coin and one fresh coin wastes the mixing.
+ *
+ * `coins` are the candidates in the order selection would take them, with
+ * their scores. They are grouped into buckets by whole bits, floor(score), an
+ * unknown score being its own bucket below 0. If a single bucket's coins add
+ * up to more than `amount_limit`, the lowest such bucket is chosen (spending
+ * the least private coins first, keeping the well-mixed ones), and its coins
+ * are taken in the given order until they exceed `amount_limit`; the indices
+ * of those coins are returned. Otherwise nullopt: no bucket can fund the send
+ * alone and the caller selects across every coin as it would without a
+ * preference.
+ */
+std::optional<std::vector<size_t>> SelectFromOnePrivacyBucket(const std::vector<std::pair<CAmount, std::optional<PrivacyMilliBits>>>& coins, CAmount amount_limit);
 
 //! A score as an RPC value: a number of bits with three decimals, or null if unknown.
 UniValue PrivacyBitsToUniValue(const std::optional<PrivacyMilliBits>& score);

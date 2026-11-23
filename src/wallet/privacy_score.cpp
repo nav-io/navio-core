@@ -10,6 +10,7 @@
 
 #include <bit>
 #include <cmath>
+#include <map>
 
 namespace wallet {
 
@@ -43,6 +44,30 @@ std::optional<PrivacyMilliBits> ComputePrivacyMilliBits(uint64_t foreign_inputs,
     // Saturate rather than wrap: a long mixing history must not read as unknown.
     if (mixed > PRIVACY_MILLI_BITS_MAX - lowest) return PRIVACY_MILLI_BITS_MAX;
     return lowest + mixed;
+}
+
+std::optional<std::vector<size_t>> SelectFromOnePrivacyBucket(const std::vector<std::pair<CAmount, std::optional<PrivacyMilliBits>>>& coins, CAmount amount_limit)
+{
+    // Bucket -1 holds the unknown scores, below every known one.
+    const auto bucket_of = [](const std::optional<PrivacyMilliBits>& score) -> int64_t {
+        return score ? int64_t{*score / PRIVACY_MILLI_BITS_PER_BIT} : -1;
+    };
+    std::map<int64_t, CAmount> totals;
+    // A wallet's coins add up to no more than the money supply, so the sums
+    // cannot overflow.
+    for (const auto& [amount, score] : coins) totals[bucket_of(score)] += amount;
+    for (const auto& [bucket, total] : totals) {
+        if (total <= amount_limit) continue;
+        std::vector<size_t> chosen;
+        CAmount added{0};
+        for (size_t i = 0; i < coins.size() && added <= amount_limit; ++i) {
+            if (bucket_of(coins[i].second) != bucket) continue;
+            chosen.push_back(i);
+            added += coins[i].first;
+        }
+        return chosen;
+    }
+    return std::nullopt;
 }
 
 UniValue PrivacyBitsToUniValue(const std::optional<PrivacyMilliBits>& score)

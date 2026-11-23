@@ -115,6 +115,9 @@ public:
     std::optional<uint32_t> m_locktime;
     //! Version
     std::optional<uint32_t> m_version;
+    //! Lowest privacy score, in milli-bits (see wallet/privacy_score.h), of
+    //! the BLSCT coins that are available; a coin of unknown score is not.
+    std::optional<uint32_t> m_min_privacy_milli_bits;
 
     CCoinControl();
 

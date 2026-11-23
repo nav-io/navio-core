@@ -327,4 +327,25 @@ BOOST_FIXTURE_TEST_CASE(committed_send_scores_change, TestingSetup)
     }
 }
 
+BOOST_AUTO_TEST_CASE(select_from_one_privacy_bucket)
+{
+    using Coins = std::vector<std::pair<CAmount, std::optional<PrivacyMilliBits>>>;
+    using Picked = std::optional<std::vector<size_t>>;
+    // In selection order (largest first): 10 @ 3.0 bits, 6 @ 0.5, 5 @ 0.9,
+    // 4 unknown, 2 @ 3.7.
+    const Coins coins{{10, 3000}, {6, 500}, {5, 900}, {4, std::nullopt}, {2, 3700}};
+    // The unknown bucket is lowest, but 4 does not exceed 4.
+    BOOST_CHECK(SelectFromOnePrivacyBucket(coins, 3) == Picked({3}));
+    BOOST_CHECK(SelectFromOnePrivacyBucket(coins, 4) == Picked({1}));
+    // Within the bucket, in the given order until the limit is exceeded.
+    BOOST_CHECK(SelectFromOnePrivacyBucket(coins, 6) == Picked({1, 2}));
+    BOOST_CHECK(SelectFromOnePrivacyBucket(coins, 10) == Picked({1, 2}));
+    // Only bucket 3 (10 + 2) can fund 11.
+    BOOST_CHECK(SelectFromOnePrivacyBucket(coins, 11) == Picked({0, 4}));
+    // No bucket can fund 12 alone.
+    BOOST_CHECK(SelectFromOnePrivacyBucket(coins, 12) == std::nullopt);
+    BOOST_CHECK(SelectFromOnePrivacyBucket({}, 0) == std::nullopt);
+    BOOST_CHECK(SelectFromOnePrivacyBucket(coins, MAX_MONEY) == std::nullopt);
+}
+
 BOOST_AUTO_TEST_SUITE_END()
