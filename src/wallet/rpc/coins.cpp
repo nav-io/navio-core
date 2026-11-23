@@ -10,6 +10,7 @@
 #include <script/script.h>
 #include <util/moneystr.h>
 #include <wallet/coincontrol.h>
+#include <wallet/privacy_score.h>
 #include <wallet/receive.h>
 #include <wallet/rpc/util.h>
 #include <wallet/spend.h>
@@ -650,6 +651,7 @@ RPCHelpMan listunspent()
                             {RPCResult::Type::BOOL, "safe", "Whether this output is considered safe to spend. Unconfirmed transactions\n"
                                                             "from outside keys and unconfirmed replacement transactions are considered unsafe\n"
                                                             "and are not eligible for spending by fundrawtransaction and sendtoaddress."},
+                            {RPCResult::Type::NUM, "privacy_bits", /*optional=*/true, "(only for BLSCT outputs) The coin's privacy score in bits, as listblsctunspent reports it; null if unknown", {}, /*skip_type_check=*/true},
                         }},
                     }
                 },
@@ -860,6 +862,7 @@ RPCHelpMan listunspent()
         PushParentDescriptors(*pwallet, scriptPubKey, entry);
         if (avoid_reuse) entry.pushKV("reused", reused);
         entry.pushKV("safe", out.safe);
+        if (is_blsct) entry.pushKV("privacy_bits", PrivacyBitsToUniValue(out.privacy_milli_bits));
         results.push_back(entry);
         return true;
     };
