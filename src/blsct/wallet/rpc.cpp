@@ -28,6 +28,7 @@
 #include <util/strencodings.h>
 #include <util/transaction_identifier.h>
 #include <validation.h>
+#include <wallet/privacy_score.h>
 #include <wallet/receive.h>
 #include <wallet/rpc/util.h>
 #include <wallet/spend.h>
@@ -3151,6 +3152,7 @@ RPCHelpMan listblsctunspent()
                                                                                  {RPCResult::Type::BOOL, "watchonly", "Whether this output matches an imported watch-only scriptPubKey (e.g. an HTLC added via importblsctscript)"},
                                                                                  {RPCResult::Type::STR, "scriptAddress", /*optional=*/true, "The decoded destination address for the output script, omitted when the script has no standard destination"},
                                                                                  {RPCResult::Type::STR_HEX, "scriptPubKey", "The scriptPubKey of the output"},
+                                                                                 {RPCResult::Type::NUM, "privacy_bits", "The coin's privacy score in bits: log2(foreign inputs + 1) of the transaction that created it, plus the lowest score of the coins of this wallet that transaction spent; 0 for a coin received from someone else. null if unknown, as for coins synced before the wallet recorded scores, until a rescanblockchain", {}, /*skip_type_check=*/true},
                                                                              }},
                                           }},
 
@@ -3278,6 +3280,7 @@ RPCHelpMan listblsctunspent()
                 entry.pushKV("spendable", out.spendable);
                 entry.pushKV("signable", signable);
                 entry.pushKV("watchonly", (mine & wallet::ISMINE_WATCH_ONLY) != 0);
+                entry.pushKV("privacy_bits", wallet::PrivacyBitsToUniValue(out.privacy_milli_bits));
                 results.push_back(entry);
             }
 

@@ -75,6 +75,9 @@ public:
     /** The fee necessary to bump this UTXO's ancestor transactions to the target feerate */
     CAmount ancestor_bump_fees{0};
 
+    /** The BLSCT coin's privacy score in milli-bits (see wallet/privacy_score.h), unset if unknown or not a BLSCT coin */
+    std::optional<uint32_t> privacy_milli_bits;
+
     COutput(const COutPoint& outpoint, const CTxOut& txout, int depth, int input_bytes, bool spendable, bool solvable, bool safe, int64_t time, bool from_me, const std::optional<CFeeRate> feerate = std::nullopt)
         : outpoint{outpoint},
           txout{txout},

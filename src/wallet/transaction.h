@@ -16,6 +16,7 @@
 #include <util/overloaded.h>
 #include <util/strencodings.h>
 #include <util/string.h>
+#include <wallet/privacy_score.h>
 #include <wallet/types.h>
 
 #include <bitset>
@@ -202,6 +203,10 @@ public:
     //! spent, as a served cover candidate does (see OutputIsCoverReturn()).
     //! Decided when the output is synced, while its transaction is in hand.
     bool fCoverReturn;
+    //! Privacy score of the coin (see wallet/privacy_score.h), decided when
+    //! the output is synced from the transaction that holds it. Unknown for
+    //! a row written before scores were recorded, until a rescan.
+    std::optional<PrivacyMilliBits> m_privacy_milli_bits;
 
     CWalletOutput(CTxOutRef out, const TxState& state) : out(std::move(out)), m_state(state), m_state_spent(TxStateInactive{})
     {
@@ -218,6 +223,7 @@ public:
         fStakedCommitment = false;
         outputHash.SetNull();
         fCoverReturn = false;
+        m_privacy_milli_bits.reset();
         m_spent_by.SetNull();
         blsctRecoveryData = {};
     }
@@ -253,6 +259,7 @@ public:
         // can only be cleared by the same transaction (reorg), not a superseded one.
         s << m_spent_by;
         s << fCoverReturn;
+        s << EncodePrivacyMilliBits(m_privacy_milli_bits);
     }
 
     template <typename Stream>
@@ -285,6 +292,13 @@ public:
         // such a row is listed as a receive.
         if (!s.eof()) {
             s >> fCoverReturn;
+        }
+        // Backward compatible: older DBs omit the privacy score, which
+        // stays unknown until a rescan records it.
+        if (!s.eof()) {
+            PrivacyMilliBits score;
+            s >> score;
+            m_privacy_milli_bits = DecodePrivacyMilliBits(score);
         }
     }
 
@@ -361,6 +375,7 @@ public:
      *     "timesmart"       - serialized nTimeSmart value
      *     "ownhalf"         - serialized m_own_half_outputs value
      *     "ownfee"          - serialized m_own_fee value
+     *     "privbits"        - serialized m_privacy_milli_bits value
      *     "spent"           - serialized vfSpent value that existed prior to
      *                         2014 (removed in commit 93a18a3)
      */
@@ -402,6 +417,13 @@ public:
      * every other tx, whose whole fee is reported.
      */
     std::optional<CAmount> m_own_fee;
+    /**
+     * Privacy scores (see wallet/privacy_score.h) of this tx's outputs that
+     * are coins of ours, by output index, decided whenever the tx is synced.
+     * An output missing here has an unknown score, as every output of a tx
+     * stored before scores were recorded has until a rescan.
+     */
+    std::map<uint32_t, PrivacyMilliBits> m_privacy_milli_bits;
     int64_t nOrderPos; //!< position in ordered transaction list
     std::multimap<int64_t, CWalletTx*>::const_iterator m_it_wtxOrdered;
 
@@ -433,6 +455,7 @@ public:
         fFromMe = false;
         m_own_half_outputs.clear();
         m_own_fee.reset();
+        m_privacy_milli_bits.clear();
         fChangeCached = false;
         nChangeCached = 0;
         nOrderPos = -1;
@@ -460,6 +483,14 @@ public:
         return blsctRecoveryData.at(forOutput);
     };
 
+    //! The privacy score of output `index`, if it is a coin of ours with one.
+    std::optional<PrivacyMilliBits> GetPrivacyMilliBits(uint32_t index) const
+    {
+        const auto it = m_privacy_milli_bits.find(index);
+        if (it == m_privacy_milli_bits.end()) return std::nullopt;
+        return it->second;
+    }
+
     template <typename Stream>
     void Serialize(Stream& s) const
     {
@@ -477,6 +508,9 @@ public:
         }
         if (m_own_fee) {
             mapValueCopy["ownfee"] = ToString(*m_own_fee);
+        }
+        if (!m_privacy_milli_bits.empty()) {
+            mapValueCopy["privbits"] = Join(m_privacy_milli_bits, ",", [](const auto& entry) { return strprintf("%u:%u", entry.first, entry.second); });
         }
 
         std::vector<uint8_t> dummy_vector1; //!< Used to be vMerkleBranch
@@ -518,6 +552,16 @@ public:
             const auto own_fee{ToIntegral<CAmount>(it_of->second)};
             if (own_fee && MoneyRange(*own_fee)) m_own_fee = own_fee;
         }
+        if (const auto it_pb = mapValue.find("privbits"); it_pb != mapValue.end()) {
+            // A malformed entry is left out: that output's score is unknown.
+            for (const std::string& item : SplitString(it_pb->second, ',')) {
+                const auto parts{SplitString(item, ':')};
+                if (parts.size() != 2) continue;
+                const auto index{ToIntegral<uint32_t>(parts[0])};
+                const auto score{ToIntegral<PrivacyMilliBits>(parts[1])};
+                if (index && score && *score <= PRIVACY_MILLI_BITS_MAX) m_privacy_milli_bits[*index] = *score;
+            }
+        }
 
         mapValue.erase("fromaccount");
         mapValue.erase("spent");
@@ -525,6 +569,7 @@ public:
         mapValue.erase("timesmart");
         mapValue.erase("ownhalf");
         mapValue.erase("ownfee");
+        mapValue.erase("privbits");
     }
 
     void SetTx(CTransactionRef arg)

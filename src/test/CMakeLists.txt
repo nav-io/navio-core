@@ -79,6 +79,7 @@ add_executable(test_navio
   blsct/wallet/delegation_tests.cpp
   blsct/wallet/keyman_tests.cpp
   blsct/wallet/output_storage_tests.cpp
+  blsct/wallet/privacy_score_tests.cpp
   blsct/wallet/txfactory_global_tests.cpp
   blsct/wallet/txfactory_tests.cpp
   blsct/wallet/validation_tests.cpp

@@ -1917,6 +1917,10 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                     }
                 }
             }
+            // Likewise the rows' privacy scores, which depend on every input
+            // of the tx as synced now: a block tx the staker merged our send
+            // into scores our change with its foreign inputs too.
+            UpdateOutputPrivacyScores(tx);
 
             for (size_t i = 0; i < tx.vin.size(); i++) {
                 auto txin = tx.vin[i];
@@ -2113,6 +2117,9 @@ bool CWallet::AddToWalletIfInvolvingMe(const CTransactionRef& ptx, const SyncTxS
                 // As we only store arriving transaction in this process, and we don't want an inconsistent state, let's throw an error.
                 throw std::runtime_error("DB error adding transaction to wallet, write failed");
             }
+            // The privacy scores of the tx's outputs are recomputed on every
+            // sync, from the tx as now seen, as the output-storage path does.
+            RecordTxPrivacyScores(*wtx);
 
             return true;
         }
@@ -3438,6 +3445,7 @@ void CWallet::CommitTransaction(CTransactionRef tx, mapValue_t mapValue, std::ve
     if (!wtx) {
         throw std::runtime_error(std::string(__func__) + ": Wallet db error, transaction commit failed");
     }
+    RecordTxPrivacyScores(*wtx);
 
     if (!tx->IsBLSCT()) {
         // Notify that old coins are spent
@@ -3514,6 +3522,7 @@ bool CWallet::RecordBroadcastTransaction(CTransactionRef tx, const std::vector<C
         WalletLogPrintf("%s: Wallet db error, failed to record broadcast transaction %s\n", __func__, tx->GetHash().ToString());
         return false;
     }
+    RecordTxPrivacyScores(*wtx);
 
     // The mirror writes mempool spend/receive states; once the sync
     // callbacks moved the tx on (confirmed, or out of the mempool), their
@@ -3582,6 +3591,13 @@ void CWallet::MirrorBlsctBroadcast(const CTransaction& tx)
             /*state_spent=*/TxStateInactive{},
             /*fCoinbase=*/tx.IsCoinBase());
         if (!wout) output_write_failed = true;
+    }
+    // The sync callbacks rescore these rows from the tx they see later (a
+    // block tx merging this one, say); until then they score as this tx.
+    try {
+        UpdateOutputPrivacyScores(tx);
+    } catch (const std::runtime_error&) {
+        output_write_failed = true;
     }
     if (write_failed) {
         throw std::runtime_error(std::string(__func__) + ": Wallet db error, failed to update spent BLSCT output state");
@@ -5241,6 +5257,99 @@ ScriptPubKeyMan* CWallet::AddWalletDescriptor(WalletDescriptor& desc, const Flat
     spk_man->WriteDescriptor();
 
     return spk_man;
+}
+
+namespace {
+//! Whether `outpoint` is a coin of ours and, if so, its stored score. A
+//! mapOutputs row is the record an output-storage wallet keeps scores on, so
+//! it comes before the wallet tx a locally-created send also has.
+std::optional<std::optional<PrivacyMilliBits>> LookupOwnCoinScore(const CWallet& wallet, const COutPoint& outpoint) EXCLUSIVE_LOCKS_REQUIRED(wallet.cs_wallet)
+{
+    AssertLockHeld(wallet.cs_wallet);
+    if (const CWalletOutput* wout = wallet.GetWalletOutput(outpoint)) {
+        if (wout->out && wallet.IsMine(*wout->out) != ISMINE_NO) return wout->m_privacy_milli_bits;
+    }
+    if (const CWalletTx* wtx = wallet.GetWalletTxFromOutpoint(outpoint)) {
+        const int ix = wtx->GetOutputIndexFromHash(outpoint);
+        if (ix >= 0 && static_cast<size_t>(ix) < wtx->tx->vout.size() && wallet.IsMine(wtx->tx->vout[ix]) != ISMINE_NO) {
+            return wtx->GetPrivacyMilliBits(ix);
+        }
+    }
+    return std::nullopt;
+}
+} // namespace
+
+std::optional<PrivacyMilliBits> CWallet::GetCoinPrivacyMilliBits(const COutPoint& outpoint) const
+{
+    AssertLockHeld(cs_wallet);
+    return LookupOwnCoinScore(*this, outpoint).value_or(std::nullopt);
+}
+
+std::optional<PrivacyMilliBits> CWallet::ComputeTxPrivacyMilliBits(const CTransaction& tx) const
+{
+    AssertLockHeld(cs_wallet);
+    // An input spending an output of the same tx (a chain of sends the
+    // staker merged into one block tx) is no source of its own: it comes out
+    // of the tx's other inputs, which are already counted.
+    std::set<COutPoint> created;
+    for (const Outid& out_id : tx.GetOutputIds()) created.emplace(out_id);
+    uint64_t foreign{0};
+    std::vector<std::optional<PrivacyMilliBits>> own;
+    for (const CTxIn& txin : tx.vin) {
+        if (created.contains(txin.prevout)) continue;
+        if (const auto score = LookupOwnCoinScore(*this, txin.prevout)) {
+            own.push_back(*score);
+        } else {
+            ++foreign;
+        }
+    }
+    return ComputePrivacyMilliBits(foreign, own);
+}
+
+bool CWallet::UpdateTxPrivacyScores(CWalletTx& wtx) const
+{
+    AssertLockHeld(cs_wallet);
+    const CTransaction& tx = *wtx.tx;
+    std::map<uint32_t, PrivacyMilliBits> scores;
+    if (tx.IsBLSCT()) {
+        if (const auto score = ComputeTxPrivacyMilliBits(tx)) {
+            for (uint32_t i = 0; i < tx.vout.size(); ++i) {
+                if (IsMine(tx.vout[i]) != ISMINE_NO) scores.emplace(i, *score);
+            }
+        }
+    }
+    if (scores == wtx.m_privacy_milli_bits) return false;
+    wtx.m_privacy_milli_bits = std::move(scores);
+    return true;
+}
+
+void CWallet::RecordTxPrivacyScores(CWalletTx& wtx)
+{
+    AssertLockHeld(cs_wallet);
+    if (!UpdateTxPrivacyScores(wtx)) return;
+    // A failed write leaves the new scores in memory only; the next sync
+    // writes them again.
+    if (!WalletBatch(GetDatabase(), /*_fFlushOnClose=*/false).WriteTx(wtx)) {
+        WalletLogPrintf("%s: failed to record the privacy scores of %s\n", __func__, wtx.GetHash().ToString());
+    }
+}
+
+void CWallet::UpdateOutputPrivacyScores(const CTransaction& tx)
+{
+    AssertLockHeld(cs_wallet);
+    const std::optional<PrivacyMilliBits> score{ComputeTxPrivacyMilliBits(tx)};
+    std::optional<WalletBatch> batch;
+    for (size_t i = 0; i < tx.vout.size(); ++i) {
+        const auto it = mapOutputs.find(COutPoint{tx.GetOutputId(i)});
+        if (it == mapOutputs.end()) continue;
+        CWalletOutput& wout = it->second;
+        if (wout.m_privacy_milli_bits == score) continue;
+        wout.m_privacy_milli_bits = score;
+        if (!batch) batch.emplace(GetDatabase(), /*_fFlushOnClose=*/false);
+        if (!batch->WriteOutput(it->first, wout)) {
+            throw std::runtime_error("DB error recording an output's privacy score, write failed");
+        }
+    }
 }
 
 OwnSpentCoins GetOwnSpentCoins(const CWallet& wallet, const CTransaction& tx)
