@@ -444,8 +444,9 @@ CoinsResult AvailableCoins(const CWallet& wallet,
             }
 
             mutableOutput.nValue = nValue;
-            result.Add(GetOutputType(type, is_from_p2sh),
-                       COutput(outpoint, mutableOutput, nDepth, input_bytes, spendable, solvable, safe_output, wtx.GetTxTime(), tx_from_me, feerate));
+            COutput coin(outpoint, mutableOutput, nDepth, input_bytes, spendable, solvable, safe_output, wtx.GetTxTime(), tx_from_me, feerate);
+            if (output.HasBLSCTRangeProof() || output.HasBLSCTKeys()) coin.privacy_milli_bits = wallet.GetCoinPrivacyMilliBits(outpoint);
+            result.Add(GetOutputType(type, is_from_p2sh), coin);
 
             outpoints.push_back(outpoint);
             // Checks the sum amount of all UTXO's.
@@ -560,8 +561,9 @@ CoinsResult AvailableBlsctCoins(const CWallet& wallet,
 
         mutableOutput.nValue = nValue;
 
-        result.Add(wout.fStakedCommitment ? OutputType::BLSCT_STAKE : OutputType::BLSCT,
-                   COutput(outpoint, mutableOutput, nDepth, -1, spendable, true, safeTx, wout.GetTxTime(), true, 0));
+        COutput coin(outpoint, mutableOutput, nDepth, -1, spendable, true, safeTx, wout.GetTxTime(), true, 0);
+        coin.privacy_milli_bits = wout.m_privacy_milli_bits;
+        result.Add(wout.fStakedCommitment ? OutputType::BLSCT_STAKE : OutputType::BLSCT, coin);
 
         outpoints.push_back(outpoint);
 

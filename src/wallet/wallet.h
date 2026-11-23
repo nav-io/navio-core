@@ -574,6 +574,28 @@ public:
     const CWalletOutput* GetWalletOutput(const COutPoint& outpoint) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
 
     /**
+     * Privacy scores (see wallet/privacy_score.h).
+     *
+     * A coin's score is stored when the transaction holding it is synced
+     * (mempool, block, rescan) or committed, computed from that transaction
+     * as it is then seen: a block tx the staker merged our send into scores
+     * our change with the block tx's foreign inputs. Each sync recomputes it,
+     * so the latest view of the transaction holding the coin wins, as it does
+     * for the coin's state. A coin's descendants are not rescored when its
+     * score changes; they are when their own transaction is synced again.
+     */
+    //! The stored score of our coin `outpoint`; nullopt if it is unknown or not ours.
+    std::optional<PrivacyMilliBits> GetCoinPrivacyMilliBits(const COutPoint& outpoint) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    //! The score of the coins of ours that `tx` creates, from what it spends.
+    std::optional<PrivacyMilliBits> ComputeTxPrivacyMilliBits(const CTransaction& tx) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    //! Set the scores of `wtx`'s outputs that are ours. Returns whether any changed.
+    bool UpdateTxPrivacyScores(CWalletTx& wtx) const EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    //! UpdateTxPrivacyScores(), writing `wtx` when they changed.
+    void RecordTxPrivacyScores(CWalletTx& wtx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+    //! Record it on the mapOutputs rows of `tx`'s outputs, writing the changed rows.
+    void UpdateOutputPrivacyScores(const CTransaction& tx) EXCLUSIVE_LOCKS_REQUIRED(cs_wallet);
+
+    /**
      * Return depth of transaction in blockchain:
      * <0  : conflicts with a transaction this deep in the blockchain
      *  0  : in memory pool, waiting to be included in a block
