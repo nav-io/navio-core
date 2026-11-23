@@ -906,7 +906,7 @@ static RPCHelpMan acceptquotewallet()
             // sync callback. The received output is funded only by the
             // maker's inputs, so it stays out of the own-half set and
             // untrusted until the swap confirms (see
-            // doc/release-notes-aggregated-send-trust.md). Our own fee is
+            // doc/release-notes-0.3.0.md). Our own fee is
             // what our half's fee outputs carry: nothing today, since the
             // maker's half funds the whole fee.
             const CTxDestination recv_dest{taker_recv.GetKeys()};
