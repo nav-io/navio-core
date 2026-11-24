@@ -313,10 +313,6 @@ private:
     // wrong copy.
     CWalletOutput(const CWalletOutput&) = default;
     CWalletOutput& operator=(const CWalletOutput&) = default;
-
-public:
-    // Instead have an explicit copy function
-    void CopyFrom(const CWalletOutput&);
 };
 
 /**
@@ -586,9 +582,6 @@ private:
     // wrong copy.
     CWalletTx(const CWalletTx&) = default;
     CWalletTx& operator=(const CWalletTx&) = default;
-public:
-    // Instead have an explicit copy function
-    void CopyFrom(const CWalletTx&);
 };
 
 struct WalletTxOrderComparator {
