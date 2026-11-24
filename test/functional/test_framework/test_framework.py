@@ -449,13 +449,11 @@ class BitcoinTestFramework(metaclass=BitcoinTestMetaClass):
 
     # Public helper methods. These can be accessed by the subclass test scripts.
 
-    def add_wallet_options(self, parser, *, descriptors=True, legacy=True, blsct=True):
-        # The `legacy` parameter is retained for backwards-compatibility with
-        # callers but the BDB backend legacy-only runs used has been removed.
-        # Only descriptor and (optionally) BLSCT runs are supported now. `blsct` is likewise
-        # accepted and ignored: tests create BLSCT wallets themselves with
+    def add_wallet_options(self, parser, *, descriptors=True, blsct=True):
+        # Only descriptor and (optionally) BLSCT runs are supported. `blsct`
+        # is accepted and ignored: tests create BLSCT wallets themselves with
         # createwallet(blsct=True).
-        del legacy, blsct
+        del blsct
         group = parser.add_mutually_exclusive_group()
         # Always register --descriptors so callers that previously passed
         # descriptors=False (legacy-only) still get a descriptor wallet by

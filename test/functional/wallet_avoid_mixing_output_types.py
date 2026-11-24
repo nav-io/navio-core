@@ -108,7 +108,7 @@ def generate_payment_values(n, m):
 
 class AddressInputTypeGrouping(BitcoinTestFramework):
     def add_options(self, parser):
-        self.add_wallet_options(parser, legacy=False)
+        self.add_wallet_options(parser)
 
     def set_test_params(self):
         self.setup_clean_chain = True
