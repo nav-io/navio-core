@@ -569,14 +569,14 @@ void TorController::protocolinfo_cb(TorControlConnection& _conn, const TorContro
         // Prefer NULL, otherwise SAFECOOKIE. If a password is provided, use HASHEDPASSWORD
         /* Authentication:
          *   cookie:   hex-encoded ~/.tor/control_auth_cookie
-         *   password: "password"
+         *   password: hex-encoded password
          */
         std::string torpassword = gArgs.GetArg("-torpassword", "");
         if (!torpassword.empty()) {
             if (methods.contains("HASHEDPASSWORD")) {
                 LogPrint(BCLog::TOR, "Using HASHEDPASSWORD authentication\n");
-                ReplaceAll(torpassword, "\"", "\\\"");
-                _conn.Command("AUTHENTICATE \"" + torpassword + "\"", [this](TorControlConnection& conn, const TorControlReply& reply) { auth_cb(conn, reply); });
+                // Send the password hex-encoded rather than as a QuotedString, so it never needs escaping.
+                _conn.Command("AUTHENTICATE " + HexStr(torpassword), [this](TorControlConnection& conn, const TorControlReply& reply) { auth_cb(conn, reply); });
             } else {
                 LogPrintf("tor: Password provided with -torpassword, but HASHEDPASSWORD authentication is not available\n");
             }
