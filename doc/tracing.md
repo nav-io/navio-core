@@ -1,6 +1,6 @@
-# User-space, Statically Defined Tracing (USDT) for Bitcoin Core
+# User-space, Statically Defined Tracing (USDT) for Navio Core
 
-Bitcoin Core includes statically defined tracepoints to allow for more
+Navio Core includes statically defined tracepoints to allow for more
 observability during development, debugging, code review, and production usage.
 These tracepoints make it possible to keep track of custom statistics and enable
 detailed monitoring of otherwise hidden internals. They have little to no
@@ -125,7 +125,7 @@ Arguments passed:
 
 The following tracepoints cover the in-memory UTXO cache. UTXOs are, for
 example, added to and removed (spent) from the cache when we connect a new
-block. **Note**: Bitcoin Core uses temporary clones of the _main_ UTXO cache
+block. **Note**: Navio Core uses temporary clones of the _main_ UTXO cache
 (`chainstate.CoinsTip()`). For example, the RPCs `generateblock` and
 `getblocktemplate` call `TestBlockValidity()`, which applies the UTXO set
 changes to a temporary cache. Similarly, mempool consistency checks, which are
@@ -300,7 +300,7 @@ Arguments passed:
    little-endian)
 2. Reject reason as `pointer to C-style String` (max. length 118 characters)
 
-## Adding tracepoints to Bitcoin Core
+## Adding tracepoints to Navio Core
 
 To add a new tracepoint, `#include <util/trace.h>` in the compilation unit where
 the tracepoint is inserted. Use one of the `TRACEx` macros listed below
@@ -405,7 +405,7 @@ support.
 
 ### GDB - GNU Project Debugger
 
-To list probes in Bitcoin Core, use `info probes` in `gdb`:
+To list probes in Navio Core, use `info probes` in `gdb`:
 
 ```
 $ gdb ./build/bin/naviod
@@ -420,7 +420,7 @@ stap validation block_connected  0x00000000002fb10c /build/bin/naviod
 
 ### With `readelf`
 
-The `readelf` tool can be used to display the USDT tracepoints in Bitcoin Core.
+The `readelf` tool can be used to display the USDT tracepoints in Navio Core.
 Look for the notes with the description `NT_STAPSDT`.
 
 ```
