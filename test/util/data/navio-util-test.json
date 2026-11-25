@@ -61,5 +61,11 @@
     "return_code": 1,
     "error_txt": "error: Invalid TX version requested",
     "description": "Tests the check for invalid nversion value"
+  },
+  { "exec": "./navio-tx",
+    "args": ["-chain=blsctregtest", "-create", "outaddr=1:rnv14ffywcnv4hkx40ukspzmn7u6wghn9ytzvwq5lvt9207mc2nuzsk3w3d29wlkh40g4mfce4msamne8vk2xk8ywka6svz772gnd3zw8wmn0fwcr9ce6ttf4exhnu4h7jyd3lyr27qs7lcghs277t2yr9tqec32sxl20p"],
+    "return_code": 1,
+    "error_txt": "error: BLSCT output address not supported, use the wallet's sendtoblsctaddress",
+    "description": "Refuses a BLSCT address, which needs a confidential output navio-tx cannot build"
   }
 ]
