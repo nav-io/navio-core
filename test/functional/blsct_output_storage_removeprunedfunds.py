@@ -31,8 +31,8 @@ counterpart: it replaces the local send with the block transaction as soon as
 the block connects.)
 
 If that block is disconnected when the send is forgotten, the merged
-transaction is back in the mempool and the change is no longer confirmed, so
-the change row goes with the send. Reconnecting the block must restore it.
+transaction is back in the mempool and still pays the change, so the wallet
+keeps it, as an untrusted pending coin until the block is reconnected.
 
 A change row kept or restored this way is an ordinary coin: a later send can
 spend it.
@@ -192,19 +192,26 @@ class BlsctOutputStorageRemovePrunedFundsTest(BitcoinTestFramework):
         # mempool, so the change row is no longer confirmed when the send is
         # forgotten.
         node.invalidateblock(block_hash)
+        # The wallet learns of the mempool re-add asynchronously.
+        node.syncwithvalidationinterfacequeue()
         assert_equal(node.getrawmempool(), [block_txs[1]])
         unspent = wallet.listblsctunspent(0, 9999999)
         assert_equal([(u["outid"], u["confirmations"]) for u in unspent], [(change_outid, 0)])
 
         wallet.removeprunedfunds(send_txid)
-        # The funding coin stays spent by the merged transaction.
-        unspent = wallet.listblsctunspent(0, 9999999)
-        self.log.info(f"[merged unconfirmed zapped] listblsctunspent="
-                      f"{[(u['outid'], u['amount']) for u in unspent]}")
-        assert funding_outid not in [u["outid"] for u in unspent]
+        # The merged transaction is still in the mempool and pays the change,
+        # so the wallet keeps it. It now stands for itself, not for our send,
+        # and its other inputs are not ours, so the change is untrusted (and
+        # not listed at 0 confirmations) until it confirms. The funding coin
+        # stays spent by it.
+        mine = wallet.getbalances()["mine"]
+        self.log.info(f"[merged unconfirmed zapped] getbalances.mine={mine}")
+        assert_equal(to_dec(mine["trusted"]), Decimal("0"))
+        assert_equal(to_dec(mine["untrusted_pending"]), change)
+        assert_equal(wallet.listblsctunspent(0, 9999999), [])
 
         # Reconnecting the block confirms the merged transaction again, and
-        # the block scan restores the change row the zap erased.
+        # with it the change.
         node.reconsiderblock(block_hash)
         assert_equal(node.getbestblockhash(), block_hash)
         self.assert_holds_change(wallet, change_outid, change, "merged unconfirmed reconnected")

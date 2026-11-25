@@ -3601,6 +3601,8 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
     // and its inputs stay spent with no transaction left to account for them.
     std::vector<COutPoint> zapped_outputs;
     std::vector<std::pair<COutPoint, uint256>> zapped_spends;
+    // Set when an unconfirmed output of a merged send goes; see below.
+    bool resync_mempool{false};
     for (const uint256& hash : vHashOut) {
         const auto& it = mapWallet.find(hash);
         wtxOrdered.erase(it->second.m_it_wtxOrdered);
@@ -3628,6 +3630,7 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
             const auto row = mapOutputs.find(COutPoint(out_id));
             if (!merged_elsewhere || row == mapOutputs.end() || !row->second.state<TxStateConfirmed>()) {
                 zapped_outputs.emplace_back(out_id);
+                if (merged_elsewhere && row != mapOutputs.end()) resync_mempool = true;
             }
             const auto idx = mapOutpointHashToWalletTx.find(out_id.ToUint256());
             if (idx != mapOutpointHashToWalletTx.end() && idx->second == &it->second) {
@@ -3680,6 +3683,13 @@ DBErrors CWallet::ZapSelectTx(std::vector<uint256>& vHashIn, std::vector<uint256
     for (const uint256& hash : vHashOut) {
         NotifyTransactionChanged(hash, CT_DELETED);
     }
+    // An unconfirmed output of a merged send also belongs to the transaction
+    // it was merged into, which may be in the mempool (typically a block
+    // transaction back there after its block was disconnected). The zap erased
+    // the row, so sync the mempool again to restore it from that transaction,
+    // as the block scan does once it confirms. A transaction that only
+    // conflicted with the send does not carry its outputs, so restores nothing.
+    if (resync_mempool && HaveChain()) chain().requestMempoolTransactions(*this);
 
     if (nZapSelectTxRet == DBErrors::NEED_REWRITE) {
         if (GetDatabase().Rewrite("\x04pool")) {
