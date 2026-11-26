@@ -112,6 +112,10 @@ public:
     mutable bool fChecked;                            // CheckBlock()
     mutable bool m_checked_witness_commitment{false}; // CheckWitnessCommitment()
     mutable bool m_checked_merkle_root{false};        // CheckMerkleRoot()
+    // Set once posProof has been verified against the staked-commitment set of
+    // the block's parent (ChainstateManager::AcceptBlock). The proof's validity
+    // depends only on this body and its parent, so ConnectBlock may skip it.
+    mutable bool m_checked_pos_proof{false};
 
     CBlock()
     {
@@ -140,6 +144,7 @@ public:
         fChecked = false;
         m_checked_witness_commitment = false;
         m_checked_merkle_root = false;
+        m_checked_pos_proof = false;
     }
 
     CBlockHeader GetBlockHeader() const

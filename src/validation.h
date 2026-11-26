@@ -1213,6 +1213,18 @@ public:
     void ReceivedBlockTransactions(const CBlock& block, CBlockIndex* pindexNew, const FlatFilePos& pos) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
 
     /**
+     * Forget the stored body of a block whose proof of stake failed to verify,
+     * returning its index entry to the "header only" state so a different body
+     * for the same hash can still be downloaded and accepted.
+     *
+     * The block hash does not commit to posProof, so a failing proof says
+     * nothing about the block that hash names: it may be a copy altered in
+     * transit. Descendants lose their chain-tx counts and wait in
+     * m_blocks_unlinked until the body arrives again.
+     */
+    void DiscardBlockData(CBlockIndex* pindex) EXCLUSIVE_LOCKS_REQUIRED(cs_main);
+
+    /**
      * Try to add a transaction to the memory pool.
      *
      * @param[in]  tx              The transaction to submit for mempool acceptance.

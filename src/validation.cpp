@@ -2574,7 +2574,8 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
     }
 
     bool fScriptChecks = true;
-    bool fCheckPosProof = fCheckPOS;
+    // AcceptBlock already verified this exact body against the same parent.
+    bool fCheckPosProof = fCheckPOS && !block.m_checked_pos_proof;
     if (!m_chainman.AssumedValidBlock().IsNull()) {
         // We've been configured with the hash of a block which has been externally verified to have a valid history.
         // A suitable default value is included with the software and updated from time to time.  Because validity
@@ -2686,7 +2687,9 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         if (min_value_u64 > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
             LogPrint(BCLog::POPS, "PoPS rejected: min_value %llu exceeds CAmount range\n",
                      static_cast<unsigned long long>(min_value_u64));
-            return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
+            // The kernel hash binds proof contents, which the block hash does
+            // not commit to: see the BLOCK_MUTATED note below.
+            return state.Invalid(BlockValidationResult::BLOCK_MUTATED, "bad-blsct-pos-proof");
         }
 
         // PoS eligibility proofs (kernel range proof + set-membership proof) use
@@ -3110,7 +3113,8 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
                 pos_only_proof.push_back(*pos_kernel_range_proof);
                 if (!blsct::VerifyCollectedRangeProofs(pos_only_proof, par_threads)) {
                     if (blsct_sig_verify_dispatched) blsct_sig_verify_future.wait();
-                    return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
+                    // See the BLOCK_MUTATED note at the set-membership check.
+                    return state.Invalid(BlockValidationResult::BLOCK_MUTATED, "bad-blsct-pos-proof");
                 }
             }
             if (blsct_sig_verify_dispatched) blsct_sig_verify_future.wait();
@@ -3160,7 +3164,12 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
             if (!pos_res.second.empty()) {
                 LogPrintf("%s: Validation of PoS proof failed: %s\n", __func__, pos_res.second);
             }
-            return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof");
+            // posProof is serialized with the block but is not covered by the
+            // block hash, so a failing proof condemns only this copy of the
+            // body, not the block the hash names. BLOCK_MUTATED keeps the hash
+            // from being marked invalid; ConnectTip then discards the stored
+            // body so the block can be downloaded again.
+            return state.Invalid(BlockValidationResult::BLOCK_MUTATED, "bad-blsct-pos-proof");
         }
     }
 
@@ -3725,8 +3734,12 @@ bool Chainstate::ConnectTip(BlockValidationState& state, CBlockIndex* pindexNew,
         bool rv = ConnectBlock(blockConnecting, state, pindexNew, view);
         GetMainSignals().BlockChecked(blockConnecting, state);
         if (!rv) {
-            if (state.IsInvalid())
+            if (state.IsInvalid()) {
                 InvalidBlockFound(pindexNew, state);
+                if (state.GetResult() == BlockValidationResult::BLOCK_MUTATED) {
+                    m_chainman.DiscardBlockData(pindexNew);
+                }
+            }
             return error("%s: ConnectBlock %s failed, %s", __func__, pindexNew->GetBlockHash().ToString(), state.ToString());
         }
         time_3 = SteadyClock::now();
@@ -4483,6 +4496,53 @@ void ChainstateManager::ReceivedBlockTransactions(const CBlock& block, CBlockInd
     }
 }
 
+void ChainstateManager::DiscardBlockData(CBlockIndex* pindex)
+{
+    AssertLockHeld(cs_main);
+    assert(pindex);
+    LogPrintf("Discarding the stored copy of block %s: its proof of stake does not verify. It will be downloaded again.\n",
+              pindex->GetBlockHash().ToString());
+
+    auto unlink = [&](CBlockIndex* idx) {
+        idx->nChainTx = 0;
+        idx->nSequenceId = 0;
+        for (Chainstate* c : GetAll()) {
+            c->setBlockIndexCandidates.erase(idx);
+        }
+        m_blockman.m_dirty_blockindex.insert(idx);
+    };
+    auto in_unlinked = [&](CBlockIndex* idx) {
+        auto range = m_blockman.m_blocks_unlinked.equal_range(idx->pprev);
+        for (auto it = range.first; it != range.second; ++it) {
+            if (it->second == idx) return it;
+        }
+        return m_blockman.m_blocks_unlinked.end();
+    };
+
+    if (auto it = in_unlinked(pindex); it != m_blockman.m_blocks_unlinked.end()) {
+        m_blockman.m_blocks_unlinked.erase(it);
+    }
+    // Back to the state AcceptBlockHeader leaves a new header in.
+    pindex->nTx = 0;
+    pindex->nFile = 0;
+    pindex->nDataPos = 0;
+    pindex->nUndoPos = 0;
+    pindex->nStatus &= ~(BLOCK_HAVE_DATA | BLOCK_HAVE_UNDO | BLOCK_OPT_WITNESS);
+    pindex->nStatus = (pindex->nStatus & ~BLOCK_VALID_MASK) | BLOCK_VALID_TREE;
+    unlink(pindex);
+
+    // Descendants can no longer count their chain transactions. Those whose
+    // bodies we hold wait in m_blocks_unlinked, exactly as if this block had
+    // never arrived, and ReceivedBlockTransactions relinks them when it does.
+    for (auto& [_, idx] : m_blockman.m_block_index) {
+        if (idx.nHeight <= pindex->nHeight || idx.GetAncestor(pindex->nHeight) != pindex) continue;
+        if (idx.nChainTx != 0) unlink(&idx);
+        if ((idx.nStatus & BLOCK_HAVE_DATA) && in_unlinked(&idx) == m_blockman.m_blocks_unlinked.end()) {
+            m_blockman.m_blocks_unlinked.insert(std::make_pair(idx.pprev, &idx));
+        }
+    }
+}
+
 static bool CheckBlockHeader(const CBlockHeader& block, BlockValidationState& state, const Consensus::Params& consensusParams, bool fCheckPOW = true)
 {
     if ((consensusParams.fBLSCT && !(block.nVersion & VERSIONBITS_TOP_BLSCT_BITS)) || (!consensusParams.fBLSCT && block.nVersion & VERSIONBITS_TOP_BLSCT_BITS)) {
@@ -5089,6 +5149,23 @@ bool ChainstateManager::AcceptBlock(const std::shared_ptr<const CBlock>& pblock,
             m_blockman.m_dirty_blockindex.insert(pindex);
         }
         return error("%s: %s", __func__, state.ToString());
+    }
+
+    // The block hash does not commit to posProof, so a copy with an altered
+    // proof shares the hash of the real block. When the block extends our tip
+    // the staked-commitment set it is checked against is at hand, so verify the
+    // proof now: before relaying the block and before storing it. A failure is
+    // BLOCK_MUTATED, which leaves the hash unmarked and the body unstored, so
+    // the real block is still accepted when it arrives. Blocks not checked here
+    // are verified in ConnectBlock, which drops a failing body the same way.
+    if (params.GetConsensus().fBLSCT && block.IsProofOfStake() && !block.m_checked_pos_proof &&
+        !IsInitialBlockDownload() && pindex->pprev && pindex->pprev == ActiveTip() &&
+        ActiveChainstate().CoinsTip().GetBestBlock() == pindex->pprev->GetBlockHash()) {
+        if (!blsct::ProofOfStakeLogic::Verify(ActiveChainstate().CoinsTip(), pindex->pprev, block, params.GetConsensus())) {
+            state.Invalid(BlockValidationResult::BLOCK_MUTATED, "bad-blsct-pos-proof", "proof of stake does not verify");
+            return error("%s: %s", __func__, state.ToString());
+        }
+        block.m_checked_pos_proof = true;
     }
 
     // Header is valid/has work, merkle tree and segwit merkle tree are good...RELAY NOW
