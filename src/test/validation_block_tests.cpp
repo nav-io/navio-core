@@ -361,4 +361,84 @@ BOOST_AUTO_TEST_CASE(witness_commitment_index)
 
     BOOST_CHECK_EQUAL(GetWitnessCommitmentIndex(pblock), 2);
 }
+BOOST_AUTO_TEST_CASE(discard_block_data)
+{
+    ChainstateManager& chainman = *m_node.chainman;
+    Chainstate& chainstate = chainman.ActiveChainstate();
+    const uint256 tip_hash = WITH_LOCK(cs_main, return chainman.ActiveTip()->GetBlockHash());
+
+    auto accept = [&](const std::shared_ptr<const CBlock>& block) {
+        LOCK(cs_main);
+        BlockValidationState state;
+        bool stored{false};
+        BOOST_REQUIRE(chainman.AcceptBlock(block, state, nullptr, /*fRequested=*/true, nullptr, &stored, /*min_pow_checked=*/true));
+        BOOST_REQUIRE(stored);
+    };
+
+    // Seven equal-work siblings on the tip, stored but not connected: in
+    // setBlockIndexCandidates they are ordered by nSequenceId alone.
+    std::vector<std::shared_ptr<const CBlock>> siblings;
+    for (int i = 0; i < 7; ++i) {
+        siblings.push_back(FinalizeBlock(Block(tip_hash)));
+        accept(siblings.back());
+    }
+    const auto target_block = siblings[4];
+    // Two descendants of the fifth sibling, also stored.
+    const auto child_block = FinalizeBlock(Block(target_block->GetHash()));
+    accept(child_block);
+    const auto grandchild_block = FinalizeBlock(Block(child_block->GetHash()));
+    accept(grandchild_block);
+
+    {
+        LOCK(cs_main);
+        CBlockIndex* target = chainman.m_blockman.LookupBlockIndex(target_block->GetHash());
+        CBlockIndex* child = chainman.m_blockman.LookupBlockIndex(child_block->GetHash());
+        CBlockIndex* grandchild = chainman.m_blockman.LookupBlockIndex(grandchild_block->GetHash());
+        BOOST_REQUIRE(target && child && grandchild);
+        BOOST_CHECK(chainstate.setBlockIndexCandidates.contains(target));
+        BOOST_CHECK(chainstate.setBlockIndexCandidates.contains(grandchild));
+
+        chainman.DiscardBlockData(target);
+        chainman.CheckBlockIndex();
+
+        // The discarded block and everything above it leave the candidates,
+        // the other siblings stay.
+        for (CBlockIndex* idx : {target, child, grandchild}) {
+            BOOST_CHECK(!chainstate.setBlockIndexCandidates.contains(idx));
+            BOOST_CHECK_EQUAL(idx->nChainTx, 0U);
+            BOOST_CHECK(idx->nSequenceId <= 0);
+        }
+        for (const auto& sibling : siblings) {
+            if (sibling == target_block) continue;
+            BOOST_CHECK(chainstate.setBlockIndexCandidates.contains(chainman.m_blockman.LookupBlockIndex(sibling->GetHash())));
+        }
+        BOOST_CHECK(!(target->nStatus & BLOCK_HAVE_DATA));
+        BOOST_CHECK_EQUAL(target->nTx, 0U);
+        BOOST_CHECK(!target->IsValid(BLOCK_VALID_TRANSACTIONS));
+        BOOST_CHECK(!(target->nStatus & BLOCK_FAILED_MASK));
+        // Descendants with bodies wait for the discarded block.
+        auto range = chainman.m_blockman.m_blocks_unlinked.equal_range(target);
+        BOOST_CHECK_EQUAL(std::distance(range.first, range.second), 1);
+        BOOST_CHECK(range.first->second == child);
+        range = chainman.m_blockman.m_blocks_unlinked.equal_range(child);
+        BOOST_CHECK_EQUAL(std::distance(range.first, range.second), 1);
+        BOOST_CHECK(range.first->second == grandchild);
+    }
+
+    // When the body arrives again, the descendants link back up and the
+    // longest chain is connected.
+    accept(target_block);
+    {
+        LOCK(cs_main);
+        chainman.CheckBlockIndex();
+        CBlockIndex* grandchild = chainman.m_blockman.LookupBlockIndex(grandchild_block->GetHash());
+        BOOST_CHECK(grandchild->HaveNumChainTxs());
+        BOOST_CHECK(chainstate.setBlockIndexCandidates.contains(grandchild));
+        BOOST_CHECK(chainman.m_blockman.m_blocks_unlinked.empty());
+    }
+    BlockValidationState state;
+    BOOST_CHECK(chainstate.ActivateBestChain(state));
+    BOOST_CHECK_EQUAL(WITH_LOCK(cs_main, return chainman.ActiveTip()->GetBlockHash()), grandchild_block->GetHash());
+}
+
 BOOST_AUTO_TEST_SUITE_END()

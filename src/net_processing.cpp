@@ -2105,6 +2105,22 @@ void PeerManagerImpl::BlockChecked(const CBlock& block, const BlockValidationSta
         State(it->second.first)) {
             MaybePunishNodeForBlock(/*nodeid=*/ it->second.first, state, /*via_compact_block=*/ !it->second.second);
     }
+    // A copy of a block whose posProof failed was not stored, or was dropped
+    // (ChainstateManager::DiscardBlockData). FindNextBlocksToDownload only
+    // walks forward from each peer's pindexLastCommonBlock, so move any that
+    // passed the block back to its parent, or the block is never requested
+    // again from those peers.
+    if (state.GetResult() == BlockValidationResult::BLOCK_MUTATED && state.GetRejectReason() == "bad-blsct-pos-proof") {
+        const CBlockIndex* pindex = m_chainman.m_blockman.LookupBlockIndex(hash);
+        if (pindex && pindex->pprev) {
+            for (auto& [_, node_state] : m_node_states) {
+                const CBlockIndex* common = node_state.pindexLastCommonBlock;
+                if (common && common->nHeight >= pindex->nHeight && common->GetAncestor(pindex->nHeight) == pindex) {
+                    node_state.pindexLastCommonBlock = pindex->pprev;
+                }
+            }
+        }
+    }
     // Check that:
     // 1. The block is valid
     // 2. We're not in initial block download

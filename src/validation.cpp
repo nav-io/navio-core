@@ -2639,9 +2639,11 @@ bool Chainstate::ConnectBlock(const CBlock& block, BlockValidationState& state, 
         if (min_value_u64 > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
             LogPrint(BCLog::POPS, "PoPS rejected: min_value %llu exceeds CAmount range\n",
                      static_cast<unsigned long long>(min_value_u64));
-            // The kernel hash binds proof contents, which the block hash does
-            // not commit to: see the BLOCK_MUTATED note below.
-            return state.Invalid(BlockValidationResult::BLOCK_MUTATED, "bad-blsct-pos-proof");
+            // When the kernel hash binds proof contents, which the block hash
+            // does not commit to, see the BLOCK_MUTATED note below. Otherwise
+            // this depends only on the header and chain state.
+            return state.Invalid(blsct::KernelHashBindsPosProof(pindex->pprev, params.GetConsensus()) ? BlockValidationResult::BLOCK_MUTATED : BlockValidationResult::BLOCK_CONSENSUS,
+                                 "bad-blsct-pos-proof");
         }
 
         // PoS eligibility proofs (kernel range proof + set-membership proof) use
@@ -4474,6 +4476,24 @@ void ChainstateManager::ReceivedBlockTransactions(const CBlock& block, CBlockInd
     }
 }
 
+/**
+ * Whether a proof-of-stake block breaks the size or weight limit only because
+ * of its posProof. The block hash does not commit to posProof, so such a body
+ * is a malformed copy, not evidence against the block the hash names.
+ * posProof is in both serializations, so each byte weighs WITNESS_SCALE_FACTOR.
+ */
+static bool PosProofExceedsBlockLimits(const CBlock& block)
+{
+    if (!block.IsProofOfStake()) return false;
+    const int64_t proof_size = ::GetSerializeSize(block.posProof);
+    const int64_t stripped_weight = ::GetSerializeSize(TX_NO_WITNESS(block)) * WITNESS_SCALE_FACTOR;
+    const int64_t weight = GetBlockWeight(block);
+    const bool over = stripped_weight > MAX_BLOCK_WEIGHT || weight > MAX_BLOCK_WEIGHT;
+    const bool over_without_proof = stripped_weight - proof_size * WITNESS_SCALE_FACTOR > MAX_BLOCK_WEIGHT ||
+                                    weight - proof_size * WITNESS_SCALE_FACTOR > MAX_BLOCK_WEIGHT;
+    return over && !over_without_proof;
+}
+
 void ChainstateManager::DiscardBlockData(CBlockIndex* pindex)
 {
     AssertLockHeld(cs_main);
@@ -4481,12 +4501,15 @@ void ChainstateManager::DiscardBlockData(CBlockIndex* pindex)
     LogPrintf("Discarding the stored copy of block %s: its proof of stake does not verify. It will be downloaded again.\n",
               pindex->GetBlockHash().ToString());
 
+    // Erase from the candidate sets before touching nChainTx or nSequenceId:
+    // CBlockIndexWorkComparator orders by them, so erasing after the change
+    // can miss the entry.
     auto unlink = [&](CBlockIndex* idx) {
-        idx->nChainTx = 0;
-        idx->nSequenceId = 0;
         for (Chainstate* c : GetAll()) {
             c->setBlockIndexCandidates.erase(idx);
         }
+        idx->nChainTx = 0;
+        idx->nSequenceId = 0;
         m_blockman.m_dirty_blockindex.insert(idx);
     };
     auto in_unlinked = [&](CBlockIndex* idx) {
@@ -4500,6 +4523,7 @@ void ChainstateManager::DiscardBlockData(CBlockIndex* pindex)
     if (auto it = in_unlinked(pindex); it != m_blockman.m_blocks_unlinked.end()) {
         m_blockman.m_blocks_unlinked.erase(it);
     }
+    unlink(pindex);
     // Back to the state AcceptBlockHeader leaves a new header in.
     pindex->nTx = 0;
     pindex->nFile = 0;
@@ -4507,7 +4531,6 @@ void ChainstateManager::DiscardBlockData(CBlockIndex* pindex)
     pindex->nUndoPos = 0;
     pindex->nStatus &= ~(BLOCK_HAVE_DATA | BLOCK_HAVE_UNDO | BLOCK_OPT_WITNESS);
     pindex->nStatus = (pindex->nStatus & ~BLOCK_VALID_MASK) | BLOCK_VALID_TREE;
-    unlink(pindex);
 
     // Descendants can no longer count their chain transactions. Those whose
     // bodies we hold wait in m_blocks_unlinked, exactly as if this block had
@@ -4647,7 +4670,8 @@ bool CheckBlock(const CBlock& block, BlockValidationState& state, const Consensu
 
     // Size limits
     if (block.vtx.empty() || block.vtx.size() * WITNESS_SCALE_FACTOR > MAX_BLOCK_WEIGHT || ::GetSerializeSize(TX_NO_WITNESS(block)) * WITNESS_SCALE_FACTOR > MAX_BLOCK_WEIGHT)
-        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blk-length", "size limits failed");
+        return state.Invalid(PosProofExceedsBlockLimits(block) ? BlockValidationResult::BLOCK_MUTATED : BlockValidationResult::BLOCK_CONSENSUS,
+                             "bad-blk-length", "size limits failed");
 
     // First transaction must be coinbase, the rest must not be
     if (block.vtx.empty() || !block.vtx[0]->IsCoinBase())
@@ -4755,6 +4779,11 @@ bool IsBlockMutated(const CBlock& block, bool check_witness_root)
 
     if (!CheckWitnessMalleation(block, check_witness_root, state)) {
         LogDebug(BCLog::VALIDATION, "Block mutated: %s\n", state.ToString());
+        return true;
+    }
+
+    if (PosProofExceedsBlockLimits(block)) {
+        LogDebug(BCLog::VALIDATION, "Block mutated: posProof exceeds the block size limits\n");
         return true;
     }
 
@@ -4909,7 +4938,9 @@ static bool ContextualCheckBlock(const CBlock& block, BlockValidationState& stat
     // the block hash, so we couldn't mark the block as permanently
     // failed).
     if (GetBlockWeight(block) > MAX_BLOCK_WEIGHT) {
-        return state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blk-weight", strprintf("%s : weight limit failed", __func__));
+        // posProof is not covered by the block hash either.
+        return state.Invalid(PosProofExceedsBlockLimits(block) ? BlockValidationResult::BLOCK_MUTATED : BlockValidationResult::BLOCK_CONSENSUS,
+                             "bad-blk-weight", strprintf("%s : weight limit failed", __func__));
     }
 
     return true;
@@ -5144,14 +5175,24 @@ bool ChainstateManager::AcceptBlock(const std::shared_ptr<const CBlock>& pblock,
     // The block hash does not commit to posProof, so a copy with an altered
     // proof shares the hash of the real block. When the block extends our tip
     // the staked-commitment set it is checked against is at hand, so verify the
-    // proof now: before relaying the block and before storing it. A failure is
-    // BLOCK_MUTATED, which leaves the hash unmarked and the body unstored, so
-    // the real block is still accepted when it arrives. Blocks not checked here
-    // are verified in ConnectBlock, which drops a failing body the same way.
+    // proof now: before relaying the block and before storing it. A failure in
+    // the proof itself is BLOCK_MUTATED, which leaves the hash unmarked and the
+    // body unstored, so the real block is still accepted when it arrives.
+    // Failures that depend only on the header and chain state mark the block
+    // invalid, as ConnectBlock does. Blocks not checked here are verified in
+    // ConnectBlock, which drops a body with a failing proof the same way.
     if (params.GetConsensus().fBLSCT && block.IsProofOfStake() && !block.m_checked_pos_proof &&
         !IsInitialBlockDownload() && pindex->pprev && pindex->pprev == ActiveTip() &&
         ActiveChainstate().CoinsTip().GetBestBlock() == pindex->pprev->GetBlockHash()) {
-        if (!blsct::ProofOfStakeLogic::Verify(ActiveChainstate().CoinsTip(), pindex->pprev, block, params.GetConsensus())) {
+        const auto outcome = blsct::ProofOfStakeLogic::Check(ActiveChainstate().CoinsTip(), pindex->pprev, block, params.GetConsensus());
+        if (outcome == blsct::ProofOfStakeLogic::Outcome::BAD_BLOCK) {
+            // Fails on the header and chain state alone, as in ConnectBlock.
+            state.Invalid(BlockValidationResult::BLOCK_CONSENSUS, "bad-blsct-pos-proof", "proof of stake does not verify");
+            pindex->nStatus |= BLOCK_FAILED_VALID;
+            m_blockman.m_dirty_blockindex.insert(pindex);
+            return error("%s: %s", __func__, state.ToString());
+        }
+        if (outcome == blsct::ProofOfStakeLogic::Outcome::BAD_PROOF) {
             state.Invalid(BlockValidationResult::BLOCK_MUTATED, "bad-blsct-pos-proof", "proof of stake does not verify");
             return error("%s: %s", __func__, state.ToString());
         }
@@ -5194,6 +5235,9 @@ bool ChainstateManager::ProcessNewBlock(const std::shared_ptr<const CBlock>& blo
 {
     AssertLockNotHeld(cs_main);
 
+    std::shared_ptr<const CBlock> block_to_connect{block};
+    bool stored{false};
+
     {
         CBlockIndex *pindex = nullptr;
         if (new_block) *new_block = false;
@@ -5211,7 +5255,8 @@ bool ChainstateManager::ProcessNewBlock(const std::shared_ptr<const CBlock>& blo
         bool ret = CheckBlock(*block, state, GetConsensus());
         if (ret) {
             // Store to disk
-            ret = AcceptBlock(block, state, &pindex, force_processing, nullptr, new_block, min_pow_checked);
+            ret = AcceptBlock(block, state, &pindex, force_processing, nullptr, &stored, min_pow_checked);
+            if (new_block) *new_block = stored;
         }
         if (!ret) {
             GetMainSignals().BlockChecked(*block, state);
@@ -5221,14 +5266,19 @@ bool ChainstateManager::ProcessNewBlock(const std::shared_ptr<const CBlock>& blo
 
     NotifyHeaderTip(*this);
 
+    // Hand ActivateBestChain this copy only if it is the one AcceptBlock stored.
+    // Otherwise the stored copy, whose posProof may differ from this one under
+    // the same hash, is the one that must be connected.
+    if (!stored) block_to_connect.reset();
+
     BlockValidationState state; // Only used to report errors, not invalidity - ignore it
-    if (!ActiveChainstate().ActivateBestChain(state, block)) {
+    if (!ActiveChainstate().ActivateBestChain(state, block_to_connect)) {
         return error("%s: ActivateBestChain failed (%s)", __func__, state.ToString());
     }
 
     Chainstate* bg_chain{WITH_LOCK(cs_main, return BackgroundSyncInProgress() ? m_ibd_chainstate.get() : nullptr)};
     BlockValidationState bg_state;
-    if (bg_chain && !bg_chain->ActivateBestChain(bg_state, block)) {
+    if (bg_chain && !bg_chain->ActivateBestChain(bg_state, block_to_connect)) {
         return error("%s: [background] ActivateBestChain failed (%s)", __func__, bg_state.ToString());
      }
 
@@ -5756,9 +5806,12 @@ void ChainstateManager::LoadExternalBlockFile(
                         nRewind = blkdat.GetPos();
 
                         BlockValidationState state;
-                        if (AcceptBlock(pblock, state, nullptr, true, dbp, nullptr, true)) {
+                        bool stored{false};
+                        if (AcceptBlock(pblock, state, nullptr, true, dbp, &stored, true)) {
                             nLoaded++;
                         }
+                        // Only the stored copy may be connected; see ProcessNewBlock.
+                        if (!stored) pblock.reset();
                         if (state.IsError()) {
                             break;
                         }

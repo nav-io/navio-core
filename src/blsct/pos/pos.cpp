@@ -268,6 +268,13 @@ CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev, const CBlock& b
     return CalculateSetMemProofGeneratorSeed(pindexPrev, block);
 }
 
+bool KernelHashBindsPosProof(const CBlockIndex* pindexPrev, const Consensus::Params& params)
+{
+    // Matches CalculateKernelHash and CalculateKernelHashWithChainWork, which
+    // ignore phi unless hardened.
+    return pindexPrev->nHeight + 1 >= params.nPoPSKernelV2Height && params.fPoPSHardened;
+}
+
 uint256 CalculateKernelHash(const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)
 {
     // When hardened, bind accumulated chain work into the kernel hash: two
