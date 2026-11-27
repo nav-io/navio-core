@@ -9,16 +9,19 @@ The block hash does not commit to the proof of stake, so a copy of a block
 with a changed proof has the same hash as the real block. Rejecting such a
 copy must not stop the node from accepting the real block later.
 
-navio-staker stakes two blocks, B1 and B2 (on B1), on node 0 while the other
-nodes are disconnected. Then:
+navio-staker stakes three blocks, B1, B2 and B3, each on the last, on node 0
+while the other nodes are disconnected. Then:
 
-- node 1 gets an altered B1 over RPC, rejects it, and then accepts the real
-  B1. This is the check made before a block that extends the tip is stored.
-- node 2 gets an altered B1 from a P2P peer, rejects it and disconnects the
-  peer, and then accepts the real B1.
-- node 3 gets an altered B2 while it does not have B1 yet, so the copy is
-  stored. When the real B1 arrives, B2 fails to connect, its stored copy is
-  dropped, and the real B2 is accepted afterwards, also across a restart.
+- node 1 gets an altered B1 over RPC. The check made before a block that
+  extends the tip is stored rejects it, so nothing is stored or dropped, and
+  the real B1 is accepted.
+- node 2 gets an altered B1 from a P2P peer, rejects it the same way and
+  disconnects the peer, and then accepts the real B1.
+- node 3 gets an altered B2 (kernel range proof) and the real B3 while it
+  does not have B1 yet, so both are stored. When the real B1 arrives, B2 fails
+  to connect and its stored copy is dropped. After a restart, the real B2 is
+  downloaded from node 0 and B3 connects on top of it.
+- node 4 is the same with the set-membership proof altered and no restart.
 """
 
 import os
@@ -30,7 +33,7 @@ import time
 from test_framework.messages import CBlock, from_hex, msg_block
 from test_framework.p2p import P2PInterface
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal
+from test_framework.util import assert_equal, assert_raises_rpc_error
 
 MIN_STAKE = 100
 STAKER_TIMEOUT = 120
@@ -58,7 +61,7 @@ class BlsctPosBlockRelayTest(BitcoinTestFramework):
         self.add_wallet_options(parser, blsct=True)
 
     def set_test_params(self):
-        self.num_nodes = 4
+        self.num_nodes = 5
         self.chain = "blsctregtest"
         self.setup_clean_chain = True
 
@@ -108,6 +111,22 @@ class BlsctPosBlockRelayTest(BitcoinTestFramework):
         assert from_hex(CBlock(), block_hex).IsProofOfStake()
         return block_hash, block_hex
 
+    def store_altered_b2(self, victim, b1_hex, b2_hex, b2_hash, b3_hex, field):
+        """Store an altered B2 and the real B3 before B1, then submit the real B1.
+
+        B2 is stored because its parent has no data yet, so the check before
+        storing does not apply. Connecting it after B1 fails and drops it.
+        """
+        victim.submitheader(b1_hex[:160])
+        bad = altered(b2_hex, field)
+        assert_equal(bad.hash, b2_hash)
+        assert_equal(victim.submitblock(bad.serialize().hex()), "inconclusive")
+        assert_equal(victim.submitblock(b3_hex), "inconclusive")
+        with victim.assert_debug_log([f"Discarding the stored copy of block {b2_hash}"]):
+            assert_equal(victim.submitblock(b1_hex), None)
+        self.assert_not_invalid(victim, b2_hash)
+        assert_raises_rpc_error(-1, "Block not found on disk", victim.getblock, b2_hash)
+
     def assert_not_invalid(self, node, block_hash):
         for tip in node.getchaintips():
             assert not (tip["hash"] == block_hash and tip["status"] == "invalid"), tip
@@ -127,7 +146,7 @@ class BlsctPosBlockRelayTest(BitcoinTestFramework):
         wallet.stakelock(MIN_STAKE)
         self.generatetoblsctaddress(node, 10, wallet.getnewaddress(label="", address_type="blsct"))
 
-        self.log.info("navio-staker stakes two blocks the other nodes have not seen")
+        self.log.info("navio-staker stakes three blocks the other nodes have not seen")
         self.sync_all()
         for i in range(self.num_nodes - 1):
             self.disconnect_nodes(i, i + 1)
@@ -135,7 +154,9 @@ class BlsctPosBlockRelayTest(BitcoinTestFramework):
         dest = wallet.getnewaddress(label="staker", address_type="blsct")
         b1_hash, b1_hex = self.stake_one_block(node, "w", dest)
         b2_hash, b2_hex = self.stake_one_block(node, "w", dest)
+        b3_hash, b3_hex = self.stake_one_block(node, "w", dest)
         assert_equal(from_hex(CBlock(), b2_hex).hashPrevBlock, int(b1_hash, 16))
+        assert_equal(from_hex(CBlock(), b3_hex).hashPrevBlock, int(b2_hash, 16))
         for victim in self.nodes[1:]:
             assert_equal(victim.getbestblockhash(), parent)
 
@@ -143,7 +164,8 @@ class BlsctPosBlockRelayTest(BitcoinTestFramework):
         victim = self.nodes[1]
         bad = altered(b1_hex, "omega")
         assert_equal(bad.hash, b1_hash)
-        assert_equal(victim.submitblock(bad.serialize().hex()), "bad-blsct-pos-proof")
+        with victim.assert_debug_log(["AcceptBlock: bad-blsct-pos-proof"], unexpected_msgs=["Discarding the stored copy"]):
+            assert_equal(victim.submitblock(bad.serialize().hex()), "bad-blsct-pos-proof")
         assert_equal(victim.getbestblockhash(), parent)
         self.assert_not_invalid(victim, b1_hash)
         assert_equal(victim.submitblock(b1_hex), None)
@@ -154,7 +176,7 @@ class BlsctPosBlockRelayTest(BitcoinTestFramework):
         self.log.info("P2P: the peer relaying an altered copy is disconnected, then the real block is accepted")
         victim = self.nodes[2]
         peer = victim.add_p2p_connection(P2PInterface())
-        with victim.assert_debug_log(["bad-blsct-pos-proof"]):
+        with victim.assert_debug_log(["AcceptBlock: bad-blsct-pos-proof"], unexpected_msgs=["Discarding the stored copy"]):
             peer.send_message(msg_block(altered(b1_hex, "delta_prime")))
             peer.wait_for_disconnect()
         assert_equal(victim.getbestblockhash(), parent)
@@ -162,26 +184,26 @@ class BlsctPosBlockRelayTest(BitcoinTestFramework):
         assert_equal(victim.submitblock(b1_hex), None)
         assert_equal(victim.getbestblockhash(), b1_hash)
 
-        self.log.info("A stored altered copy that fails to connect is dropped, and the real block is accepted")
+        self.log.info("A stored copy whose kernel range proof fails is dropped on connect")
         victim = self.nodes[3]
-        victim.submitheader(b1_hex[:160])
-        bad = altered(b2_hex, "omega")
-        assert_equal(bad.hash, b2_hash)
-        victim.submitblock(bad.serialize().hex())
-        assert_equal(victim.getbestblockhash(), parent)
-        with victim.assert_debug_log([f"Discarding the stored copy of block {b2_hash}"]):
-            assert_equal(victim.submitblock(b1_hex), None)
+        self.store_altered_b2(victim, b1_hex, b2_hex, b2_hash, b3_hex, "delta_prime")
         assert_equal(victim.getbestblockhash(), b1_hash)
-        self.assert_not_invalid(victim, b2_hash)
 
-        self.log.info("The dropped copy stays dropped across a restart")
+        self.log.info("After a restart the real block is downloaded and its stored descendant connects")
         self.restart_node(3)
         assert_equal(victim.getbestblockhash(), b1_hash)
-        assert_equal(victim.submitblock(b2_hex), None)
-        assert_equal(victim.getbestblockhash(), b2_hash)
+        self.assert_not_invalid(victim, b2_hash)
+        self.connect_nodes(3, 0)
+        self.wait_until(lambda: victim.getbestblockhash() == b3_hash)
+
+        self.log.info("A stored copy whose set-membership proof fails is dropped on connect, and the real block is downloaded")
+        victim = self.nodes[4]
+        self.store_altered_b2(victim, b1_hex, b2_hex, b2_hash, b3_hex, "omega")
+        self.connect_nodes(4, 0)
+        self.wait_until(lambda: victim.getbestblockhash() == b3_hash)
 
         self.log.info("All nodes agree on the chain")
-        for i in range(self.num_nodes - 1):
+        for i in range(1, self.num_nodes - 1):
             self.connect_nodes(i, i + 1)
         self.sync_blocks()
 
