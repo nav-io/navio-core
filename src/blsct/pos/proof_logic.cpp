@@ -61,17 +61,27 @@ ProofOfStake ProofOfStakeLogic::Create(const CCoinsViewCache& cache, const Scala
 
 bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)
 {
-    return Verify(cache, pindexPrev, block, params, blsct::CalculateKernelHash(pindexPrev, block, params));
+    return Check(cache, pindexPrev, block, params) == Outcome::VALID;
 }
 
 bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params, const uint256& kernel_hash)
+{
+    return Check(cache, pindexPrev, block, params, kernel_hash) == Outcome::VALID;
+}
+
+ProofOfStakeLogic::Outcome ProofOfStakeLogic::Check(const CCoinsViewCache& cache, const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params)
+{
+    return Check(cache, pindexPrev, block, params, blsct::CalculateKernelHash(pindexPrev, block, params));
+}
+
+ProofOfStakeLogic::Outcome ProofOfStakeLogic::Check(const CCoinsViewCache& cache, const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params, const uint256& kernel_hash)
 {
     const uint256 ring_seed = blsct::CalculateStakeRingSeed(pindexPrev, block.GetBlockHeader().GetHash(), block.nTime, params);
     auto staked_commitments = cache.GetStakedCommitments().GetElements(ring_seed, params.nStakedCommitmentLimit);
 
     if (staked_commitments.Size() < 2) {
         LogPrint(BCLog::POPS, "PoPS rejected. Staked commitments size is %d\n", staked_commitments.Size());
-        return false;
+        return Outcome::BAD_BLOCK;
     }
 
     auto eta_fiat_shamir = blsct::CalculateSetMemProofRandomness(pindexPrev, block, params);
@@ -90,7 +100,7 @@ bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* 
     if (min_value_u64 > static_cast<uint64_t>(std::numeric_limits<int64_t>::max())) {
         LogPrint(BCLog::POPS, "PoPS rejected: min_value %llu exceeds CAmount range\n",
                  static_cast<unsigned long long>(min_value_u64));
-        return false;
+        return blsct::KernelHashBindsPosProof(pindexPrev, params) ? Outcome::BAD_PROOF : Outcome::BAD_BLOCK;
     }
 
     LogPrint(BCLog::POPS, "Verifying PoPS:\n   Prev block %s\n   Eta fiat shamir: %s\n   Eta phi: %s\n   Kernel Hash: %s\n   Next Target: %d\n   Staked Commitments:%s\n", pindexPrev->GetBlockHash().ToString(), HexStr(eta_fiat_shamir), HexStr(eta_phi), kernel_hash.ToString(), next_target, staked_commitments.GetString());
@@ -104,13 +114,13 @@ bool ProofOfStakeLogic::Verify(const CCoinsViewCache& cache, const CBlockIndex* 
     if (block.IsBLSCTProofV2() != require_v2) {
         LogPrint(BCLog::POPS, "PoPS rejected: block at height %d has BLSCT proof-v2 flag=%d, expected %d\n",
                  height, block.IsBLSCTProofV2() ? 1 : 0, require_v2 ? 1 : 0);
-        return false;
+        return Outcome::BAD_BLOCK;
     }
     const bool transcript_v2 = block.IsBLSCTProofV2();
     auto res = block.posProof.Verify(staked_commitments, eta_fiat_shamir, eta_phi, kernel_hash, next_target, /*stats=*/nullptr, transcript_v2);
 
     LogPrint(BCLog::POPS, "Result: %s\n", VerificationResultToString(res));
 
-    return res == blsct::ProofOfStake::VerificationResult::VALID;
+    return res == blsct::ProofOfStake::VerificationResult::VALID ? Outcome::VALID : Outcome::BAD_PROOF;
 }
 } // namespace blsct

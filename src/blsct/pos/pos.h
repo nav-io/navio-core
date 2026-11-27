@@ -38,6 +38,10 @@ blsct::Message CalculateSetMemProofGeneratorSeedV2(const CBlockIndex* pindexPrev
 // Height-aware dispatcher: V2 seed at/after nPoPSKernelV2Height, else legacy.
 blsct::Message CalculateSetMemProofGeneratorSeed(const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params);
 uint256 CalculateKernelHash(const CBlockIndex* pindexPrev, const CBlock& block, const Consensus::Params& params);
+// Whether CalculateKernelHash reads posProof (setMemProof.phi) for a block on
+// top of pindexPrev. If not, the kernel hash depends only on the header and
+// chain state.
+bool KernelHashBindsPosProof(const CBlockIndex* pindexPrev, const Consensus::Params& params);
 // Seed for the staked-commitment ring shuffle. V2 derives it from the stake
 // modifier plus a deep ancestor (POPS_RING_SEED_LOOKBACK back) so no single
 // staker can grind which commitments form the ring; pre-V2 uses the legacy
