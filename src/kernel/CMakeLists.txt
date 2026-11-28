@@ -108,6 +108,7 @@ add_library(naviokernel
   ../util/bytevectorhash.cpp
   ../util/chaintype.cpp
   ../util/check.cpp
+  ../util/expected.cpp
   ../util/exception.cpp
   ../util/fs.cpp
   ../util/fs_helpers.cpp
