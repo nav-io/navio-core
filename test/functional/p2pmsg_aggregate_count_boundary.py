@@ -12,13 +12,19 @@ below the consensus fee floor, the broadcast is rejected, the candidate is
 evicted and the wallet falls back to a plain transaction.
 
 Each aggregating wallet path is driven across the boundary: a default
-aggregated send, aggregatesend and consolidate.
+aggregated send, aggregatesend and consolidate. Finally an aggregatesend whose
+own half can fund the merge but not the count bytes on top is refused before
+anything is broadcast.
 """
 
 from decimal import Decimal
 
+from test_framework.messages import COIN
 from test_framework.test_framework import BitcoinTestFramework
-from test_framework.util import assert_equal
+from test_framework.util import (
+    assert_equal,
+    assert_raises_rpc_error,
+)
 
 PULL_ARGS = ["-p2pmsg=1", "-p2pmsgpowbits=1", "-candidatepullinterval=2", "-servecandidates=0"]
 
@@ -78,13 +84,19 @@ class P2PMsgAggregateCountBoundaryTest(BitcoinTestFramework):
         n0, n1 = self.nodes
         n0.createwallet(wallet_name="w0", blsct=True, storage_output=True)
         n1.createwallet(wallet_name="w1", blsct=True, storage_output=True)
+        n0.createwallet(wallet_name="w2", blsct=True, storage_output=True)
         w0 = n0.get_wallet_rpc("w0")
         self.w1 = n1.get_wallet_rpc("w1")
+        w2 = n0.get_wallet_rpc("w2")
 
         # w1 takes the oversized first-block reward (and serves candidates
         # from it), so every coin w0 mines is one equal block reward.
         self.generatetoblsctaddress(n1, 1, self.w1.getnewaddress(label="", address_type="blsct"))
         self.sync_blocks()
+        # w2 holds exactly OWN_INPUTS coins, so a send of nearly all of it has
+        # an own half of OWN_INPUTS inputs and nothing left to select. w0's
+        # blocks below mature them.
+        self.generatetoblsctaddress(n0, OWN_INPUTS, w2.getnewaddress(label="", address_type="blsct"))
         self.miner0 = w0.getnewaddress(label="", address_type="blsct")
         remaining = 3 * OWN_INPUTS + 110
         while remaining > 0:
@@ -109,6 +121,10 @@ class P2PMsgAggregateCountBoundaryTest(BitcoinTestFramework):
         cand_inputs = self.serve_candidate()
         res = w0.aggregatesend(dest, amount, 16)
         assert_equal(res["candidates_merged"], 1)
+        # The fee this boundary aggregate paid, and its size, for the
+        # unfundable count fee case at the end.
+        boundary_fee = n0.getmempoolentry(res["txid"])["fees"]["base"]
+        boundary_size = n0.getrawtransaction(res["txid"], True)["size"]
         self.assert_merged_across_boundary(res["txid"], cand_inputs)
         self.log.info("aggregatesend paid for its 3-byte input count")
 
@@ -117,6 +133,33 @@ class P2PMsgAggregateCountBoundaryTest(BitcoinTestFramework):
         assert_equal(len(txids), 1)
         self.assert_merged_across_boundary(txids[0], cand_inputs)
         self.log.info("consolidate paid for its 3-byte input count")
+
+        # An aggregate's fee is exactly its size times the fee rate (see
+        # SumCandidateWeight), which gives the rate in satoshis.
+        boundary_fee_sat = int(boundary_fee * COIN)
+        assert_equal(boundary_fee_sat % boundary_size, 0)
+        rate = boundary_fee_sat // boundary_size
+        # w2's own half (OWN_INPUTS inputs, payment, change, fee) merged with
+        # one candidate has the shape of the aggregatesend above, so it needs
+        # the same boundary_fee_sat. Its first build funds the merge but not
+        # the count bytes: boundary_fee_sat less the count fee, which is the
+        # two extra bytes of the 3-byte input count, 2 * rate. Leaving `rate`
+        # as change funds that build but not the rebuild that adds the count
+        # fee, and every coin w2 has is already in it.
+        unspent = w2.listblsctunspent()
+        assert_equal(len(unspent), OWN_INPUTS)
+        balance = sum(int(Decimal(str(u["amount"])) * COIN) for u in unspent)
+        short_amount = Decimal(balance - boundary_fee_sat + rate) / COIN
+        self.serve_candidate()
+        assert_raises_rpc_error(
+            -6, "Not enough funds available to cover the extra fee for the merged input/output count",
+            w2.aggregatesend, dest, short_amount, 16)
+        # Refused before the broadcast: nothing went out, w2 keeps its coins
+        # and the candidate stays pooled.
+        assert_equal(n0.getrawmempool(), [])
+        assert_equal(len(w2.listblsctunspent()), OWN_INPUTS)
+        assert_equal(n0.getaggregationhint()["available"], 1)
+        self.log.info("aggregatesend refused a send that cannot fund its 3-byte input count")
 
 
 if __name__ == "__main__":
