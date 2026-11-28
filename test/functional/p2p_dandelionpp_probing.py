@@ -16,6 +16,8 @@ Resistance to active probing:
    Assert that Node 0 does not reply with tx
 """
 
+import time
+
 from test_framework.messages import (
         CInv,
         msg_getdata,
@@ -65,7 +67,19 @@ class DandelionProbingTest(BitcoinTestFramework):
         self.log.info("Sent tx with {}".format(txid))
 
         self.log.info("Adding P2PInterface")
-        self.nodes[0].add_p2p_connection(P2PInterface())  # Fake dandelion peer
+        # The probing peer must not be a stem route, or the node relays the
+        # tx to it and answers its getdata. Connect the fake dandelion peer
+        # alone and wait for it to be picked (a shuffle that finds nothing
+        # backs off for 10 seconds), then freeze the clock at a time no later
+        # than that shuffle so neither the next shuffle nor the end of the
+        # tx's embargo ever comes. freeze_time is taken after the tx was
+        # accepted, so it is inside the embargo even if that lapsed in real
+        # time during the wait. Freezing first could hang: the backoff would
+        # never pass.
+        freeze_time = int(time.time())
+        with self.nodes[0].assert_debug_log(["Shuffled stem peers (found=1"], timeout=15):
+            self.nodes[0].add_p2p_connection(P2PInterface())  # Fake dandelion peer
+        self.nodes[0].setmocktime(freeze_time)
         peer = self.nodes[0].add_p2p_connection(P2PInterface()) # Probing peer
 
         for tx_type in [MSG_WTX, MSG_DWTX]:
