@@ -28,7 +28,7 @@ ProofOfStake ProofOfStakeLogic::Create(const CCoinsViewCache& cache, const Scala
 
     auto next_target = blsct::GetNextTargetRequired(pindexPrev, &block, params);
 
-    LogPrint(BCLog::POPS, "Creating PoPS:\n    Eta fiat shamir: %s\n   Eta phi: %s\n   Next Target: %d\n   Staked Commitments:%s\n", HexStr(eta_fiat_shamir), HexStr(eta_phi), next_target, staked_commitments.GetString());
+    LogPrint(BCLog::POPS, "Creating PoPS: eta_fiat_shamir=%s eta_phi=%s next_target=%d staked_commitments=%s\n", HexStr(eta_fiat_shamir), HexStr(eta_phi), next_target, staked_commitments.GetString());
 
     const int height = pindexPrev->nHeight + 1;
 
@@ -103,7 +103,7 @@ ProofOfStakeLogic::Outcome ProofOfStakeLogic::Check(const CCoinsViewCache& cache
         return blsct::KernelHashBindsPosProof(pindexPrev, params) ? Outcome::BAD_PROOF : Outcome::BAD_BLOCK;
     }
 
-    LogPrint(BCLog::POPS, "Verifying PoPS:\n   Prev block %s\n   Eta fiat shamir: %s\n   Eta phi: %s\n   Kernel Hash: %s\n   Next Target: %d\n   Staked Commitments:%s\n", pindexPrev->GetBlockHash().ToString(), HexStr(eta_fiat_shamir), HexStr(eta_phi), kernel_hash.ToString(), next_target, staked_commitments.GetString());
+    LogPrint(BCLog::POPS, "Verifying PoPS: prev_block=%s eta_fiat_shamir=%s eta_phi=%s kernel_hash=%s next_target=%d staked_commitments=%s\n", pindexPrev->GetBlockHash().ToString(), HexStr(eta_fiat_shamir), HexStr(eta_phi), kernel_hash.ToString(), next_target, staked_commitments.GetString());
 
     // The block's VERSION_BIT_BLSCT_PROOF_V2 must agree with the activation
     // height, both ways: at and above nBLSCTProofV2Height it MUST be set, below

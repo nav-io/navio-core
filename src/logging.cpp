@@ -373,15 +373,16 @@ namespace BCLog {
     /** Belts and suspenders: make sure outgoing log messages don't contain
      * potentially suspicious characters, such as terminal control codes.
      *
-     * This escapes control characters except newline ('\n') in C syntax.
-     * It escapes instead of removes them to still allow for troubleshooting
-     * issues where they accidentally end up in strings.
+     * This escapes control characters, including newline ('\n'), in C syntax,
+     * so untrusted data can't forge log lines. It escapes instead of removes
+     * them to still allow for troubleshooting issues where they accidentally
+     * end up in strings.
      */
     std::string LogEscapeMessage(const std::string& str) {
         std::string ret;
         for (char ch_in : str) {
             uint8_t ch = (uint8_t)ch_in;
-            if ((ch >= 32 || ch == '\n') && ch != '\x7f') {
+            if (ch >= 32 && ch != '\x7f') {
                 ret += ch_in;
             } else {
                 ret += strprintf("\\x%02x", ch);
@@ -426,7 +427,10 @@ void BCLog::Logger::LogPrintStr(const std::string& str, const std::string& loggi
 // NOLINTNEXTLINE(misc-no-recursion)
 void BCLog::Logger::LogPrintStr_(const std::string& str, const std::string& logging_function, const std::string& source_file, int source_line, BCLog::LogFlags category, BCLog::Level level, bool should_ratelimit)
 {
-    std::string str_prefixed = LogEscapeMessage(str);
+    // Strip the conventional trailing '\n', so only embedded newlines are escaped
+    const bool ends_line{!str.empty() && str.back() == '\n'};
+    std::string str_prefixed = LogEscapeMessage(ends_line ? str.substr(0, str.size() - 1) : str);
+    if (ends_line) str_prefixed += '\n';
     const bool starts_line{m_started_new_line};
 
     if (m_started_new_line) {

@@ -11,14 +11,16 @@ from test_framework.util import (
     str_to_b64str,
 )
 import http.client
+import json
 import urllib.parse
 
-def rpccall(node, user, method):
+def rpccall(node, user, method, *, batch=False):
     url = urllib.parse.urlparse(node.url)
     headers = {"Authorization": "Basic " + str_to_b64str('{}:{}'.format(user[0], user[3]))}
+    request = {"method": method}
     conn = http.client.HTTPConnection(url.hostname, url.port)
     conn.connect()
-    conn.request('POST', '/', '{"method": "' + method + '"}', headers)
+    conn.request('POST', '/', json.dumps([request] if batch else request), headers)
     resp = conn.getresponse()
     conn.close()
     return resp
@@ -91,6 +93,18 @@ class RPCWhitelistTest(BitcoinTestFramework):
         assert_equal(403, rpccall(self.nodes[0], self.strange_users[3], "getbestblockhash").status)
         self.log.info("Strange test 5")
         assert_equal(200, rpccall(self.nodes[0], self.strange_users[4], "getblockcount").status)
+
+        self.test_rejected_method_logging()
+
+    def test_rejected_method_logging(self):
+        """Test logging a method rejected by the RPC whitelist."""
+        self.log.info(f"[{self.users[0][0]}]: Testing rejected method logging")
+        forged_log_line = "ERROR: ConnectTip: ConnectBlock 0000000000000000deadbeefdeadbeefdeadbeefdeadbeefdeadbeefdeadbeef failed, bad-txns-inputs-missingorspent"
+        # Stripping special characters could make the log appear to reject a whitelisted method
+        for rejected_method in [f"getblock\n{forged_log_line}", 'getblock!"#$%&\'*+<=>[\\]^`{|}~']:
+            for batch in [False, True]:
+                with self.nodes[0].assert_debug_log([f"not allowed to call method {rejected_method}".replace("\n", "\\x0a")]):
+                    assert_equal(403, rpccall(self.nodes[0], self.users[0], rejected_method, batch=batch).status)
 
 if __name__ == "__main__":
     RPCWhitelistTest(__file__).main()
