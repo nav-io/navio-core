@@ -297,6 +297,12 @@ static void MutateTxAddOutAddr(CMutableTransaction& tx, const std::string& strIn
     if (!IsValidDestination(destination)) {
         throw std::runtime_error("invalid TX output address");
     }
+    // A BLSCT address needs a confidential output (range proof, blinding),
+    // which navio-tx cannot build; its script alone would be a plain-value
+    // output the chain rejects.
+    if (std::holds_alternative<blsct::DoublePublicKey>(destination)) {
+        throw std::runtime_error("BLSCT output address not supported, use the wallet's sendtoblsctaddress");
+    }
     CScript scriptPubKey = GetScriptForDestination(destination);
 
     // construct TxOut, append to transaction output list
