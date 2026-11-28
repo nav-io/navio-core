@@ -16,7 +16,6 @@
 #include <common/args.h>
 #include <common/signet.h>
 #include <common/system.h>
-#include <common/url.h>
 #include <compat/compat.h>
 #include <compat/stdin.h>
 #include <consensus/merkle.h>

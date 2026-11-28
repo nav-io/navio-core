@@ -10,7 +10,6 @@
 #include <clientversion.h>
 #include <common/args.h>
 #include <common/system.h>
-#include <common/url.h>
 #include <compat/compat.h>
 #include <logging.h>
 #include <rpc/client.h>

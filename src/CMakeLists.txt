@@ -268,7 +268,6 @@ if(NOT BUILD_LIBBLSCT_ONLY)
       navio_blsct_core
       navio_blsct_wallet
       Boost::headers
-      $<TARGET_NAME_IF_EXISTS:libevent::extra>
       $<TARGET_NAME_IF_EXISTS:USDT::headers>
       $<$<PLATFORM_ID:Windows>:ws2_32>
     PUBLIC
