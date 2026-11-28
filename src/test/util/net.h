@@ -33,6 +33,7 @@ class Span;
 
 struct ConnmanTestMsg : public CConnman {
     using CConnman::CConnman;
+    using CConnman::InactivityCheck;
 
     void SetPeerConnectTimeout(std::chrono::seconds timeout)
     {
