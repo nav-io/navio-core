@@ -75,8 +75,8 @@ static constexpr ssize_t NETLINK_MAX_RESPONSE_SIZE{1'048'576};
 std::optional<CNetAddr> QueryDefaultGatewayImpl(sa_family_t family)
 {
     // Create a netlink socket.
-    auto sock{std::make_unique<Sock>(::socket(AF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE))};
-    if (*sock == INVALID_SOCKET) {
+    auto sock{CreateSock(AF_NETLINK, SOCK_DGRAM, NETLINK_ROUTE)};
+    if (!sock) {
         LogError("socket(AF_NETLINK): %s\n", NetworkErrorString(errno));
         return std::nullopt;
     }
