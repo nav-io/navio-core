@@ -50,16 +50,6 @@ void CWalletTx::updateState(interfaces::Chain& chain)
     }
 }
 
-void CWalletTx::CopyFrom(const CWalletTx& _tx)
-{
-    *this = _tx;
-}
-
-void CWalletOutput::CopyFrom(const CWalletOutput& _out)
-{
-    *this = _out;
-}
-
 void CWalletOutput::updateState(interfaces::Chain& chain)
 {
     bool active;

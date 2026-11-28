@@ -188,7 +188,7 @@ class WalletTaprootTest(BitcoinTestFramework):
     """Test generation and spending of P2TR address outputs."""
 
     def add_options(self, parser):
-        self.add_wallet_options(parser, legacy=False)
+        self.add_wallet_options(parser)
 
     def set_test_params(self):
         self.num_nodes = 2

@@ -27,7 +27,7 @@ class AssumeutxoTest(BitcoinTestFramework):
         self.skip_if_no_wallet()
 
     def add_options(self, parser):
-        self.add_wallet_options(parser, legacy=False)
+        self.add_wallet_options(parser)
 
     def set_test_params(self):
         """Use the pregenerated, deterministic chain up to height 199."""

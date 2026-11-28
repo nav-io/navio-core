@@ -23,7 +23,7 @@ WALLET_FLAG_EXTERNAL_SIGNER = 1 << 35
 
 class WalletDescriptorTest(BitcoinTestFramework):
     def add_options(self, parser):
-        self.add_wallet_options(parser, legacy=False)
+        self.add_wallet_options(parser)
 
     def set_test_params(self):
         self.setup_clean_chain = True

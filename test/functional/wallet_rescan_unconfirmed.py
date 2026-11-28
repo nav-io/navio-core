@@ -17,7 +17,7 @@ from test_framework.wallet_util import test_address
 
 class WalletRescanUnconfirmed(BitcoinTestFramework):
     def add_options(self, parser):
-        self.add_wallet_options(parser, legacy=False)
+        self.add_wallet_options(parser)
 
     def set_test_params(self):
         self.num_nodes = 1
