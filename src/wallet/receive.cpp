@@ -509,7 +509,7 @@ bool CachedTxIsTrusted(const CWallet& wallet, const CWalletTx& wtx, std::set<uin
     // ours. The trust then covers only the own half's outputs (see
     // TxTrustCoversOutput), and a cover provider can still evict the
     // aggregate with a double-spend; see
-    // doc/release-notes-aggregated-send-trust.md and #511.
+    // doc/release-notes-0.3.0.md and #511.
     const bool skip_foreign_inputs{!wtx.m_own_half_outputs.empty()};
 
     // Trusted if all inputs are from us and are in the mempool:
