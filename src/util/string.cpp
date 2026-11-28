@@ -4,7 +4,10 @@
 
 #include <util/string.h>
 
+#include <iterator>
+#include <memory>
 #include <regex>
+#include <stdexcept>
 #include <string>
 
 void ReplaceAll(std::string& in_out, const std::string& search, const std::string& substitute)
