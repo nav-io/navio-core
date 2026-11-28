@@ -9,7 +9,9 @@
 #include <test/util/random.h>
 #include <test/util/setup_common.h>
 #include <uint256.h>
+#include <univalue.h>
 #include <util/bitdeque.h>
+#include <util/byte_units.h>
 #include <util/fs.h>
 #include <util/fs_helpers.h>
 #include <util/message.h> // For MessageSign(), MessageVerify(), MESSAGE_MAGIC
@@ -31,7 +33,7 @@
 #include <cstdint>
 #include <cstring>
 #include <thread>
-#include <univalue.h>
+#include <type_traits>
 #include <utility>
 #include <vector>
 
@@ -1715,7 +1717,7 @@ BOOST_AUTO_TEST_CASE(util_ParseByteUnits)
     BOOST_CHECK_EQUAL(ParseByteUnits("2M", noop).value(), 2ULL << 20);
 
     BOOST_CHECK_EQUAL(ParseByteUnits("3g", noop).value(), 3'000'000'000ULL);
-    BOOST_CHECK_EQUAL(ParseByteUnits("3G", noop).value(), 3ULL << 30);
+    BOOST_CHECK_EQUAL(ParseByteUnits("3G", noop).value(), 3_GiB);
 
     BOOST_CHECK_EQUAL(ParseByteUnits("4t", noop).value(), 4'000'000'000'000ULL);
     BOOST_CHECK_EQUAL(ParseByteUnits("4T", noop).value(), 4ULL << 40);
@@ -1827,5 +1829,141 @@ BOOST_AUTO_TEST_CASE(windows_utf8_code_page)
     BOOST_CHECK_EQUAL(GetACP(), static_cast<UINT>(CP_UTF8));
 }
 #endif
+
+template <typename T>
+void TestCheckedLeftShift()
+{
+    constexpr auto MAX{std::numeric_limits<T>::max()};
+
+    // Basic operations
+    BOOST_CHECK_EQUAL(CheckedLeftShift<T>(0, 1), 0);
+    BOOST_CHECK_EQUAL(CheckedLeftShift<T>(0, 127), 0);
+    BOOST_CHECK_EQUAL(CheckedLeftShift<T>(1, 1), 2);
+    BOOST_CHECK_EQUAL(CheckedLeftShift<T>(2, 2), 8);
+    BOOST_CHECK_EQUAL(CheckedLeftShift<T>(MAX >> 1, 1), MAX - 1);
+
+    // Max left shift
+    BOOST_CHECK_EQUAL(CheckedLeftShift<T>(1, std::numeric_limits<T>::digits - 1), MAX / 2 + 1);
+
+    // Overflow cases
+    BOOST_CHECK(!CheckedLeftShift<T>((MAX >> 1) + 1, 1));
+    BOOST_CHECK(!CheckedLeftShift<T>(MAX, 1));
+    BOOST_CHECK(!CheckedLeftShift<T>(1, std::numeric_limits<T>::digits));
+    BOOST_CHECK(!CheckedLeftShift<T>(1, std::numeric_limits<T>::digits + 1));
+
+    if constexpr (std::is_signed_v<T>) {
+        constexpr auto MIN{std::numeric_limits<T>::min()};
+        // Negative input
+        BOOST_CHECK_EQUAL(CheckedLeftShift<T>(-1, 1), -2);
+        BOOST_CHECK_EQUAL(CheckedLeftShift<T>((MIN >> 2), 1), MIN / 2);
+        BOOST_CHECK_EQUAL(CheckedLeftShift<T>((MIN >> 1) + 1, 1), MIN + 2);
+        BOOST_CHECK_EQUAL(CheckedLeftShift<T>(MIN >> 1, 1), MIN);
+        // Overflow negative
+        BOOST_CHECK(!CheckedLeftShift<T>((MIN >> 1) - 1, 1));
+        BOOST_CHECK(!CheckedLeftShift<T>(MIN >> 1, 2));
+        BOOST_CHECK(!CheckedLeftShift<T>(-1, 100));
+    }
+}
+
+template <typename T>
+void TestSaturatingLeftShift()
+{
+    constexpr auto MAX{std::numeric_limits<T>::max()};
+
+    // Basic operations
+    BOOST_CHECK_EQUAL(SaturatingLeftShift<T>(0, 1), 0);
+    BOOST_CHECK_EQUAL(SaturatingLeftShift<T>(0, 127), 0);
+    BOOST_CHECK_EQUAL(SaturatingLeftShift<T>(1, 1), 2);
+    BOOST_CHECK_EQUAL(SaturatingLeftShift<T>(2, 2), 8);
+    BOOST_CHECK_EQUAL(SaturatingLeftShift<T>(MAX >> 1, 1), MAX - 1);
+
+    // Max left shift
+    BOOST_CHECK_EQUAL(SaturatingLeftShift<T>(1, std::numeric_limits<T>::digits - 1), MAX / 2 + 1);
+
+    // Saturation cases
+    BOOST_CHECK_EQUAL(SaturatingLeftShift<T>((MAX >> 1) + 1, 1), MAX);
+    BOOST_CHECK_EQUAL(SaturatingLeftShift<T>(MAX, 1), MAX);
+    BOOST_CHECK_EQUAL(SaturatingLeftShift<T>(1, std::numeric_limits<T>::digits), MAX);
+    BOOST_CHECK_EQUAL(SaturatingLeftShift<T>(1, std::numeric_limits<T>::digits + 1), MAX);
+
+    if constexpr (std::is_signed_v<T>) {
+        constexpr auto MIN{std::numeric_limits<T>::min()};
+        // Negative input
+        BOOST_CHECK_EQUAL(SaturatingLeftShift<T>(-1, 1), -2);
+        BOOST_CHECK_EQUAL(SaturatingLeftShift<T>((MIN >> 2), 1), MIN / 2);
+        BOOST_CHECK_EQUAL(SaturatingLeftShift<T>((MIN >> 1) + 1, 1), MIN + 2);
+        BOOST_CHECK_EQUAL(SaturatingLeftShift<T>(MIN >> 1, 1), MIN);
+        // Saturation negative
+        BOOST_CHECK_EQUAL(SaturatingLeftShift<T>((MIN >> 1) - 1, 1), MIN);
+        BOOST_CHECK_EQUAL(SaturatingLeftShift<T>(MIN >> 1, 2), MIN);
+        BOOST_CHECK_EQUAL(SaturatingLeftShift<T>(-1, 100), MIN);
+    }
+}
+
+BOOST_AUTO_TEST_CASE(checked_left_shift_test)
+{
+    TestCheckedLeftShift<uint8_t>();
+    TestCheckedLeftShift<int8_t>();
+    TestCheckedLeftShift<size_t>();
+    TestCheckedLeftShift<uint64_t>();
+    TestCheckedLeftShift<int64_t>();
+}
+
+BOOST_AUTO_TEST_CASE(saturating_left_shift_test)
+{
+    TestSaturatingLeftShift<uint8_t>();
+    TestSaturatingLeftShift<int8_t>();
+    TestSaturatingLeftShift<size_t>();
+    TestSaturatingLeftShift<uint64_t>();
+    TestSaturatingLeftShift<int64_t>();
+}
+
+template <class Int, auto bytes>
+concept BraceInitializesTo = requires { Int{bytes}; };
+
+BOOST_AUTO_TEST_CASE(mib_string_literal_test)
+{
+    // Basic equivalences and simple arithmetic operations
+    BOOST_CHECK_EQUAL(0_MiB, 0);
+    BOOST_CHECK_EQUAL(1_MiB, 1024 * 1024);
+
+    // 4095 MiB fits in uint32_t bytes. 4096 MiB requires the uint64_t return type.
+    static_assert(BraceInitializesTo<uint32_t, 4095_MiB>);
+    static_assert(!BraceInitializesTo<uint32_t, 4096_MiB>);
+    static_assert(BraceInitializesTo<uint64_t, 4096_MiB>);
+    BOOST_CHECK_EQUAL(4095_MiB, uint32_t{4095} << 20);
+    BOOST_CHECK_EQUAL(4096_MiB, uint64_t{4096} << 20);
+}
+
+BOOST_AUTO_TEST_CASE(gib_string_literal_test)
+{
+    // Basic equivalences and simple arithmetic operations
+    BOOST_CHECK_EQUAL(0_GiB, 0);
+    BOOST_CHECK_EQUAL(1_GiB, 1 << 30);
+    BOOST_CHECK_EQUAL(1_GiB, 1024 * 1024 * 1024);
+    BOOST_CHECK_EQUAL(1_GiB, 0x40000000U);
+    BOOST_CHECK_EQUAL(1_GiB, 1073741824U);
+    BOOST_CHECK_EQUAL(1_GiB, 1_MiB * 1024);
+    BOOST_CHECK_EQUAL(1_GiB, 1024_MiB);
+    BOOST_CHECK_EQUAL((1_GiB + 123) / double(1_GiB), (1_GiB + 123) / 1024.0 / 1024.0 / 1024.0);
+    BOOST_CHECK_EQUAL(2ULL * 1_GiB, 2ULL << 30);
+    BOOST_CHECK_EQUAL(4 * uint64_t{1_GiB}, uint64_t{4} << 30);
+    BOOST_CHECK_EQUAL(2_GiB, 2048_MiB);
+    BOOST_CHECK_EQUAL(3_GiB / 1_GiB, 3U);
+    BOOST_CHECK_EQUAL(3_GiB, 3U << 30);
+
+    // 3 GiB fits in uint32_t bytes. 4 GiB requires the uint64_t return type.
+    static_assert(BraceInitializesTo<uint32_t, 3_GiB>);
+    static_assert(!BraceInitializesTo<uint32_t, 4_GiB>);
+    static_assert(BraceInitializesTo<uint64_t, 4_GiB>);
+    BOOST_CHECK_EQUAL(3_GiB, uint32_t{3} << 30);
+    BOOST_CHECK_EQUAL(4_GiB, uint64_t{4} << 30);
+
+    // Specific codebase values
+    BOOST_CHECK_EQUAL(4_GiB, 4096_MiB);
+    BOOST_CHECK_EQUAL(8_GiB, 8192_MiB);
+    BOOST_CHECK_EQUAL(16_GiB, 16384_MiB);
+    BOOST_CHECK_EQUAL(32_GiB, 32768_MiB);
+}
 
 BOOST_AUTO_TEST_SUITE_END()

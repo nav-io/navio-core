@@ -156,6 +156,7 @@ add_executable(test_navio
   span_tests.cpp
   streams_tests.cpp
   sync_tests.cpp
+  threadpool_tests.cpp
   timedata_tests.cpp
   torcontrol_tests.cpp
   transaction_tests.cpp
@@ -167,6 +168,7 @@ add_executable(test_navio
   txvalidationcache_tests.cpp
   txvalidation_tests.cpp
   uint256_tests.cpp
+  util_expected_tests.cpp
   util_tests.cpp
   util_threadnames_tests.cpp
   validation_block_tests.cpp
