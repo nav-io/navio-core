@@ -306,6 +306,7 @@ BASE_SCRIPTS = [
     'feature_addrman.py',
     'feature_asmap.py',
     'feature_fastprune.py',
+    'feature_prune_stale_fork.py',
     'mempool_unbroadcast.py',
     'mempool_accept_wtxid.py',
     'mempool_dust.py',
