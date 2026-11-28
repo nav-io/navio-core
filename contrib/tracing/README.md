@@ -1,8 +1,8 @@
 # Example scripts for User-space, Statically Defined Tracing (USDT)
 
 This directory contains scripts showcasing User-space, Statically Defined
-Tracing (USDT) support for Bitcoin Core on Linux using. For more information on
-USDT support in Bitcoin Core see the [USDT documentation].
+Tracing (USDT) support for Navio Core on Linux using. For more information on
+USDT support in Navio Core see the [USDT documentation].
 
 [USDT documentation]: ../../doc/tracing.md
 
@@ -34,10 +34,10 @@ Reference Guide], and a [bcc Python Developer Tutorial].
 The bpftrace examples contain a relative path to the `naviod` binary. By
 default, the scripts should be run from the repository-root and assume a
 self-compiled `naviod` binary. The paths in the examples can be changed, for
-example, to point to release builds if needed. See the [Bitcoin Core USDT
+example, to point to release builds if needed. See the [Navio Core USDT
 documentation] on how to list available tracepoints in your `naviod` binary.
 
-[Bitcoin Core USDT documentation]:
+[Navio Core USDT documentation]:
   ../../doc/tracing.md#listing-available-tracepoints
 
 **WARNING: eBPF programs require root privileges to be loaded into a Linux
@@ -137,13 +137,13 @@ A BCC Python script showcasing eBPF and USDT limitations when passing data
 larger than about 32kb. Based on the `net:inbound_message` and
 `net:outbound_message` tracepoints.
 
-Bitcoin P2P messages can be larger than 32kb (e.g. `tx`, `block`, ...). The eBPF
-VM's stack is limited to 512 bytes, and we can't allocate more than about 32kb
-for a P2P message in the eBPF VM. The **message data is cut off** when the
-message is larger than MAX_MSG_DATA_LENGTH (see script). This can be detected in
-user-space by comparing the data length to the message length variable. The
-message is cut off when the data length is smaller than the message length. A
-warning is included with the printed message data.
+P2P messages can be larger than 32kb (e.g. `tx`, `block`, ...). The eBPF VM's
+stack is limited to 512 bytes, and we can't allocate more than about 32kb for a
+P2P message in the eBPF VM. The **message data is cut off** when the message is
+larger than MAX_MSG_DATA_LENGTH (see script). This can be detected in user-space
+by comparing the data length to the message length variable. The message is cut
+off when the data length is smaller than the message length. A warning is
+included with the printed message data.
 
 Data is submitted to user-space (i.e. to this script) via a ring buffer. The
 throughput of the ring buffer is limited. Each p2p_message is about 32kb in
