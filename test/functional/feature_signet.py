@@ -14,6 +14,7 @@ import time
 
 from test_framework.key import ECKey
 from test_framework.messages import CBlock, from_hex
+from test_framework.script import CScript
 from test_framework.script_util import key_to_p2wpkh_script
 from test_framework.test_framework import BitcoinTestFramework
 from test_framework.util import (
@@ -25,6 +26,8 @@ MIN_STAKE = 10000
 STAKER_TIMEOUT = 120
 # Signet's nLastPOWHeight: above it every block must be proof-of-stake.
 LAST_POW_HEIGHT = 1000
+# Marks the push in the coinbase witness commitment that carries the solution.
+SIGNET_HEADER = b"\xec\xc7\xda\xa2"
 
 
 def make_key():
@@ -72,6 +75,23 @@ class SignetBasicTest(BitcoinTestFramework):
         assert_equal(len(block.vtx), len(node.getblock(block_hash)["tx"]))
         assert_equal(block.serialize().hex(), block_hex)
         return block
+
+    def strip_signet_solution(self, block):
+        """Cut the solution from the coinbase, leaving the bare header push
+        the signature commits to, and fix up the merkle root and hash."""
+        coinbase = block.vtx[0]
+        stripped = 0
+        for out in coinbase.vout:
+            ops = list(CScript(out.scriptPubKey))
+            for i, op in enumerate(ops):
+                if isinstance(op, bytes) and len(op) > len(SIGNET_HEADER) and op.startswith(SIGNET_HEADER):
+                    ops[i] = SIGNET_HEADER
+                    stripped += 1
+            out.scriptPubKey = bytes(CScript(ops))
+        assert_equal(stripped, 1)
+        coinbase.rehash()
+        block.hashMerkleRoot = block.calc_merkle_root()
+        block.rehash()
 
     def mine(self, node, nblocks, address, key, sync_fun=None):
         # Node 2 is on another signet, so only nodes 0 and 1 can sync.
@@ -179,6 +199,13 @@ class SignetBasicTest(BitcoinTestFramework):
 
         self.log.info("A proof-of-stake block signed for another challenge is rejected")
         assert_equal(self.nodes[2].submitblock(node.getblock(node.getbestblockhash(), 0)), "bad-signet-blksig")
+
+        self.log.info("A proof-of-stake block with its signet solution stripped is rejected")
+        block = from_hex(CBlock(), node.getblock(node.getbestblockhash(), 0))
+        assert_equal(block.calc_merkle_root(), block.hashMerkleRoot)
+        self.strip_signet_solution(block)
+        assert block.hash != node.getbestblockhash()
+        assert_equal(self.nodes[1].submitblock(block.serialize().hex()), "bad-signet-blksig")
 
     def test_transparent_miners_above_last_pow(self, node, address):
         """The transparent-coinbase miners are refused on signet as on any
