@@ -219,6 +219,16 @@ class HTTPBasicsTest (BitcoinTestFramework):
         assert_equal(response4.status, http.client.INTERNAL_SERVER_ERROR)
         assert b'"message":"Block decode failed"' in response4.read()
 
+        # A declared body size above the limit is refused from the headers
+        # alone, before any body is sent, so this 413 is read without racing
+        # the server's disconnect.
+        conn = BitcoinHTTPConnection(self.node)
+        conn.conn.sock.sendall((
+            "POST / HTTP/1.1\r\n"
+            f"Authorization: Basic {str_to_b64str(conn.authpair)}\r\n"
+            f"Content-Length: {MAX_SIZE + 1}\r\n\r\n").encode("ascii"))
+        assert conn.recv_raw().startswith(b"HTTP/1.1 413")
+
         conn = BitcoinHTTPConnection(self.node)
         try:
             # Excessive body size is invalid
@@ -230,13 +240,13 @@ class HTTPBasicsTest (BitcoinTestFramework):
         # The server will send a 413 response and disconnect but due to a race
         # condition, the python client may or may not read the response before
         # detecting the broken socket (which it may still be trying to write to).
+        # post_raw bypasses http.client, so read the response from the socket.
         try:
-            response5 = conn.conn.getresponse()
-            assert_equal(response5.status, http.client.REQUEST_ENTITY_TOO_LARGE)
-            self.log.info(f"Client got expected response status {response5.status}")
-            assert conn.sock_closed()
-        #       macos/linux                   windows
-        except (http.client.ResponseNotReady, ConnectionAbortedError):
+            response5 = conn.recv_raw()
+            assert response5.startswith(b"HTTP/1.1 413"), response5
+            self.log.info("Client got expected response status 413")
+        #       macos/linux           windows
+        except (ConnectionResetError, ConnectionAbortedError):
             self.log.info("Client did not read response before disconnecting")
 
 
