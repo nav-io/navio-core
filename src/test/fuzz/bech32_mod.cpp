@@ -4,7 +4,6 @@
 
 #include <blsct/bech32_mod.h>
 #include <test/fuzz/fuzz.h>
-#include <test/util/str.h>
 #include <util/strencodings.h>
 
 #include <algorithm>

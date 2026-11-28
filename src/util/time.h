@@ -132,6 +132,12 @@ std::string FormatISO8601DateTime(int64_t nTime);
 std::string FormatISO8601Date(int64_t nTime);
 
 /**
+ * RFC1123 formatting https://www.rfc-editor.org/rfc/rfc1123#section-5.2.14
+ * Used in HTTP/1.1 responses
+ */
+std::string FormatRFC1123DateTime(int64_t nTime);
+
+/**
  * Convert milliseconds to a struct timeval for e.g. select.
  */
 struct timeval MillisToTimeval(int64_t nTimeout);
